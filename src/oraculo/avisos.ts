@@ -17,11 +17,12 @@ export const AVISOS_ESPERA_MAX_S = 50;
 const TICK_MS = 1_000;
 const DAY_MS = 86_400_000;
 /**
- * A cursor is old (the phone was away) when more than `AVISOS_MAX` warnings wait and the oldest is older than this: a
- * connected phone takes each one in seconds, so a pile only builds while it was away. Then only the 10 newest of the
- * last 24 h go, and the cursor jumps to the end (no night without network turning into dozens of vibrations).
+ * A cursor is old (the phone was really away, e.g. the night) when more than `AVISOS_MAX` warnings wait and the oldest
+ * is older than this. Then only the 10 newest of the last 24 h go, and the cursor jumps to the end (no night without
+ * network turning into dozens of vibrations); the skipped ones stay in the chat. Below it (Doze for a few minutes)
+ * everything goes, page by page (`mais: true`), so no line of the Líder is skipped.
  */
-export const RETOMADA_MS = 5 * 60_000;
+export const RETOMADA_MS = 30 * 60_000;
 const CARTA_ID = /^t-[0-9a-f]{8}$/;
 const LIDER_TITULO = 'Líder único';
 
@@ -77,10 +78,13 @@ export interface RespostaAvisos {
   readonly avisos: Aviso[];
 }
 
-/** Pure: whether a text (and its title) may become a warning. */
+/** Control, format (U+200B, U+2060, U+FEFF...) and separator characters: none of them is something to read. */
+const INVISIVEL = /[\p{Cc}\p{Cf}\p{Z}]/gu;
+
+/** Pure: whether a text (and its title) may become a warning; one made only of invisible characters may not. */
 export function avisavel(texto: string, titulo = LIDER_TITULO): boolean {
   if (typeof texto !== 'string' || typeof titulo !== 'string') return false;
-  if (isBlankReply(texto) || isBlankReply(titulo)) return false;
+  if (isBlankReply(texto.replace(INVISIVEL, '')) || isBlankReply(titulo.replace(INVISIVEL, ''))) return false;
   return texto.trim() !== JOINED_REPLY;
 }
 
@@ -123,8 +127,15 @@ export function decodeCursor(value: string | null | undefined): CursorAvisos | n
   }
 }
 
+/** By UTF-16 code unit, never by locale: the cursor's `after` and the sort must agree, or a line is lost at a page edge. */
+const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+/** The one order of the chat: `(criada_em, id)`. */
+const byOrder = (a: { readonly criada_em: string; readonly id: string }, b: { readonly criada_em: string; readonly id: string }): number =>
+  cmp(a.criada_em, b.criada_em) || cmp(a.id, b.id);
+
 /** `(a.em, a.id) > (b.em, b.id)`: by order, never by place in the file (a line the cursor names may be gone). */
-const after = (row: { readonly criada_em: string; readonly id: string }, c: CursorAvisos['c']): boolean => row.criada_em > c.em || (row.criada_em === c.em && row.id > c.id);
+const after = (row: { readonly criada_em: string; readonly id: string }, c: CursorAvisos['c']): boolean => byOrder(row, { criada_em: c.em, id: c.id }) > 0;
 
 const avisoDoChat = (row: LinhaDoChat): Aviso | null =>
   row.autor === 'lider' ? montar({ id: `chat:${row.id}`, tipo: 'chat', abrir: { tela: 'lider' }, em: row.criada_em }, LIDER_TITULO, row.texto) : null;
@@ -133,7 +144,7 @@ const avisoDoChat = (row: LinhaDoChat): Aviso | null =>
 export function avisosDoChat(rows: readonly LinhaDoChat[], c: CursorAvisos['c'] | null): Aviso[] {
   return [...rows]
     .filter((row) => c === null || after(row, c))
-    .sort((a, b) => (a.criada_em === b.criada_em ? a.id.localeCompare(b.id) : a.criada_em < b.criada_em ? -1 : 1))
+    .sort(byOrder)
     .flatMap((row) => avisoDoChat(row) ?? []);
 }
 
@@ -228,7 +239,7 @@ export function createAvisos(deps: AvisosDeps): Avisos {
   const pendentes = (cursor: CursorAvisos): Pendente[] => {
     const chat: Pendente[] = [...deps.conversa()]
       .filter((row) => after(row, cursor.c))
-      .sort((a, b) => (a.criada_em === b.criada_em ? a.id.localeCompare(b.id) : a.criada_em < b.criada_em ? -1 : 1))
+      .sort(byOrder)
       .map((row) => ({ fonte: 'c', at: Date.parse(row.criada_em) || 0, pos: { c: { em: row.criada_em, id: row.id } }, aviso: avisoDoChat(row) }));
     const cartas: Pendente[] = deps
       .cartas()

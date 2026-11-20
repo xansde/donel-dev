@@ -200,10 +200,57 @@ describe('avisos do celular (t-b07b50ff)', () => {
     const [long] = avisosDoChat([linha('a', 'lider', 'a'.repeat(5000), T0)], null);
     expect(Array.from(long!.texto)).toHaveLength(300);
     expect(long!.texto.endsWith('…')).toBe(true);
-    const heavy = avisoDeCarta({ seq: 1, id: 'x', t: 't-1a2b3c4d', kind: 'decidir-entrega', since: T0, titulo: '\u0001'.repeat(500), texto: '\u0001'.repeat(5000), em: '' });
+    // Texto visível que escapa muito no JSON (aspas e barras invertidas).
+    const heavy = avisoDeCarta({ seq: 1, id: 'x', t: 't-1a2b3c4d', kind: 'decidir-entrega', since: T0, titulo: '\\'.repeat(500), texto: '"'.repeat(5000), em: '' });
     expect(Array.from(heavy!.titulo)).toHaveLength(70);
     expect(Buffer.byteLength(JSON.stringify(heavy))).toBeLessThanOrEqual(2048);
     expect(heavy!.texto.endsWith('…')).toBe(true);
+    // Visível com muito escape de controle: o corte encolhe até caber em 2048 bytes, e o começo visível fica.
+    const mixed = avisoDeCarta({ seq: 1, id: 'x', t: 't-1a2b3c4d', kind: 'decidir-entrega', since: T0, titulo: `Faixa${'\u0001'.repeat(500)}`, texto: `Posso?${'\u0001'.repeat(5000)}`, em: '' });
+    expect(Buffer.byteLength(JSON.stringify(mixed))).toBeLessThanOrEqual(2048);
+    expect(mixed!.texto.startsWith('Posso?')).toBe(true);
+    // Só invisível não é aviso, por maior que seja.
+    expect(avisoDeCarta({ seq: 1, id: 'x', t: 't-1a2b3c4d', kind: 'decidir-entrega', since: T0, titulo: '\u0001'.repeat(500), texto: '\u0001'.repeat(5000), em: '' })).toBeNull();
+  });
+
+  it('11. título ou texto só com caracteres invisíveis não vira aviso (chat e carta)', () => {
+    const invisiveis = ['\u200b', '\u2060', '\u0001\u0001', ' \u200b ', '\u200c\u200d', '\u00a0\u3000', '\ufeff'];
+    for (const s of invisiveis) {
+      expect(avisavel(s)).toBe(false);
+      expect(avisavel('ok', s)).toBe(false);
+      expect(avisoDeCarta({ seq: 1, id: 'x', t: 't-1a2b3c4d', kind: 'decidir-entrega', since: T0, titulo: 'Faixa', texto: s, em: '' })).toBeNull();
+      expect(avisoDeCarta({ seq: 1, id: 'x', t: 't-1a2b3c4d', kind: 'decidir-entrega', since: T0, titulo: s, texto: 'Posso promover?', em: '' })).toBeNull();
+    }
+    const rows = invisiveis.map((s, i) => linha(`i${i}`, 'lider', s, T0 + i));
+    expect(avisosDoChat([...rows, linha('z', 'lider', '\u200bvisível', T0 + 99)], null).map((a) => a.id)).toEqual(['chat:z']);
+  });
+
+  it('12. ids na mesma hora na fronteira de 10: uma só ordem (por unidade de código) no cursor e na fila, nada se perde', async () => {
+    const w = mundo();
+    const c0 = (await w.avisos.atender('cel', q(null))).cursor;
+    for (let i = 0; i < 9; i += 1) w.rows.push(linha(`p${i}`, 'lider', `fala ${i}`, T0 - 60_000 + i * 1000));
+    const same = T0 - 30_000;
+    w.rows.push(linha('a', 'lider', 'minúsculo', same), linha('B', 'lider', 'maiúsculo', same));
+    const page = await w.avisos.atender('cel', q(c0));
+    expect(page.avisos).toHaveLength(10);
+    expect(page.mais).toBe(true);
+    const rest = await w.avisos.atender('cel', q(page.cursor, 1));
+    const ids = [...page.avisos, ...rest.avisos].map((a) => a.id);
+    expect(ids.slice(-2)).toEqual(['chat:B', 'chat:a']);
+    expect(new Set(ids).size).toBe(11);
+    expect(avisosDoChat(w.rows, null).slice(-2).map((a) => a.id)).toEqual(['chat:B', 'chat:a']);
+  });
+
+  it('13. rajada com o celular em Doze por 6 min: tudo sai pela paginação, nada é pulado', async () => {
+    const w = mundo();
+    const c0 = (await w.avisos.atender('cel', q(null))).cursor;
+    for (let i = 0; i < 15; i += 1) w.rows.push(linha(`d${String(i).padStart(2, '0')}`, 'lider', `fala ${i}`, T0 - 6 * MIN + Math.round((i * 6 * MIN) / 14)));
+    const page = await w.avisos.atender('cel', q(c0));
+    expect(page.avisos.map((a) => a.id)).toEqual(Array.from({ length: 10 }, (_, k) => `chat:d${String(k).padStart(2, '0')}`));
+    expect(page.mais).toBe(true);
+    const rest = await w.avisos.atender('cel', q(page.cursor));
+    expect(rest.avisos.map((a) => a.id)).toEqual(Array.from({ length: 5 }, (_, k) => `chat:d${String(10 + k).padStart(2, '0')}`));
+    expect(rest.mais).toBe(false);
   });
 
   describe('9. a rota GET /api/v2/avisos', () => {
