@@ -91,6 +91,37 @@ describe('uso de IA no celular', () => {
     expect(second.feitos.find((f: any) => f.criterio === 'mensagens').em).toBe(first.feitos.find((f: any) => f.criterio === 'mensagens').em);
   });
 
+  it('semana recém-fechada só congela com a leitura final, nunca com o painel do meio da semana', () => {
+    const root = tmp();
+    const estado = join(tmp(), 'estado');
+    painel(root, '2026-W46', '20261113T1835', '2026-11-13T18:35:00-03:00', atBelt(6));
+    // O único painel da W47 é o de 14/11, com 1 dia: os valores de 1 dia esticados a 7 dariam faixa errada.
+    const umDia = Object.fromEntries(CRITERIOS.map((c) => [c, c === 'organizacao' ? 95 : Math.ceil(PRETAS_W46[c] / 7)]));
+    painel(root, '2026-W47', '20261114T1835', '2026-11-14T18:35:00-03:00', umDia, 1);
+    machine(root, '2026-11-13', 'vps-alexandrelentz', '2026-W46', '2026-11-13T15:35:00-03:00', 6, all(1));
+    const depois = Date.parse('2026-11-20T17:30:00-03:00');
+
+    const r = montarUsoIa({ dir: root, estado }, depois) as any;
+    const fechadas = JSON.parse(readFileSync(join(estado, 'fechadas.json'), 'utf8'));
+    expect(Object.keys(fechadas)).toEqual(['2026-W46']);
+    expect(r.proficiencia.sessoes_iniciadas.historico).toEqual([
+      { semana: '2026-W46', rotulo: 'W46', faixa: 6 }, { semana: '2026-W47', rotulo: 'W47', faixa: null },
+    ]);
+    const w47 = r.semanas.find((s: any) => s.semana === '2026-W47');
+    expect(w47.fechada).toBe(true);
+    expect(w47.leituras.todas).toMatchObject({ dias: 1, parcial: true, faixa_geral: 6 });
+    // A leitura da máquina tirada antes do fim da W46 fica com os 6 dias da fonte.
+    expect(r.semanas.find((s: any) => s.semana === '2026-W46').leituras.vps).toMatchObject({ dias: 6, parcial: true });
+
+    // Chega o painel final: a W47 congela com ele, e não muda mais.
+    painel(root, '2026-W47', '20261120T1835', '2026-11-20T18:35:00-03:00', atBelt(5), 7);
+    const r2 = montarUsoIa({ dir: root, estado }, depois + 3_600_000) as any;
+    const fechadas2 = JSON.parse(readFileSync(join(estado, 'fechadas.json'), 'utf8'));
+    expect(fechadas2['2026-W46']).toEqual(fechadas['2026-W46']);
+    expect(fechadas2['2026-W47'].sessoes_iniciadas).toBe(5);
+    expect(r2.semanas.find((s: any) => s.semana === '2026-W47').leituras.todas).toMatchObject({ dias: 7, parcial: false });
+  });
+
   it('a rota só responde com a flag ligada e lê as pastas de verdade', async () => {
     const home = tmp();
     const root = join(home, 'faixa-preta-dia');

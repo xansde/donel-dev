@@ -5,8 +5,8 @@
 //
 // Sources, read only: `<dir>/AAAA-MM-DD/maquina-<nome>.json` (each machine's own collector, written by the
 // faixa-preta-dia routine) and `<dir>/painel/<semana>-*.json` (the TeamZone panel = machine `todas`). State, written
-// here: `<estado>/fechadas.json` (the belt of a closed week, frozen the first time it is seen, never rewritten) and
-// `<estado>/feitos.json` (each level reached, append only). A bad file is skipped; a failed write never fails the read.
+// here: `<estado>/fechadas.json` (the belt of a closed week, frozen the first time its final reading is seen, never
+// rewritten) and `<estado>/feitos.json` (each level reached, append only). A bad file is skipped; a failed write never fails the read.
 
 import { mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -340,11 +340,18 @@ export function montarUsoIa(paths: UsoIaPaths, nowMs: number, log?: (line: strin
     return inicio !== null && nowMs >= inicio + WEEK_MS;
   };
 
-  /** The belts of one reading. A closed week counts all 7 days; one in progress, the days its source says. */
+  /**
+   * A final reading: taken at or after the end of its week, or one whose source says all 7 days. Only a final reading
+   * of a closed week counts 7 days and may be frozen; a reading taken mid-week keeps its own days even after the week
+   * closes (a 1-day panel stretched to 7 days would freeze a wrong belt for good).
+   */
+  const finalDe = (l: Leitura): boolean => l.dias === 7 || l.medidoMs >= semanaInicioMs(l.semana)! + WEEK_MS;
+
+  /** The belts of one reading: the days its source says (else the days elapsed when it was taken); 7 when final. */
   const avaliar = (l: Leitura, cortes: Partial<Record<Criterio, number[]>>) => {
     const inicio = semanaInicioMs(l.semana)!;
-    const elapsed = Math.max(0, Math.min(7, Math.floor((nowMs - inicio) / DAY_MS)));
-    const dias = fechadaDe(l.semana) ? 7 : l.dias ?? elapsed;
+    const elapsed = Math.max(0, Math.min(7, Math.floor((Math.min(nowMs, l.medidoMs) - inicio) / DAY_MS)));
+    const dias = finalDe(l) ? 7 : l.dias ?? elapsed;
     const cortesAteHoje: Partial<Record<Criterio, number[]>> = {};
     const faixas: Partial<Record<Criterio, number>> = {};
     for (const c of CRITERIOS) {
@@ -357,13 +364,14 @@ export function montarUsoIa(paths: UsoIaPaths, nowMs: number, log?: (line: strin
     return { dias, cortesAteHoje, faixas, faixaGeral: faixaGeral(faixas) };
   };
 
-  // Freeze every closed week with a `todas` reading the first time it is seen; a frozen week is never rewritten.
+  // Freeze a closed week the first time its final `todas` reading is seen; a frozen week is never rewritten. Until the
+  // final reading arrives the week stays out (its history entry is null: it neither counts nor breaks a streak).
   const fechadasFile = join(paths.estado, 'fechadas.json');
   const fechadasLidas = readState<Fechadas>(fechadasFile, {}, isFechadas);
   const fechadas: Fechadas = { ...(fechadasLidas ?? {}) };
   let fechadasNovas = false;
   for (const l of leituras) {
-    if (l.maquina !== 'todas' || !fechadaDe(l.semana) || Object.hasOwn(fechadas, l.semana)) continue;
+    if (l.maquina !== 'todas' || !fechadaDe(l.semana) || !finalDe(l) || Object.hasOwn(fechadas, l.semana)) continue;
     fechadas[l.semana] = avaliar(l, cortesDa(l.semana)).faixas;
     fechadasNovas = true;
   }
@@ -412,7 +420,8 @@ export function montarUsoIa(paths: UsoIaPaths, nowMs: number, log?: (line: strin
       if (l.semana !== semana) continue;
       const a = avaliar(l, cortes);
       porMaquina[l.maquina] = {
-        medido_em: l.medidoEm, fonte: l.fonte, dias: a.dias, valores: l.valores,
+        // parcial = the week closed but this reading was taken before the end: belts on its own days, not counted.
+        medido_em: l.medidoEm, fonte: l.fonte, dias: a.dias, parcial: fechadaDe(semana) && !finalDe(l), valores: l.valores,
         cortes_ate_hoje: a.cortesAteHoje, faixas: a.faixas, faixa_geral: a.faixaGeral,
       };
     }
