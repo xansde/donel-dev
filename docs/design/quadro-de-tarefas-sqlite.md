@@ -89,7 +89,8 @@ link contava comentário da própria conta e não lia Slack. O que mudou:
   `semear --seco` abre o quadro só para leitura e lista o que "ganharia sessão".
 - **Entregue no Oráculo não é parado.** O vigia lê o Oráculo só para leitura (as linhas das tarefas dos cartões em
   Fazendo, pelo `oraculo_id`): tarefa `entregue` espera o aceite do Revisor, e o vigia não mexe no cartão; tarefa já
-  fechada (aceita ou cancelada) com o cartão ainda em Fazendo vai ao Líder **uma vez**, para mover a Feito. Escolhi
+  fechada (aceita ou cancelada) com o cartão ainda em Fazendo vai ao Líder **uma vez**, para mover a Feito (trocado em
+  20/11 pela seção "O cartão segue a tarefa do Oráculo": a ronda fecha o cartão sozinha e o vigia só pula). Escolhi
   isso a uma justificativa automática porque Fazendo com justificativa exige link, e a única página honesta seria a do
   próprio Oráculo, que não tem endereço; e a marca é o estado vivo do Oráculo, que muda sozinho quando o Revisor
   aceita ou devolve. Oráculo fora do ar = o vigia julga só pelo cartão, como antes.
@@ -161,6 +162,36 @@ O que o Revisor e a prova da reentrega deixaram, resolvido antes de o vigia agir
   `semear --seco | tee` e o log do crontab não perdem o fim.
 - **Bot não é resposta.** No GitHub, conta com login terminado em `[bot]` ou `type: "Bot"` (CI, preview, dependabot,
   app de review) não conta como resposta de outra pessoa.
+
+## O cartão segue a tarefa do Oráculo (r-a01b8ca6, 20/11)
+
+Pedido do Líder único, em uso real: "cartões importados do Oráculo ficam com dono 'lider' mesmo depois de
+tarefa_transferir para uma sessão, e não fecham quando a tarefa é aceita ou cancelada. [...] Conserto: o cartão segue
+o dono da tarefa a cada tarefa_transferir, e vai a Feito ou Cancelado quando a tarefa é aceita ou cancelada."
+
+- **Por quê.** A semente gravou o dono da tarefa da hora em que rodou (11:42 de 20/11: `lider`), e nada atualizava
+  depois. O gancho do `tarefa_assumir` (#545) só pegou os assumir depois do deploy dele; os 8 cartões do caso foram
+  assumidos antes. E transferir, aceitar e cancelar chegam ao ledger por caminhos que não passam pelo portão (o app
+  do PC, o `leaderLedger` do Líder único com o PC fora, o `servico:reconciliador`).
+- **Regra** (`src/shared/board/task-follow.ts`, pura): só cartão com `oraculo_id` cuja tarefa está no ledger. Tarefa
+  fechada → **Feito** com o dono dela como lugar; o quadro não tem coluna Cancelado (as colunas são fixas em
+  `rules.ts`, no SQL e na página), então o resumo diz qual: "aceita no Oráculo", "cancelada no Oráculo: <motivo>" ou
+  "carta rejeitada no Oráculo: <motivo>". Tarefa viva → o lugar é o dono da tarefa (para dar o cartão a outro lugar,
+  transfira a tarefa); em-execucao/entregue tira o cartão de Entrada ou A fazer para Fazendo; aberta (transferida e
+  não assumida) tira de Fazendo/Travado do dono antigo para A fazer do novo; rejeitada viva (devolvida) leva Entrada a
+  A fazer e deixa Fazendo/Travado como estão; "Esperando você" nunca muda de coluna; Feito só reabre se a tarefa se
+  mexeu depois (assumida, rejeitada ou transferida mais nova que o `stage_since` do cartão). Nada a mudar = nada
+  gravado (sem versão).
+- **Quem move** é `servico:oraculo`, como Líder (a triagem é dele), com nota curta ("dono da tarefa: <lugar>",
+  "assumida no Oráculo", …) no andamento; a sessão do lugar novo vem do resolvedor da ronda (lugar → sessão viva aqui)
+  e entra depois do movimento (`fillSession`). Cartão que mudou entre a leitura e a escrita: o compare-and-swap recusa,
+  sai uma linha no log e a próxima ronda resolve.
+- **Onde roda.** Na `ronda` (a cada 15 min), antes do vigia (`followOracle`), e uma vez à mão:
+  `board-cron.mjs sincronizar [--seco] [--ledger <arquivo>]`, que imprime cada mudança (`--seco` abre o quadro e o
+  ledger só para leitura). O vigia não manda mais o Líder "mover para Feito". Sem gancho novo no portão: o
+  `afterAssume` já dá o cartão a quem assume na hora, e o resto (transferir, aceitar, cancelar) espera no máximo uma
+  ronda; um gancho no portão não cobriria os caminhos de fora dele e pediria deploy do daemon.
+- Quadro no Supabase (sem `sqlite.json`): não segue (o cliente não tem `cardsWithTask`).
 
 ## Fica igual
 

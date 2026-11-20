@@ -208,13 +208,17 @@ export interface DeskState {
 /** The Oráculo's tasks `ids`, read-only (only those rows); a missing ledger = none. */
 export function readDeskStates(file: string, ids: readonly string[]): Map<string, DeskState> {
   const out = new Map<string, DeskState>();
+  for (const [id, task] of readTasksReadOnly(file, ids)) out.set(id, { state: task.state, closed: isClosed(task) });
+  return out;
+}
+
+/** The Oráculo's tasks `ids` whole, read-only (only those rows; never opens a ledger that is not there); none = empty. */
+export function readTasksReadOnly(file: string, ids: readonly string[]): Map<string, LedgerTask> {
+  const out = new Map<string, LedgerTask>();
   if (ids.length === 0 || !existsSync(file)) return out;
-  const put = (task: LedgerTask): void => {
-    out.set(task.id, { state: task.state, closed: isClosed(task) });
-  };
   if (file.endsWith('.json')) {
     const tasks = readLedgerReadOnly(file).tasks;
-    for (const id of ids) if (tasks[id]) put(tasks[id]!);
+    for (const id of ids) if (tasks[id]) out.set(id, tasks[id]!);
     return out;
   }
   const db: DatabaseSync = new DatabaseSync(file, { readOnly: true } as never);
@@ -222,7 +226,7 @@ export function readDeskStates(file: string, ids: readonly string[]): Map<string
     const query = db.prepare('SELECT doc FROM tarefas WHERE id = ?');
     for (const id of new Set(ids)) {
       const row = query.get(id) as { doc: string } | undefined;
-      if (row) put(JSON.parse(row.doc) as LedgerTask);
+      if (row) out.set(id, JSON.parse(row.doc) as LedgerTask);
     }
   } finally {
     db.close();

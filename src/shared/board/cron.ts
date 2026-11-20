@@ -12,8 +12,9 @@
 //   goes to the lane's Líder, who reopens it (`sessao_retomar`): the cron does not reopen a session itself, since the
 //   only ways to open one without the app live inside the daemon (abrir-local.ts) and a third one is not made here.
 //   A card whose task waits for its acceptance on the owner's desk (`desk`: entregue in the Oráculo) is not stopped,
-//   it is waiting for the Revisor; one whose task closed there (accepted, cancelled) goes to the Líder once, to be
-//   moved to Feito. Every other stage is left alone.
+//   it is waiting for the Revisor; one whose task closed there (accepted, cancelled) is not stopped either: the round
+//   moves it to Feito itself before the vigia (task-follow.ts, r-a01b8ca6), so nobody is told to. Every other stage is
+//   left alone.
 // - leader: the PC asked for a lane's Líder (board.leader_requests): wake it if its session is alive, else say why not.
 
 import { isStalled, isValidJustification, STAGE_LABELS, type BoardCard } from './rules';
@@ -169,8 +170,9 @@ export type WakeLog = readonly number[];
 
 export function planVigia(card: CronCard, session: SessionState | null, wakes: WakeLog, now: number): CronAction {
   if (card.stage === 'doing' && card.desk?.state === 'entregue' && !card.desk.closed) return { do: 'skip', card: card.id, why: 'entregue no Oráculo, esperando o aceite' };
-  // Its task closed on the owner's desk (accepted or cancelled): not stopped work, a card nobody moved to Feito.
-  if (card.stage === 'doing' && card.desk?.closed) return leaderOnce(card, now, 'a tarefa dele já fechou no Oráculo (aceita ou cancelada) e o cartão segue em Fazendo; mova-o para Feito', 'once');
+  // Its task closed on the owner's desk (accepted or cancelled): not stopped work. The round's follow of the Oráculo
+  // (task-follow.ts) moves it to Feito before the vigia; one still here lost that move's race and goes next round.
+  if (card.stage === 'doing' && card.desk?.closed) return { do: 'skip', card: card.id, why: 'fechada no Oráculo; a ronda leva o cartão a Feito' };
   const open = Boolean(card.sessionId && session?.alive);
   // An open session that is working (a long tool call) or whose transcript says nothing is never woken.
   if (open && session!.idleSince === null) return { do: 'skip', card: card.id, why: 'sessão trabalhando' };

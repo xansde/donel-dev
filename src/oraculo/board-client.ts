@@ -68,6 +68,11 @@ export interface BoardCronStore {
   overview(): Promise<readonly import('../shared/board/page').OverviewRow[]>;
   /** Every card not done, plus the ones done in the last 3 days, for the page. */
   pageCards(): Promise<readonly import('../shared/board/page').PageCard[]>;
+  /**
+   * t-8406f473 (r-a01b8ca6) — the cards of Oráculo tasks (`oraculo_id`) not done, plus the ones done in the last days,
+   * for the round to follow their tasks. Absent = this board cannot (the Supabase one): its cards do not follow.
+   */
+  cardsWithTask?(): Promise<readonly CardRow[]>;
 }
 
 export interface CreateCardArgs {
