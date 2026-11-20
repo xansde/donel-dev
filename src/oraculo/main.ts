@@ -33,6 +33,7 @@ import { createLedgerService, nodeLedgerProofFs } from '../main/ledger-store';
 import { pickTailscaleAddress } from '../main/celular/tailscale';
 import { createGateHandler, GATE_PORT, startGateServer, tunnelForward } from './portao';
 import { createGateRecados, tmuxLocalSessions } from './recados';
+import { FIRST_MESSAGES_FILE, placeOfSessionIn, rememberFirstMessage } from './primeiras';
 import { createProbe } from './sonda';
 import { createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteSync, createSatelliteTaskMemory } from './satelite';
 import { createOpenLocal, readOpenKit, roomRefusal, sweepUnfinishedOpenings } from './abrir-local';
@@ -110,6 +111,8 @@ async function runSatellite(dir: string, url: string): Promise<void> {
     reviewLinked: createSatelliteReviewLink(remote),
     picture: localPicture.get,
     relay: notices.send,
+    firstMessages: join(dir, FIRST_MESSAGES_FILE),
+    placeOf: placeOfSessionIn(sessionsDir),
   });
   // t-d461e003 — the picture to the personal VPS, and the messages waiting there for this machine's sessions (the Líder
   // único's, with the PC off): into these recados; one whose session is not here goes back as a notice (the PC's relay).
@@ -160,6 +163,7 @@ async function runSatellite(dir: string, url: string): Promise<void> {
       pictureWithoutPc: localPicture.withoutPc,
       forward: tunnelForward,
       serverVersion: 'oraculo-satelite',
+      firstMessage: (placeId, pedido) => rememberFirstMessage(join(dir, FIRST_MESSAGES_FILE), placeId, pedido, Date.now()),
       recados,
       abrir: openLocal,
     }),

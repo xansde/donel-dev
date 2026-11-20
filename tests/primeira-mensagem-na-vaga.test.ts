@@ -1,0 +1,388 @@
+// t-f66595b2 — a session that waits for a slot in the limitador (claude.sh held by `limitador.py espera`, up to 4 h)
+// lost its opening request: the app on the PC types it only within 240 s of opening the tab, and nobody types it when
+// the CLI finally comes up. What breaks without the owner noticing: a session alive for hours on an empty box, holding
+// a slot and doing nothing, and a recado to it that never goes in (it has no transcript yet) until it goes stale.
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { createSystemConfigIoDeps } from '../src/main/config-store';
+import { createLedgerService, nodeLedgerProofFs } from '../src/main/ledger-store';
+import { createGateHandler, type BoardPicture, type GateForward } from '../src/oraculo/portao';
+import { createGateRecados, type RecadosTmux } from '../src/oraculo/recados';
+import { withTaskHeader } from '../src/shared/mindscape/task-header';
+
+const io = createSystemConfigIoDeps();
+const dirs: string[] = [];
+afterEach(() => {
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+const PROJECT = '/home/dono/seazone/atlas';
+const PLACE = 'place:revisor-novo';
+const SID = '5b767b87-2222-4333-8444-555555555555';
+const PEDIDO = '[t-1234abcd] Revisar o PR 12: confira o teste e mescle se o verify estiver verde.';
+
+/** A screen of the CLI with the input field between the two last rules. */
+function boxScreen(field: string): string {
+  return ['╭───╮', '│ Claude Code │', '╰───╯', '', '─'.repeat(40), `❯ ${field}`, '─'.repeat(40), '  ? for shortcuts'].join('\n');
+}
+/** What the tmux shows while claude.sh waits in the limitador: no input field at all. */
+const WAITING = 'VPS pessoal sem vaga (vivas: 5 de 5). Esperando a vaga (até 240 min)…';
+
+function setup() {
+  const dir = mkdtempSync(join(tmpdir(), 'primeira-'));
+  dirs.push(dir);
+  let clock = Date.UTC(2026, 10, 20, 5);
+  const live = new Set([SID]);
+  const screens = new Map<string, string>([[SID, WAITING]]);
+  const typed: { sid: string; text: string }[] = [];
+  /** tmux refuses the next typings (it said no: the text may or may not be in the field). */
+  let refusals = 0;
+  /** The first user message of each session's transcript (what the PC pasted, or the first typing it took). */
+  const firstUser = new Map<string, string>();
+  /** No transcript is ever found (the CLI wrote it where the daemon does not look). */
+  let lostTranscript = false;
+  /** No entry = no transcript yet (the CLI never started a conversation). */
+  const turns = new Map<string, { ended: boolean; at: number; empty?: boolean }>();
+  const inTranscript = new Map<string, string[]>();
+  const tmux: RecadosTmux = {
+    screen: async (sid) => ({ inMode: false, text: screens.get(sid) ?? WAITING }),
+    type: async (sid, text) => {
+      typed.push({ sid, text });
+      if (refusals > 0) {
+        refusals -= 1;
+        return false;
+      }
+      return true;
+    },
+    enter: async () => true,
+    clear: async () => true,
+  };
+  const picture: BoardPicture = { at: clock, sessoes: { [SID]: { quemSou: { nome: 'Revisor · atlas', pasta: PROJECT, lugar: PLACE, papel: 'revisor' }, listar: [] } } };
+  const firstFile = join(dir, 'primeiras.json');
+  const recados = createGateRecados({
+    file: join(dir, 'recados.json'),
+    io,
+    ledger: () => null,
+    picture: () => picture,
+    localSessions: async () => new Set(live),
+    tmux,
+    relay: async () => undefined,
+    transcriptOf: async (sid) => (turns.has(sid) && !lostTranscript ? `/transcripts/${sid}.jsonl` : undefined),
+    lastTurn: async (path) => turns.get(path.replace(/^.*\/|\.jsonl$/g, '')) ?? null,
+    transcriptHas: async (path, label) => (inTranscript.get(path.replace(/^.*\/|\.jsonl$/g, '')) ?? []).some((line) => line.includes(label)),
+    firstUserText: async (path) => firstUser.get(path.replace(/^.*\/|\.jsonl$/g, '')) ?? null,
+    firstMessages: firstFile,
+    placeOf: (sid) => (sid === SID ? PLACE : undefined),
+    now: () => clock,
+    log: () => undefined,
+  });
+  /** The CLI took what was typed: its words are the first message of the transcript. */
+  const cliTakes = (): void => {
+    turns.set(SID, { ended: false, at: clock, empty: false });
+    inTranscript.set(SID, typed.map((entry) => entry.text));
+    if (!firstUser.has(SID) && typed[0]) firstUser.set(SID, typed[0].text);
+    screens.set(SID, `${boxScreen('')}\n  esc to interrupt`);
+  };
+  /** The app on the PC pasted `text` (with its line breaks and its tag): the CLI's first message, and a turn runs. */
+  const pcPastes = (text: string): void => {
+    turns.set(SID, { ended: false, at: clock, empty: false });
+    firstUser.set(SID, text);
+    inTranscript.set(SID, [...(inTranscript.get(SID) ?? []), text]);
+    screens.set(SID, `${boxScreen('')}\n  esc to interrupt`);
+  };
+  /** The turn ended: an idle box (the transcript, when found, says so). */
+  const turnEnds = (): void => {
+    turns.set(SID, { ended: true, at: clock, empty: false });
+    screens.set(SID, boxScreen(''));
+  };
+  const run = async (ms: number, step = 2_000): Promise<void> => {
+    for (let spent = 0; spent < ms; spent += step) {
+      await recados.tick();
+      clock += step;
+    }
+  };
+  const items = (): { id: string; estado: string; texto: string; para: { sid: string } }[] => {
+    const file = join(dir, 'recados.json');
+    return existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as { items: { id: string; estado: string; texto: string; para: { sid: string } }[] }).items : [];
+  };
+  const remember = (pedido = PEDIDO, em = clock): void => writeFileSync(firstFile, JSON.stringify({ items: [{ placeId: PLACE, pedido, em }] }));
+  return {
+    dir,
+    firstFile,
+    recados,
+    screens,
+    typed,
+    turns,
+    inTranscript,
+    cliTakes,
+    pcPastes,
+    turnEnds,
+    run,
+    items,
+    remember,
+    clock: () => clock,
+    refuseNext: (count = 1) => {
+      refusals = count;
+    },
+    loseTranscript: () => {
+      lostTranscript = true;
+    },
+  };
+}
+
+describe('Sessão que espera vaga no limitador: o pedido de abertura entra quando a caixa aparece', () => {
+  it('a caixa só aparece 10 min depois de aberta (o PC já desistiu de colar): o pedido entra uma vez, inteiro, e nunca de novo', async () => {
+    const g = setup();
+    g.remember();
+    // 10 min in the limitador: no field on the screen, nothing typed.
+    await g.run(10 * 60_000);
+    expect(g.typed).toEqual([]);
+    // The slot came: the CLI is up with an empty box. Not typed while the app may still paste it (240 s from the box).
+    g.screens.set(SID, boxScreen(''));
+    await g.run(4 * 60_000);
+    expect(g.typed).toEqual([]);
+    await g.run(90_000);
+    expect(g.typed).toHaveLength(1);
+    expect(g.typed[0]!.sid).toBe(SID);
+    expect(g.typed[0]!.text).toContain(PEDIDO);
+    // Confirmed by the transcript; no more typing, ever; the stored request is gone.
+    g.cliTakes();
+    await g.run(60_000);
+    g.turns.set(SID, { ended: true, at: g.clock() });
+    g.screens.set(SID, boxScreen(''));
+    await g.run(20 * 60_000);
+    expect(g.typed).toHaveLength(1);
+    expect(g.items().filter((item) => item.para.sid === SID).map((item) => item.estado)).toEqual(['entregue']);
+    expect(JSON.parse(readFileSync(g.firstFile, 'utf8')).items).toEqual([]);
+  });
+
+  it('o PC colou o pedido a tempo (a conversa já começou): o guardado não entra em dobro', async () => {
+    const g = setup();
+    g.remember();
+    g.screens.set(SID, boxScreen(''));
+    g.turns.set(SID, { ended: false, at: g.clock(), empty: false });
+    await g.run(20 * 60_000);
+    expect(g.typed).toEqual([]);
+    expect(JSON.parse(readFileSync(g.firstFile, 'utf8')).items).toEqual([]);
+  });
+
+  it('caixa com diálogo na tela ou sessão trabalhando: nada é digitado até ela ficar livre e parada', async () => {
+    const g = setup();
+    g.remember();
+    await g.run(6 * 60_000);
+    g.screens.set(SID, ['Do you trust the files in this folder?', '', '❯ 1. Yes, proceed', '  2. No, exit', '', 'Enter to confirm · Esc to cancel'].join('\n'));
+    await g.run(5 * 60_000);
+    expect(g.typed).toEqual([]);
+    g.screens.set(SID, boxScreen(''));
+    await g.run(4 * 60_000);
+    expect(g.typed).toEqual([]);
+    await g.run(2 * 60_000);
+    expect(g.typed).toHaveLength(1);
+  });
+
+  it('o PC colou o pedido (a 1ª mensagem do transcript é ele, com quebras e a etiqueta): o portão não entrega de novo', async () => {
+    const g = setup();
+    const pedido = `${PEDIDO}\n\n1. rode o verify\n2. mescle`;
+    g.remember(pedido);
+    g.screens.set(SID, boxScreen(''));
+    // The gate's typing went to a tmux that said no: the item waits in the queue.
+    g.refuseNext();
+    await g.run(8 * 60_000);
+    expect(g.typed).toHaveLength(1);
+    // Meanwhile the app on the PC pasted the request (its line breaks kept, its tag at the end), and the turn ended.
+    g.pcPastes(`  ${pedido}  #sem-esteira`);
+    await g.run(60_000);
+    g.turnEnds();
+    await g.run(20 * 60_000);
+    expect(g.typed).toHaveLength(1);
+    expect(g.items().filter((item) => item.para.sid === SID).map((item) => item.estado)).toEqual(['entregue']);
+  });
+
+  const TASK = { id: 't-1234abcd', titulo: 'Revisar PR 12', criterio: 'PR mesclado.' };
+  const REVIEW = 'Revise o PR 12.\n\n1. rode o verify\n2. mescle';
+  /** How the CLI 2.1.319 records a long paste of the app (seen in real transcripts): wrapped, the tag inside. */
+  const wrapped = (text: string): string => `\n\n<pasted_content id="ab12">\n${text}\n</pasted_content id="ab12">\n`;
+
+  it.each([
+    ['colado cru', (pedido: string) => `${withTaskHeader(pedido, TASK)} #sem-esteira`],
+    ['embrulhado em <pasted_content>, como o CLI grava', (pedido: string) => wrapped(`${withTaskHeader(pedido, TASK)} #sem-esteira`)],
+  ])('o PC colou o pedido com a linha da tarefa na frente e a etiqueta (%s): o portão não entrega de novo', async (_, pasted) => {
+    const g = setup();
+    g.remember(REVIEW);
+    g.screens.set(SID, boxScreen(''));
+    g.refuseNext();
+    await g.run(8 * 60_000);
+    expect(g.typed).toHaveLength(1);
+    // The PC's main put "[t-…] título: objetivo" and a blank line in front; its renderer, the tag at the end.
+    g.pcPastes(pasted(REVIEW));
+    await g.run(60_000);
+    g.turnEnds();
+    await g.run(20 * 60_000);
+    expect(g.typed).toHaveLength(1);
+    expect(g.items().filter((item) => item.para.sid === SID).map((item) => item.estado)).toEqual(['entregue']);
+  });
+
+  it.each([
+    ['outro pedido com a mesma linha da tarefa', wrapped(`${withTaskHeader('Feche a worktree do PR 12.', TASK)} #sem-esteira`)],
+    ['o pedido citado depois de outro texto', `[t-9999aaaa] Outra tarefa: outra coisa\n\nNão faça isto agora: ${REVIEW} #sem-esteira`],
+  ])('a 1ª mensagem é %s: não conta como colado, o guardado ainda entra', async (_, first) => {
+    const g = setup();
+    g.remember(REVIEW);
+    g.screens.set(SID, boxScreen(''));
+    g.refuseNext();
+    await g.run(8 * 60_000);
+    expect(g.typed).toHaveLength(1);
+    g.pcPastes(first);
+    await g.run(60_000);
+    g.turnEnds();
+    await g.run(20 * 60_000);
+    expect(g.typed.length).toBeGreaterThan(1);
+    expect(g.typed.at(-1)!.text).toContain('1. rode o verify');
+  });
+
+  it('recado de outra sessão na fila de quem espera vaga: não começa a conversa antes do pedido, que entra uma vez e na frente', async () => {
+    const g = setup();
+    g.remember();
+    await g.recados.deliverLocal({ projectPath: PROJECT, placeId: PLACE, text: '◆ De Líder (lider): está viva? responda quando puder', leaderText: '' });
+    await g.run(10 * 60_000);
+    expect(g.typed).toEqual([]);
+    // The box shows up: the recado's 1 min rule would type it now and the conversation would start without the request.
+    g.screens.set(SID, boxScreen(''));
+    await g.run(90_000);
+    expect(g.typed).toEqual([]);
+    await g.run(5 * 60_000);
+    expect(g.typed).toHaveLength(1);
+    expect(g.typed[0]!.text.indexOf(PEDIDO)).toBeGreaterThanOrEqual(0);
+    expect(g.typed[0]!.text.indexOf(PEDIDO)).toBeLessThan(g.typed[0]!.text.indexOf('está viva?'));
+    g.cliTakes();
+    await g.run(60_000);
+    g.turnEnds();
+    await g.run(30 * 60_000);
+    expect(g.typed.filter((entry) => entry.text.includes(PEDIDO))).toHaveLength(1);
+    expect(g.items().filter((item) => item.para.sid === SID).map((item) => item.estado)).toEqual(['entregue', 'entregue']);
+  });
+
+  it('o dono digitou antes de o pedido entrar (a conversa começou por outro texto): o pedido entra depois, uma vez', async () => {
+    const g = setup();
+    g.remember();
+    g.screens.set(SID, boxScreen(''));
+    await g.run(60_000);
+    // The owner typed in the box (the 1st message is his), a turn ran and ended.
+    g.pcPastes('o que você está esperando?');
+    await g.run(60_000);
+    g.turnEnds();
+    // Typed at the end of that turn; the CLI takes it right away.
+    for (let spent = 0; spent < 10 * 60_000 && !g.typed.length; spent += 2_000) await g.run(2_000);
+    expect(g.typed.filter((entry) => entry.text.includes(PEDIDO))).toHaveLength(1);
+    g.cliTakes();
+    await g.run(60_000);
+    g.turnEnds();
+    await g.run(30 * 60_000);
+    expect(g.typed.filter((entry) => entry.text.includes(PEDIDO))).toHaveLength(1);
+    expect(JSON.parse(readFileSync(g.firstFile, 'utf8')).items).toEqual([]);
+  });
+
+  it('abertura que o app pôs na fila (lançada horas depois da resposta): o portão espera a janela do app a partir da caixa', async () => {
+    const g = setup();
+    // The PC answered 3 h ago ("fila": no slot on its side); the tab was launched just now.
+    g.remember(PEDIDO, g.clock() - 3 * 60 * 60_000);
+    g.screens.set(SID, boxScreen(''));
+    // The app pastes it 200 s after the box showed up (within its 240 s).
+    await g.run(200_000);
+    expect(g.typed).toEqual([]);
+    g.pcPastes(`${PEDIDO} #sem-esteira`);
+    await g.run(60_000);
+    g.turnEnds();
+    await g.run(20 * 60_000);
+    expect(g.typed).toEqual([]);
+    expect(JSON.parse(readFileSync(g.firstFile, 'utf8')).items).toEqual([]);
+  });
+
+  it('sem transcript achado e um turno na tela (o PC pode ter colado): nunca digita às cegas', async () => {
+    const g = setup();
+    g.loseTranscript();
+    g.remember(PEDIDO, g.clock() - 3 * 60 * 60_000);
+    g.screens.set(SID, boxScreen(''));
+    await g.run(150_000);
+    g.pcPastes(PEDIDO);
+    await g.run(60_000);
+    g.turnEnds();
+    await g.run(30 * 60_000);
+    expect(g.typed).toEqual([]);
+  });
+
+  it('pedido maior que o teto do tmux: digita o começo e aponta o arquivo com o pedido inteiro', async () => {
+    const g = setup();
+    const long = `${PEDIDO}\n${'linha do pedido com acentuação. '.repeat(900)}`;
+    g.remember(long);
+    g.screens.set(SID, boxScreen(''));
+    // Typed 5 min after the box showed up; the CLI takes it right away.
+    await g.run(5 * 60_000 + 10_000);
+    expect(g.typed).toHaveLength(1);
+    const text = g.typed[0]!.text;
+    expect(Buffer.byteLength(text)).toBeLessThan(15_000);
+    expect(text).toContain(PEDIDO);
+    const path = /em (\S+\.md)/.exec(text)?.[1];
+    expect(path).toBeDefined();
+    expect(readFileSync(path!, 'utf8')).toBe(long);
+    expect(statSync(join(g.dir, 'primeiras')).mode & 0o777).toBe(0o700);
+    expect(statSync(path!).mode & 0o777).toBe(0o600);
+    // Delivered (confirmed by the transcript): the file goes.
+    g.cliTakes();
+    await g.run(2 * 60_000);
+    expect(g.items().filter((item) => item.para.sid === SID).map((item) => item.estado)).toEqual(['entregue']);
+    expect(existsSync(path!)).toBe(false);
+  });
+});
+
+describe('Recado para sessão que nunca teve turno (sem transcript)', () => {
+  it('entra quando a caixa está vazia e parada há 1 min; nunca enquanto ela ainda espera vaga', async () => {
+    const g = setup();
+    const sent = await g.recados.deliverLocal({ projectPath: PROJECT, placeId: PLACE, text: '◆ De Líder (lider): retome o trabalho do PR 12', leaderText: '' });
+    expect(sent).toEqual({ placeId: PLACE });
+    await g.run(30 * 60_000);
+    expect(g.typed).toEqual([]);
+    g.screens.set(SID, boxScreen(''));
+    await g.run(30_000);
+    expect(g.typed).toEqual([]);
+    await g.run(60_000);
+    expect(g.typed).toHaveLength(1);
+    expect(g.typed[0]!.text).toContain('retome o trabalho do PR 12');
+  });
+});
+
+describe('Portão: o pedido de um sessao_abrir que o PC abriu fica guardado', () => {
+  it('resposta ok do PC guarda lugar e pedido; erro do PC não guarda nada', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'primeira-portao-'));
+    dirs.push(dir);
+    const sessions = join(dir, 's');
+    const caller = '11111111-2222-4333-8444-555555555555';
+    const token = 'd'.repeat(43);
+    mkdirSync(join(sessions, caller), { recursive: true });
+    writeFileSync(join(sessions, caller, 'meta.json'), JSON.stringify({ sid: caller, mcpToken: token, mcpPort: 25710 }));
+    let answer: unknown = { content: [{ type: 'text', text: JSON.stringify({ lugar: PLACE, nome: 'Revisor', papel: 'revisor', roda: 'VPS pessoal' }) }] };
+    const forward: GateForward = async (_port, request) => ({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: (JSON.parse(request.body) as { id: number }).id, result: answer }),
+    });
+    const remembered: { placeId: string; pedido: string }[] = [];
+    const handle = createGateHandler({
+      sessionsDir: sessions,
+      ledger: () => createLedgerService({ filePath: join(dir, 'ledger.json'), io, proofFs: nodeLedgerProofFs }),
+      picture: () => null,
+      forward,
+      serverVersion: 'teste',
+      firstMessage: (placeId, pedido) => remembered.push({ placeId, pedido }),
+    });
+    const call = (pedido: string) =>
+      handle({ method: 'POST', path: `/s/${caller}/mcp`, authorization: `Bearer ${token}`, headers: {}, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'sessao_abrir', arguments: { papel: 'revisor', pedido } } }) });
+    await call(PEDIDO);
+    expect(remembered).toEqual([{ placeId: PLACE, pedido: PEDIDO }]);
+    answer = { isError: true, content: [{ type: 'text', text: 'Sem vaga.' }] };
+    await call('outro');
+    expect(remembered).toHaveLength(1);
+  });
+});
