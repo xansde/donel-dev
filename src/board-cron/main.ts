@@ -27,6 +27,8 @@
 //     slackSelf: the names and ids the reader shows for the account the sessions write with (a message of it is never
 //       a response); missing = Slack links count only by their deadline, as without a reader.
 //     pagina: folder of the page (index.html); missing = no page.
+// Marks ~/.donel/board/com-cartoes/<sid>: the sessions the gate served the card_* (or whose transcript called one); the
+// vigia wakes only those, and never one that is only slow (a background Bash, a subagent, CPU: the despertador's filter).
 // State ~/.donel/board/estado.json (the vigia's wakes per card, busy fields in a row, and the shadow's own wakes, busy
 // fields and Líder notices, so its log shows the cap, the pause and the Líder as acting would); log ~/.donel/board/cron.log.
 //
@@ -46,6 +48,7 @@ import { join } from 'node:path';
 import type { BoardCronStore, BoardStore, CardRow, LaneRow } from '../oraculo/board-client';
 import { BOARD_SQLITE_CONFIG, chooseBoard, createBoardSqlite, openBoard } from '../oraculo/board-sqlite';
 import { exitAfterFlush } from './exit';
+import { hasCardToolsMark, markCardTools } from '../oraculo/com-cartoes';
 import { countSessionFills, parseHostOf, planSeed, readDeskStates, readLedgerReadOnly, readPictures, runSeed, sessionResolver, type DeskState, type SessionOf } from './semente';
 import { afterBusyField, fieldHoldsOnlyNotice, fieldIsFree, fieldTextOf, followCardSession, followLaneLeaders, groupNotices, LABEL, linkKind, othersOnGithub, othersOnSlack, pickLeader, planJustify, planVigia, responseSince, withShadowNotice, type CronAction, type CronCard, type GithubReading, type SessionState, type ShadowNotice } from '../shared/board/cron';
 import { currentConversation, pickLocalLeader, readLeaderMeta } from '../oraculo/lider-local';
@@ -226,9 +229,167 @@ function idleSince(uuid: string): number | null {
   return null;
 }
 
-function sessionState(uuid: string | null): SessionState | null {
+/**
+ * `vigia`: also whether it is only slow (`busy`) and whether it has the `card_*` (`cards`), the vigia's own skips; the
+ * justification cron and the lanes do not need them (and the CPU photos cost 3 s).
+ */
+function sessionState(uuid: string | null, vigia = false): SessionState | null {
   if (!uuid || !UUID.test(uuid)) return null;
-  return { alive: tmux(['has-session', '-t', `donel-${uuid}`]).ok, idleSince: idleSince(uuid) };
+  const alive = tmux(['has-session', '-t', `donel-${uuid}`]).ok;
+  const idle = idleSince(uuid);
+  if (!vigia || !alive || idle === null) return { alive, idleSince: idle, cards: false };
+  const busy = slowOnly(uuid);
+  return { alive, idleSince: idle, cards: hasCards(uuid), ...(busy ? { busy } : {}) };
+}
+
+// --- only slow, not stopped (porte do despertador_sessoes.py, t-6a3a9a2c item 4) ----------------------------------
+
+/** A subagent's transcript (a Workflow, an Agent in the background) changed less than this ago: only slow. */
+const SUBAGENT_RECENT_MS = 10 * 60 * 1000;
+/** The claude of the session used at least this share of one core between the two photos: only slow. */
+const CPU_BUSY_PCT = 5;
+const PHOTO_GAP_MS = 3_000;
+
+interface Proc {
+  readonly comm: string;
+  readonly ppid: number;
+  readonly ticks: number;
+  readonly cmd: string;
+}
+
+/** pid → its name, parent, CPU ticks (user + system) and cmdline (cut). Only reads /proc. */
+function photoOfProcesses(): Map<number, Proc> {
+  const out = new Map<number, Proc>();
+  let pids: string[];
+  try {
+    pids = readdirSync('/proc').filter((name) => /^\d+$/.test(name));
+  } catch {
+    return out;
+  }
+  for (const pid of pids) {
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+      const cmd = readFileSync(`/proc/${pid}/cmdline`).subarray(0, 400).toString('utf8').replace(/\0/g, ' ');
+      const open = stat.indexOf('(');
+      const close = stat.lastIndexOf(')');
+      const rest = stat.slice(close + 2).split(' ');
+      out.set(Number(pid), { comm: stat.slice(open + 1, close), ppid: Number(rest[1]), ticks: Number(rest[11]) + Number(rest[12]), cmd });
+    } catch {
+      continue; // gone between the listing and the read
+    }
+  }
+  return out;
+}
+
+/** Two photos of /proc, PHOTO_GAP_MS apart, once per round (taken the first time a session needs them). */
+let photos: { readonly before: Map<number, Proc>; readonly after: Map<number, Proc>; readonly seconds: number } | null = null;
+function roundPhotos(): NonNullable<typeof photos> {
+  if (photos) return photos;
+  const before = photoOfProcesses();
+  const start = Date.now();
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, PHOTO_GAP_MS);
+  const after = photoOfProcesses();
+  photos = { before, after, seconds: (Date.now() - start) / 1000 };
+  return photos;
+}
+
+/** Clock ticks per second of /proc/<pid>/stat (USER_HZ: 100 on Linux, which Node cannot ask). */
+const CLOCK_TICKS = 100;
+
+/** Why the session is only slow: a Bash of its claude still running, or its claude tree using CPU; null = neither. */
+function processBusy(uuid: string): string | null {
+  const { before, after, seconds } = roundPhotos();
+  const pane = Number(tmux(['display', '-p', '-t', `donel-${uuid}`, '#{pane_pid}']).out.trim());
+  const roots = [...after.entries()].filter(([pid, proc]) => pid === pane || (proc.comm === 'claude' && proc.cmd.includes(uuid))).map(([pid]) => pid);
+  if (!roots.length) return null;
+  const children = new Map<number, number[]>();
+  for (const [pid, proc] of after) children.set(proc.ppid, [...(children.get(proc.ppid) ?? []), pid]);
+  const tree: number[] = [];
+  const stack = [...roots];
+  const seen = new Set<number>();
+  while (stack.length) {
+    const pid = stack.pop()!;
+    if (seen.has(pid)) continue;
+    seen.add(pid);
+    tree.push(pid);
+    stack.push(...(children.get(pid) ?? []));
+  }
+  if (tree.some((pid) => !roots.includes(pid) && after.get(pid)!.cmd.includes('shell-snapshots'))) return 'comando do Bash ainda rodando';
+  const ticks = tree.reduce((sum, pid) => sum + after.get(pid)!.ticks - (before.get(pid)?.ticks ?? after.get(pid)!.ticks), 0);
+  const pct = (ticks / CLOCK_TICKS / Math.max(seconds, 0.1)) * 100;
+  return pct >= CPU_BUSY_PCT ? `usando CPU (${Math.round(pct)}%)` : null;
+}
+
+/** Why the session waits on a subagent: a file under `<transcript without .jsonl>/subagents/` changed in the last 10 min. */
+function subagentBusy(uuid: string, now: number): string | null {
+  const path = transcriptOf(uuid);
+  if (!path) return null;
+  let newest = 0;
+  const walk = (dir: string): void => {
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      const full = join(dir, name);
+      try {
+        const st = statSync(full);
+        if (st.isDirectory()) walk(full);
+        else newest = Math.max(newest, st.mtimeMs);
+      } catch {
+        continue;
+      }
+    }
+  };
+  walk(join(path.replace(/\.jsonl$/, ''), 'subagents'));
+  return now - newest < SUBAGENT_RECENT_MS ? `subagente em segundo plano escreveu há ${Math.max(0, Math.round((now - newest) / 60_000))} min` : null;
+}
+
+function slowOnly(uuid: string): string | null {
+  return subagentBusy(uuid, Date.now()) ?? processBusy(uuid);
+}
+
+/**
+ * Whether the session has the `card_*` tools: the gate's mark, or its transcript already called one (a session born
+ * before the mark). Found in the transcript, the mark is written, so the next rounds do not read it again.
+ */
+function hasCards(uuid: string): boolean {
+  if (hasCardToolsMark(DIR, uuid)) return true;
+  const path = transcriptOf(uuid);
+  if (!path || !transcriptCalls(path, '"name":"mcp__donel__card_')) return false;
+  try {
+    markCardTools(DIR, uuid);
+  } catch {
+    // the next round reads the transcript again
+  }
+  return true;
+}
+
+/** Streams the transcript (never read whole) for `needle`, 1 MB at a time with an overlap. */
+function transcriptCalls(path: string, needle: string): boolean {
+  let fd: number;
+  try {
+    fd = openSync(path, 'r');
+  } catch {
+    return false;
+  }
+  try {
+    const chunk = Buffer.alloc(1024 * 1024);
+    let position = 0;
+    let carry = '';
+    for (;;) {
+      const read = readSync(fd, chunk, 0, chunk.length, position);
+      if (read <= 0) return false;
+      position += read;
+      const text = carry + chunk.subarray(0, read).toString('utf8');
+      if (text.includes(needle)) return true;
+      carry = text.slice(-needle.length);
+    }
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function fieldFree(uuid: string): { free: boolean; why: string } {
@@ -640,9 +801,10 @@ async function ronda(client: Client, config: CronConfig): Promise<void> {
         const shadow = config.vigiaSombra;
         const view = shadow ? withShadowNotice(card, state.sombra.leader[card.id]) : card;
         const memory = shadow ? state.sombra : state;
-        const action = planVigia(view, sessionState(card.sessionId), memory.wakes[card.id] ?? [], now);
+        const action = planVigia(view, sessionState(card.sessionId, true), memory.wakes[card.id] ?? [], now);
         if (action.do === 'skip') delete memory.busy[card.id];
         else woke++;
+        if (action.do === 'skip' && (action.why.startsWith('só lenta') || action.why === 'sessão sem card_*')) log(`${shadow ? '[sombra] ' : ''}vigia: cartão ${card.id} (sessão ${card.sessionId}) ${action.why}; não acordo`);
         if (action.do === 'skip' && action.why.startsWith('entregue')) log(`${shadow ? '[sombra] ' : ''}vigia: cartão ${card.id} ${action.why}; não é parado`);
         const notice = addressee(leaders, view, action, 'vigia', shadow);
         if (notice) notices.push(notice);

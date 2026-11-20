@@ -19,6 +19,7 @@ import { boardName } from '../shared/vigia/board';
 import { clearAdoptedMarks, createOpenLocal, readOpenKit, roomRefusal, sweepUnfinishedOpenings, type ScriptRun } from './abrir-local';
 import type { BoardStore } from './board-client';
 import { BOARD_SQLITE_CONFIG, chooseBoard, openBoard } from './board-sqlite';
+import { markCardTools } from './com-cartoes';
 import { createLocalLeaderFinder, currentConversation } from './lider-local';
 import { RETRATO_PC_FILE } from './modo';
 import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForward, type BoardPicture, type GateDeps, type PictureSession } from './portao';
@@ -30,7 +31,7 @@ import { createLocalPicture, tmuxLiveKnown, tmuxLiveNow } from './retrato-local'
 import { createRemotePictures, createRemotePicturesReader, type RemotePictureView, type RemotePictures } from './retrato-satelite';
 import { createRemoteOpenClient, createRemoteOpenings, type RemoteOpenings } from './abrir-satelite';
 import { GATE_QUEUE_PATH, noticeOf } from './portoes';
-import { createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteTaskMemory, postJson, type SatellitePost } from './satelite';
+import { createSatelliteCardRenewal, createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteTaskMemory, postJson, type SatellitePost } from './satelite';
 import { createProbe } from './sonda';
 import { createEntregadorChat, type EntregadorChat } from './chat-entregador';
 import { createGlossarioStore, glossarioFile } from './glossario';
@@ -418,6 +419,7 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
       ledger: () => null,
       taskOf: tasks.taskOf,
       reviewLinked: createSatelliteReviewLink(remote),
+      renewCard: createSatelliteCardRenewal(remote),
       picture,
       remote: createRemoteQueueClient({ ...remote, view: remoteView }),
       relay: notices.send,
@@ -582,6 +584,8 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
           serverVersion: 'oraculo-vps',
           firstMessage: (placeId, pedido) => rememberFirstMessage(join(dir, FIRST_MESSAGES_FILE), placeId, pedido, Date.now()),
           cards,
+          // t-8406f473 — the sessions served the card_* (the board's vigia wakes only those).
+          markCards: (sid: string) => markCardTools(process.env.DONEL_BOARD_DIR || join(place.home, '.donel', 'board'), sid),
           // t-1a3f7150 (docs/adr/0009) — the Líder único's `sessao_abrir` with the PC off opens the session in this tmux.
           abrir: openLocal,
           // Saída iii — a new phone app's key (the token never leaves the daemon) and the Líder's answer from chat_lider.py.

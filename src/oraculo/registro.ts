@@ -28,7 +28,7 @@ import { createLivroStore } from './livro';
 import { createReturnGuard } from './devolvido';
 import { GATE_PORT, type BoardPicture } from './portao';
 import { createGateToolRoutes, isLocalGate, readGateHashes, type GateRoutes } from './portoes';
-import { renewBeforeTask } from './recados';
+import { renewBeforeCard, renewBeforeTask } from './recados';
 import { createRemotePictures } from './retrato-satelite';
 import { tmuxLiveKnown } from './retrato-local';
 import { createRemoteOpenings } from './abrir-satelite';
@@ -388,7 +388,11 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
     gateRoutes: phonePairRoute(createGateToolRoutes({
       ledger: () => ledger,
       // Apart (passo 9, PR 2), the renewal before a task runs here, beside the ledger: the entregador's recados have none.
-      recados: entregador?.recados ?? { antesDaTarefa: (caller, mine, call) => renewBeforeTask(ledger, caller, mine, call, (line) => console.error(`[oraculo] recados: ${line}`)) },
+      recados: entregador?.recados ?? {
+        antesDaTarefa: (caller, mine, call) => renewBeforeTask(ledger, caller, mine, call, (line) => console.error(`[oraculo] recados: ${line}`)),
+        // t-8406f473 — the entregador apart's card moves (GATE_RENEW_PATH): the same renewal, beside the ledger.
+        antesDoCartao: (caller, mine, taskId) => renewBeforeCard(ledger, caller, mine, taskId, (line) => console.error(`[oraculo] recados: ${line}`)),
+      },
       linkPedido: (pedidoId, tarefa) => void celular?.linkPedido(pedidoId, tarefa),
       notice: toLeader,
       ...(remotes ? { pictures: remotes } : {}),

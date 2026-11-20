@@ -6,7 +6,8 @@
 //   reference time wakes its session; a deadline gone charges it, every CHARGE_EVERY_MS, CHARGE_MAX times; one interval
 //   after the last charge the lane's Líder hears it, once per stage. A session not open on this machine goes straight
 //   to the Líder (charging it would never land).
-// - vigia: only a card in Fazendo with NO justification whose session had no turn for STALL_MS (`isStalled`). A live
+// - vigia: only a card in Fazendo with NO justification whose session had no turn for STALL_MS (`isStalled`), never one
+//   whose open session is only slow (a background Bash, a subagent, CPU) or has no `card_*` tools. A live
 //   session is woken (at most VIGIA_MAX_PER_DAY in 24 h, with a growing pause); a closed one, or one past the cap,
 //   goes to the lane's Líder, who reopens it (`sessao_retomar`): the cron does not reopen a session itself, since the
 //   only ways to open one without the app live inside the daemon (abrir-local.ts) and a third one is not made here.
@@ -49,6 +50,13 @@ export interface SessionState {
    * (a tool call running, a turn not finished) or unknown: the vigia never wakes those.
    */
   readonly idleSince: number | null;
+  /**
+   * t-8406f473 — why it is only slow, not stopped (the despertador's filter): a background Bash of its claude still
+   * running, a subagent that wrote in the last minutes, or its claude using CPU. Absent = none seen.
+   */
+  readonly busy?: string;
+  /** It was served the `card_*` tools (the gate's mark) or already called one: it can move its card. */
+  readonly cards: boolean;
 }
 
 export type LinkKind =
@@ -166,6 +174,10 @@ export function planVigia(card: CronCard, session: SessionState | null, wakes: W
   const open = Boolean(card.sessionId && session?.alive);
   // An open session that is working (a long tool call) or whose transcript says nothing is never woken.
   if (open && session!.idleSince === null) return { do: 'skip', card: card.id, why: 'sessão trabalhando' };
+  // t-8406f473 — a turn ended while a background job works is only slow; a session with no card_* cannot move its card,
+  // so waking it (or telling the Líder it stopped) only nags. Both as the despertador: nothing typed, nothing escalated.
+  if (open && session!.busy) return { do: 'skip', card: card.id, why: `só lenta: ${session!.busy}` };
+  if (open && !session!.cards) return { do: 'skip', card: card.id, why: 'sessão sem card_*' };
   const lastTurn = open ? session!.idleSince! : card.stageSince;
   if (!isStalled(card, lastTurn, now)) return { do: 'skip', card: card.id, why: 'não está parado sem justificativa' };
   const idle = minutes(now - Math.max(lastTurn, card.stageSince));

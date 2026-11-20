@@ -170,6 +170,11 @@ export interface GateRecadosDeps {
    * the ledger's machine; `null` = it did not answer, and the message goes on to the PC, which decides).
    */
   readonly reviewLinked?: (mine: PictureSession, from: string, to: string) => Promise<boolean | null>;
+  /**
+   * t-8406f473 — the renewal before a card move, asked of the ledger's machine when `ledger()` is null (the entregador
+   * apart: `createSatelliteCardRenewal`). Absent = nothing follows there.
+   */
+  readonly renewCard?: (mine: PictureSession, taskId: string) => Promise<void>;
   readonly picture: () => BoardPicture | null;
   /** The sessions alive in this machine's tmux (folder sids). Default: `tmux -L donel ls`. */
   readonly localSessions?: () => Promise<ReadonlySet<string>>;
@@ -830,13 +835,23 @@ function workedTaskIds(call: LedgerToolCall): string[] | undefined {
  * another process (the entregador apart, a satellite), so the renewal is always beside the ledger.
  */
 export async function renewBeforeTask(service: LedgerService, caller: LedgerCaller, mine: PictureSession, call: LedgerToolCall, log: (line: string) => void): Promise<void> {
-  const places = listedPlaces(mine.listar);
-  const closed = places.filter((place) => place.estado === 'fechada' && successorOf(mine.board, places, place.id) === caller.placeId);
-  if (!closed.length) return;
   // Only the task the call works on follows (§6): a read (tarefa_ver), listar, criar or novidades takes nothing, so
   // a sibling of the same role that only looks at it never takes it.
   const ids = workedTaskIds(call);
-  if (!ids?.length) return;
+  if (ids?.length) await renewTasks(service, caller, mine, ids, log);
+}
+
+/**
+ * t-8406f473 — before a `card_move`/`card_justify` of a card that carries an Oráculo task (`oraculo_id`): moving the card
+ * works the task as a `tarefa_andamento` does, so the task of a closed place whose successor is the caller follows it.
+ */
+export async function renewBeforeCard(service: LedgerService, caller: LedgerCaller, mine: PictureSession, taskId: string, log: (line: string) => void): Promise<void> {
+  if (taskId) await renewTasks(service, caller, mine, [taskId], log);
+}
+
+async function renewTasks(service: LedgerService, caller: LedgerCaller, mine: PictureSession, ids: readonly string[], log: (line: string) => void): Promise<void> {
+  const places = listedPlaces(mine.listar);
+  const closed = places.filter((place) => place.estado === 'fechada' && successorOf(mine.board, places, place.id) === caller.placeId);
   for (const place of closed) {
     const passed = await followRenewal(service, { projectPath: caller.projectPath, placeId: place.id, to: caller.placeId, ids });
     if (passed.length) log(`renovação: ${passed.join(', ')} de ${place.id} para ${caller.placeId}`);
@@ -1932,6 +1947,13 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     async antesDaTarefa(caller, mine, call) {
       const service = deps.ledger();
       if (service) await renewBeforeTask(service, caller, mine, call, log);
+    },
+
+    async antesDoCartao(caller, mine, taskId) {
+      const service = deps.ledger();
+      if (service) await renewBeforeCard(service, caller, mine, taskId, log);
+      // Apart (the entregador with no ledger here): the registro runs it, beside the ledger.
+      else if (deps.renewCard) await deps.renewCard(mine, taskId);
     },
 
     depoisDaTarefa(_sid, mine, caller, call, answerText) {
