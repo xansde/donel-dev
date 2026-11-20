@@ -1,14 +1,15 @@
 // Quadro de tarefas (t-1e354d15), PR 3 — the board's cron on the VPS, one self-contained Node file
 // (`out/board-cron/board-cron.mjs`, board-cron.vite.config.ts). Plan: docs/design/quadro-de-tarefas.md §5–§7.
 //
-//   node board-cron.mjs ronda   every 15 min: justification cron, vigia, lanes alive, page
+//   node board-cron.mjs ronda   every 15 min: lanes follow their Líder, justification cron, vigia, lanes alive, page
 //   node board-cron.mjs lider   every minute: the PC's requests for a lane's Líder (board.leader_requests)
 //   node board-cron.mjs semear [--seco] [--ledger <arquivo>] [--host <host>] [--pc-raiz <C:\...\seazone>]
 //                               once, by hand: projects and one card per live task of the Oráculo (semente.ts), with
 //                               the session of its place from the Oráculo's pictures; the Oráculo's ledger read-only;
 //                               --seco prints the plan and only reads (the board too, to count the sessions it would fill)
 //   node board-cron.mjs raia <projeto> <lugar> [<sessão>]
-//                               by hand: the lane's Líder (touch_lane with force), for a Líder with no card_* tools
+//                               by hand: the lane's Líder (touch_lane with force), for a Líder with no card_* tools;
+//                               no <sessão> = the session alive here that holds the place now (as the round does)
 //
 // Config (nothing hardcoded: the repo goes public):
 //   ~/.donel/board/sqlite.json    {file}                            the board in a SQLite of this machine (20/11)
@@ -31,7 +32,8 @@
 // and confirming it in the transcript — the despertador's way (~/bin/rotinas/despertador_sessoes.py). The transcript is
 // the conversation the tmux carries now (`current` in the session's folder, lider-local.ts: a resume or `/clear` moves
 // it), else `<sid>.jsonl`. A notice for a lane's Líder goes to the lane's Líder alive here, else to the Líder único
-// alive here (the daemon's own pick, lider-local.ts).
+// alive here (the daemon's own pick, lider-local.ts). Each round first moves every lane to the session alive here that
+// holds its Líder's place now (followLanes), and a session gets at most one notice per round, with all its cards.
 
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, rmdirSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, closeSync, renameSync, statSync, writeFileSync, fstatSync } from 'node:fs';
@@ -40,13 +42,14 @@ import { join } from 'node:path';
 import type { BoardCronStore, BoardStore, CardRow, LaneRow } from '../oraculo/board-client';
 import { BOARD_SQLITE_CONFIG, chooseBoard, createBoardSqlite, openBoard } from '../oraculo/board-sqlite';
 import { countSessionFills, planSeed, readDeskStates, readLedgerReadOnly, readPictures, runSeed, sessionResolver, type DeskState } from './semente';
-import { afterBusyField, fieldHoldsOnlyNotice, fieldIsFree, fieldTextOf, LABEL, linkKind, othersOnGithub, othersOnSlack, pickLeader, planJustify, planVigia, responseSince, withShadowNotice, type CronAction, type CronCard, type GithubReading, type SessionState, type ShadowNotice } from '../shared/board/cron';
+import { afterBusyField, fieldHoldsOnlyNotice, fieldIsFree, fieldTextOf, followLaneLeaders, groupNotices, LABEL, linkKind, othersOnGithub, othersOnSlack, pickLeader, planJustify, planVigia, responseSince, withShadowNotice, type CronAction, type CronCard, type GithubReading, type SessionState, type ShadowNotice } from '../shared/board/cron';
 import { currentConversation, pickLocalLeader, readLeaderMeta } from '../oraculo/lider-local';
 import type { BoardPicture } from '../oraculo/portao';
 import { renderBoardPage } from '../shared/board/page';
 
 const HOME = homedir();
-const DIR = join(HOME, '.donel', 'board');
+/** The board's folder (config, state, log); another one only for a dry run on a copy (DONEL_BOARD_DIR). */
+const DIR = process.env.DONEL_BOARD_DIR || join(HOME, '.donel', 'board');
 const LOG = join(DIR, 'cron.log');
 const STATE = join(DIR, 'estado.json');
 /** The tmux socket of the Donel's sessions; another one only in the end-to-end test. */
@@ -439,70 +442,139 @@ interface RoundLeaders {
   leaderOfAll(): string | null;
 }
 
-/** Does the action; true when its notice reached someone (in shadow: would have). */
-async function act(client: Client, leaders: RoundLeaders, card: CronCard, action: CronAction, who: string, shadow: boolean, state: State, now: number): Promise<boolean> {
-  if (action.do === 'skip') return false;
-  // The shadow goes through the same steps (it reads the field, the typing lock and the Líder's tmux, which changes
-  // nothing) and keeps its own marks, so its log shows the cap, the pause and the Líder exactly where acting would.
-  const tag = shadow ? '[sombra] ' : '';
-  const memory: Memory = shadow ? state.sombra : state;
-  if (action.do === 'wake') {
-    const result = shadow ? wouldWake(action.session) : wakeSession(action.session, action.text);
-    log(`${tag}${who}: ${shadow ? 'acordaria' : 'acordar'} a sessão ${action.session} (cartão ${card.id}, ${action.mark}): ${result}`);
-    if (result.startsWith('campo:')) {
-      // Nothing typed and nothing marked. From BUSY_MAX rounds in a row on, the Líder hears it; the count goes back to
-      // zero only when the Líder did (closed or busy, the next round tries again).
-      const busy = (memory.busy[card.id] ?? 0) + 1;
-      memory.busy[card.id] = busy;
-      const next = afterBusyField(card, busy, result.slice('campo: '.length), memory.busyHeard[card.id] ?? null, now);
-      if (next.do === 'skip') {
-        log(`${tag}${who}: cartão ${card.id}: ${next.why}`);
-        return false;
-      }
-      if (await act(client, leaders, card, next, who, shadow, state, now)) {
-        delete memory.busy[card.id];
-        memory.busyHeard[card.id] = now;
-      }
-      return false;
+/**
+ * The lanes' Líder follows its place (devolução do Revisor, 20/11): the place's session alive in this machine's tmux,
+ * by the seed's own resolver (`sessionResolver`) over the pictures, with the liveness test; the lane `lider`, the
+ * Líder único alive here (the daemon's pick). A session of another machine (`portoes-retrato/*.json`) is never in this
+ * tmux, so it never resolves: the notice goes only to a session this cron can type into, and the lane of a Líder on
+ * another machine keeps what it has (the reserve). Nothing resolves = the lane keeps its session, as before.
+ */
+async function followLanes(client: Client, lanes: readonly LaneRow[], leaderOfAll: () => string | null): Promise<LaneRow[]> {
+  const live = liveSessions();
+  if (!live) return [...lanes];
+  const sessionOf = sessionResolver(readPictures(ORACULO_DIR), (sid) => live.has(sid));
+  const out = [...lanes];
+  for (const follow of followLaneLeaders(lanes, sessionOf, leaderOfAll)) {
+    try {
+      await client.touchLane(follow.project, follow.place, follow.session, true);
+      const at = out.findIndex((lane) => lane.project_id === follow.project);
+      out[at] = { ...out[at]!, leader_session: follow.session, leader_seen_at: new Date().toISOString() };
+      log(`raia ${follow.project}: Líder ${follow.place} agora na sessão ${follow.session} (era ${follow.was ?? 'nenhuma'})`);
+    } catch (error) {
+      log(`raia ${follow.project}: Líder ${follow.place} não gravado (${error instanceof Error ? error.message : String(error)})`);
     }
-    delete memory.busy[card.id];
-    // Typed counts even unconfirmed (the text is on the screen): the cap and the pause must hold, as in the despertador.
-    // The local cap first: it holds even if the mark below fails.
-    if (who === 'vigia') memory.wakes[card.id] = [...(memory.wakes[card.id] ?? []), now];
-    if (!shadow) await client.markCron(card.id, action.mark);
-    return true;
   }
+  return out;
+}
+
+/** A notice planned for one card this round, before the one per session goes out. */
+interface Notice {
+  readonly card: CronCard;
+  readonly action: Extract<CronAction, { do: 'wake' | 'leader' }>;
+  readonly who: 'vigia' | 'justificativa';
+  readonly shadow: boolean;
+  readonly session: string;
+  /** What the log says of this card (who is told and why). */
+  readonly says: string;
+}
+
+/** Who hears a card's action; null when nobody can (logged, nothing marked: the next round tries again). */
+function addressee(leaders: RoundLeaders, card: CronCard, action: CronAction, who: Notice['who'], shadow: boolean): Notice | null {
+  if (action.do === 'skip') return null;
+  const tag = shadow ? '[sombra] ' : '';
+  if (action.do === 'wake') return { card, action, who, shadow, session: action.session, says: `${tag}${who}: ${shadow ? 'acordaria' : 'acordar'} a sessão ${action.session} (cartão ${card.id}, ${action.mark})` };
   const lane = leaders.lanes.find((l) => l.project_id === card.projectId);
   const alive = (sid: string): boolean => UUID.test(sid) && tmux(['has-session', '-t', `donel-${sid}`]).ok;
   const pick = pickLeader(lane, alive, leaders.leaderOfAll());
   // "sessão <uuid> fechada; …": the vigia does not reopen a session itself (cron.ts), the Líder does.
   const closed = action.closed ? `sessão ${action.closed} fechada; ` : '';
   if (pick.kind === 'none') {
-    // Not marked: nobody was told, and the next round tries again (a Líder back in 5 min hears it then).
     log(`${tag}${who}: ${closed}cartão ${card.id} precisa do Líder, mas a raia ${card.projectId} está sem Líder aberto aqui (${pick.why}) e o Líder único não está aberto aqui`);
-    return false;
+    return null;
   }
-  const leader = pick.session;
   const leaderName = pick.kind === 'lane' ? `o Líder ${pick.place} da raia ${card.projectId}` : `o Líder único (${pick.why})`;
   const busyField = action.via === 'busy';
-  if (shadow) {
-    const result = wouldWake(leader);
-    log(`${tag}${who}: ${closed}avisaria ${leaderName}, sessão ${leader} (cartão ${card.id}${busyField ? ', campo ocupado' : ''}${action.why ? `: ${action.why}` : ''})${who === 'vigia' ? ' e gravaria a nota no cartão' : ''}: ${result}`);
-    if (result.startsWith('campo:')) return false;
-    if (!busyField) state.sombra.leader[card.id] = { at: now, stageSince: card.stageSince };
-    return true;
+  const says = `${tag}${who}: ${closed}${shadow ? 'avisaria' : 'avisar'} ${leaderName}, sessão ${pick.session} (cartão ${card.id}${busyField ? ', campo ocupado' : ''}${action.why ? `: ${action.why}` : ''})${shadow && who === 'vigia' ? ' e gravaria a nota no cartão' : ''}`;
+  return { card, action, who, shadow, session: pick.session, says };
+}
+
+/**
+ * One notice per session in a round (devolução de 20/11: three cards of one session were three notices in a row). The
+ * real ones and the shadow's go apart (one types, the other only logs); each session is tried once, so a busy field's
+ * escalation to a Líder already tried this round waits for the next one (its busy count holds). Each card keeps its
+ * own marks: woken/charged, the Líder's notice, the vigia's wakes, the busy count and the vigia's note.
+ */
+async function dispatch(client: Client, leaders: RoundLeaders, notices: readonly Notice[], state: State, now: number, tried: Set<string>): Promise<void> {
+  const escalations: Notice[] = [];
+  for (const shadow of [false, true]) {
+    for (const group of groupNotices(notices.filter((n) => n.shadow === shadow), (n) => n.session, (n) => n.action.text)) {
+      const tag = shadow ? '[sombra] ' : '';
+      for (const notice of group.items) log(notice.says);
+      const key = `${shadow}|${group.session}`;
+      if (tried.has(key)) {
+        log(`${tag}sessão ${group.session} já ${shadow ? 'receberia' : 'recebeu'} aviso nesta ronda; ${group.items.map((n) => n.card.id).join(', ')} fica para a próxima`);
+        continue;
+      }
+      tried.add(key);
+      const result = shadow ? wouldWake(group.session) : wakeSession(group.session, group.text);
+      const cards = group.items.map((n) => n.card.id);
+      log(`${tag}${shadow ? 'acordaria' : 'acordou'} a sessão ${group.session} (${cards.length === 1 ? 'cartão' : 'cartões'} ${cards.join(', ')}): ${result}`);
+      for (const notice of group.items) {
+        try {
+          const next = await settle(client, leaders, notice, result, state, now);
+          if (next) escalations.push(next);
+        } catch (error) {
+          log(`cartão ${notice.card.id}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
   }
-  const result = wakeSession(leader, action.text);
-  log(`${who}: ${closed}avisar ${leaderName}, sessão ${leader} (cartão ${card.id}${busyField ? ', campo ocupado' : ''}${action.why ? `: ${action.why}` : ''}): ${result}`);
-  if (result.startsWith('campo:')) return false;
-  // A busy field keeps its own mark (the caller's busyHeard): leader_noticed_at would silence the once-per-stage notices.
+  if (escalations.length) await dispatch(client, leaders, escalations, state, now, tried);
+}
+
+/** The marks of one card after its session's notice; a busy field's escalation to the Líder, when it is due. */
+async function settle(client: Client, leaders: RoundLeaders, notice: Notice, result: string, state: State, now: number): Promise<Notice | null> {
+  const { card, action, who, shadow } = notice;
+  const memory: Memory = shadow ? state.sombra : state;
+  const typed = !result.startsWith('campo:');
+  if (action.do === 'wake') {
+    if (!typed) {
+      // Nothing typed and nothing marked. From BUSY_MAX rounds in a row on, the Líder hears it; the count goes back to
+      // zero only when the Líder did (closed or busy, the next round tries again).
+      const busy = (memory.busy[card.id] ?? 0) + 1;
+      memory.busy[card.id] = busy;
+      const next = afterBusyField(card, busy, result.slice('campo: '.length), memory.busyHeard[card.id] ?? null, now);
+      if (next.do === 'skip') {
+        log(`${shadow ? '[sombra] ' : ''}${who}: cartão ${card.id}: ${next.why}`);
+        return null;
+      }
+      return addressee(leaders, card, next, who, shadow);
+    }
+    delete memory.busy[card.id];
+    // Typed counts even unconfirmed (the text is on the screen): the cap and the pause must hold, as in the despertador.
+    // The local cap first: it holds even if the mark below fails.
+    if (who === 'vigia') memory.wakes[card.id] = [...(memory.wakes[card.id] ?? []), now];
+    if (!shadow) await client.markCron(card.id, action.mark);
+    return null;
+  }
+  if (!typed) return null;
+  const busyField = action.via === 'busy';
+  if (busyField) {
+    delete memory.busy[card.id];
+    memory.busyHeard[card.id] = now;
+  }
+  if (shadow) {
+    if (!busyField) state.sombra.leader[card.id] = { at: now, stageSince: card.stageSince };
+    return null;
+  }
+  // A busy field keeps its own mark (busyHeard above): leader_noticed_at would silence the once-per-stage notices.
   if (!busyField) await client.markCron(card.id, 'leader');
   // Design §6: the card itself says why the Líder was called (board.vigia_note: the vigia is not the card's place).
   if (who === 'vigia') {
     const written = await client.vigiaNote(card.id, busyField ? 'parado sem justificativa; aviso à sessão não entrou (campo ocupado); Líder do quadro avisado' : 'parado sem justificativa; Líder do quadro avisado');
     log(`vigia: nota no cartão ${card.id}: ${written ? 'gravada' : 'não gravada (saiu de Fazendo ou ganhou justificativa)'}`);
   }
-  return true;
+  return null;
 }
 
 /** Lanes whose Líder is alive in tmux and had a turn in the last 30 min stay alive in `board.lanes`. */
@@ -531,11 +603,14 @@ function deskStates(rows: readonly CardRow[]): Map<string, DeskState> {
 async function ronda(client: Client, config: CronConfig): Promise<void> {
   const now = Date.now();
   const state = readState();
-  const [rows, lanes] = await Promise.all([client.parkedOrDoing(config.host), client.lanes(config.host)]);
+  const [rows, storedLanes] = await Promise.all([client.parkedOrDoing(config.host), client.lanes(config.host)]);
   const desk = deskStates(rows);
   let leaderOfAll: string | null | undefined;
-  const leaders: RoundLeaders = { lanes, leaderOfAll: () => (leaderOfAll === undefined ? (leaderOfAll = leaderOfAllHere(now)) : leaderOfAll) };
+  const leaderOfAllOnce = (): string | null => (leaderOfAll === undefined ? (leaderOfAll = leaderOfAllHere(now)) : leaderOfAll);
+  const lanes = await followLanes(client, storedLanes, leaderOfAllOnce);
+  const leaders: RoundLeaders = { lanes, leaderOfAll: leaderOfAllOnce };
   let woke = 0;
+  const notices: Notice[] = [];
   for (const row of rows) {
     const card = cronCard(row, row.oraculo_id ? desk.get(row.oraculo_id) : undefined);
     try {
@@ -546,7 +621,8 @@ async function ronda(client: Client, config: CronConfig): Promise<void> {
         // "rounds in a row": a round with nothing to type (working, waiting, pause) breaks the busy streak
         if (action.do === 'skip') delete state.busy[card.id];
         else woke++;
-        await act(client, leaders, card, action, 'justificativa', false, state, now);
+        const notice = addressee(leaders, card, action, 'justificativa', false);
+        if (notice) notices.push(notice);
       } else {
         const shadow = config.vigiaSombra;
         const view = shadow ? withShadowNotice(card, state.sombra.leader[card.id]) : card;
@@ -555,12 +631,14 @@ async function ronda(client: Client, config: CronConfig): Promise<void> {
         if (action.do === 'skip') delete memory.busy[card.id];
         else woke++;
         if (action.do === 'skip' && action.why.startsWith('entregue')) log(`${shadow ? '[sombra] ' : ''}vigia: cartão ${card.id} ${action.why}; não é parado`);
-        await act(client, leaders, view, action, 'vigia', shadow, state, now);
+        const notice = addressee(leaders, view, action, 'vigia', shadow);
+        if (notice) notices.push(notice);
       }
     } catch (error) {
       log(`cartão ${card.id}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+  await dispatch(client, leaders, notices, state, now, new Set());
   writeState(state, now, new Set(rows.map((row) => row.id)));
   await touchLiveLeaders(client, lanes, now);
   if (config.pagina) {
@@ -576,7 +654,8 @@ async function ronda(client: Client, config: CronConfig): Promise<void> {
 async function lider(client: Client, config: CronConfig): Promise<void> {
   const requests = await client.pendingLeaderRequests(config.host);
   if (requests.length === 0) return;
-  const lanes = await client.lanes(config.host);
+  // the request goes to the lane's Líder where he runs now (followLanes), not to a session he left
+  const lanes = await followLanes(client, await client.lanes(config.host), () => leaderOfAllHere(Date.now()));
   for (const request of requests) {
     const lane = lanes.find((l) => l.project_id === request.project_id);
     const leader = lane?.leader_session && UUID.test(lane.leader_session) ? lane.leader_session : null;
@@ -674,9 +753,16 @@ async function raia(boardFile: string | null): Promise<number> {
     console.error(`[raia] sem ${join(DIR, BOARD_SQLITE_CONFIG)} válido: as raias moram no quadro em SQLite.`);
     return 1;
   }
+  // No session given: the one alive here that holds the place now (the round's own resolution, followLanes).
+  let resolved = session;
+  if (resolved === undefined) {
+    const live = liveSessions();
+    const [follow] = live ? followLaneLeaders([{ project_id: project, leader_place: place, leader_session: null }], sessionResolver(readPictures(ORACULO_DIR), (sid) => live.has(sid)), () => leaderOfAllHere(Date.now())) : [];
+    resolved = follow?.session;
+  }
   const store = createBoardSqlite(boardFile);
   try {
-    await store.touchLane(project, place, session, true);
+    await store.touchLane(project, place, resolved, true);
     const lane = await store.laneOf(project);
     const alive = lane?.leader_session ? (tmux(['has-session', '-t', `donel-${lane.leader_session}`]).ok ? 'aberta aqui' : 'fechada aqui') : 'sem sessão';
     console.log(JSON.stringify({ raia: lane, sessao: alive }));

@@ -100,14 +100,20 @@ const SESSION_PLACE = 'session:';
  * The session of a place, from the pictures this machine has (`retrato.json`, the satellites'): the live holder of the
  * place (a picture entry whose `quemSou.lugar` is the place on that project's board, not handed over to a successor;
  * the newest), else `session:<uuid>`'s own uuid, else the conversation of the place's card on the pictured board.
+ *
+ * `here` (the lanes' Líder, devolução de 20/11): only a session it says is alive in this machine counts, at every step.
+ * A picture keeps a closed holder that never renewed (the Líder reopened, or `/clear`) and the satellites' sessions
+ * live on another machine (`maquina`): without it the newest closed holder wins over the live Líder, whom the freshest
+ * board names. The seed reads without it (a card may name a session closed now, for the Líder to reopen).
  */
-export function sessionResolver(pictures: readonly BoardPicture[]): SessionOf {
+export function sessionResolver(pictures: readonly BoardPicture[], here?: (sid: string) => boolean): SessionOf {
+  const counts = (sid: string): boolean => SESSION_ID.test(sid) && (!here || here(sid));
   const holders = new Map<string, { sid: string; at: number }>();
   const cards = new Map<string, string>();
   for (const picture of pictures) {
     for (const [sid, session] of Object.entries(picture.sessoes ?? {})) {
       const { lugar, pasta } = session.quemSou ?? {};
-      if (typeof lugar !== 'string' || typeof pasta !== 'string' || session.renovadaPara || !SESSION_ID.test(sid)) continue;
+      if (typeof lugar !== 'string' || typeof pasta !== 'string' || session.renovadaPara || !counts(sid)) continue;
       const key = `${projectSlug(projectFolderOf(pasta))}|${lugar}`;
       const at = session.at ?? picture.at ?? 0;
       const known = holders.get(key);
@@ -117,7 +123,7 @@ export function sessionResolver(pictures: readonly BoardPicture[]): SessionOf {
       const project = projectSlug(projectFolderOf(pasta));
       for (const [placeId, card] of Object.entries(board?.cards ?? {})) {
         const key = `${project}|${placeId}`;
-        if (card.kind === 'session' && card.sessionId && SESSION_ID.test(card.sessionId) && !cards.has(key)) cards.set(key, card.sessionId);
+        if (card.kind === 'session' && card.sessionId && counts(card.sessionId) && !cards.has(key)) cards.set(key, card.sessionId);
       }
     }
   }
@@ -125,7 +131,7 @@ export function sessionResolver(pictures: readonly BoardPicture[]): SessionOf {
     const key = `${projectId}|${placeId}`;
     const held = holders.get(key)?.sid;
     if (held) return held;
-    if (placeId.startsWith(SESSION_PLACE) && SESSION_ID.test(placeId.slice(SESSION_PLACE.length))) return placeId.slice(SESSION_PLACE.length);
+    if (placeId.startsWith(SESSION_PLACE) && counts(placeId.slice(SESSION_PLACE.length))) return placeId.slice(SESSION_PLACE.length);
     return cards.get(key);
   };
 }

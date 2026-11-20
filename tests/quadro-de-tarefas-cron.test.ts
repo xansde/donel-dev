@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { afterBusyField, BUSY_MAX, CHARGE_EVERY_MS, CHARGE_MAX, fieldHoldsOnlyNotice, fieldIsFree, linkKind, othersOnGithub, othersOnSlack, pickLeader, planJustify, planVigia, responseSince, VIGIA_MAX_PER_DAY, withShadowNotice, type CronCard } from '../src/shared/board/cron';
+import { afterBusyField, BUSY_MAX, CHARGE_EVERY_MS, CHARGE_MAX, fieldHoldsOnlyNotice, fieldIsFree, followLaneLeaders, groupNotices, LABEL, linkKind, othersOnGithub, othersOnSlack, pickLeader, planJustify, planVigia, responseSince, VIGIA_MAX_PER_DAY, withShadowNotice, type CronCard } from '../src/shared/board/cron';
 import { STALL_MS } from '../src/shared/board/rules';
 import { renderBoardPage } from '../src/shared/board/page';
+import { sessionResolver } from '../src/board-cron/semente';
+import type { BoardPicture } from '../src/oraculo/portao';
 
 // Quadro de tarefas (t-1e354d15), PR 3 — the cron's decisions. What breaks without the owner seeing it: the vigia
 // waking a session that said why it is parked (or one that is typing), a deadline nobody ever charges, a response on
@@ -91,6 +93,59 @@ describe('vigia', () => {
     expect(pickLeader(lane, alive(['aaaaaaaa-1111']), 'bbbbbbbb-2222')).toEqual({ kind: 'lane', session: 'aaaaaaaa-1111', place: 'place:lider' });
     expect(pickLeader(lane, alive(['bbbbbbbb-2222']), 'bbbbbbbb-2222')).toMatchObject({ kind: 'reserve', session: 'bbbbbbbb-2222' });
     expect(pickLeader(undefined, alive([]), 'bbbbbbbb-2222')).toMatchObject({ kind: 'none', why: 'a raia não tem Líder registrado' });
+  });
+});
+
+describe('raia segue o Líder e um aviso por sessão (devolução de 20/11)', () => {
+  it('a raia passa à sessão viva aqui que segura o lugar; a do Líder único, à escolha do daemon; de outra máquina, não', () => {
+    const bizops = 'C:\\Users\\dono\\seazone\\BizOps';
+    const STALE = '757511b0-6326-414c-8ed5-5417c83c36b4';
+    const LIVE = '0af17ef9-93a7-4e25-9d2e-19537600c285';
+    const ALL_OLD = 'd908a6ae-0720-4365-b775-f973d88e9d7b';
+    const ALL_NOW = 'eeeeeeee-0720-4365-b775-f973d88e9d7b';
+    const REMOTE = 'bbbbbbbb-1111-4222-8333-444444444444';
+    const leaderCard = { kind: 'session', id: 'place:e8e2842d', sessionId: LIVE, previous: [], x: 0, y: 0, roleId: 'lider' };
+    // the stale holder (closed, never renewed) is still in the picture; the freshest board says the place's conversation
+    const picture = {
+      at: NOW,
+      sessoes: {
+        [STALE]: { quemSou: { lugar: 'place:e8e2842d', pasta: bizops }, listar: [], at: NOW - 3600_000 },
+        'cccccccc-1111-4222-8333-444444444444': { quemSou: { lugar: 'place:dev', pasta: bizops }, listar: [], at: NOW, board: { cards: { 'place:e8e2842d': leaderCard } } },
+      },
+    } as unknown as BoardPicture;
+    // another machine's picture (portoes-retrato): its Líder is not in this tmux
+    const satellite = { at: NOW, sessoes: { [REMOTE]: { quemSou: { lugar: 'place:remoto', pasta: '/home/u/seazone/Teamzone' }, listar: [], at: NOW, maquina: 'homologacoes' } } } as unknown as BoardPicture;
+    const here = new Set([LIVE, ALL_NOW]);
+    const sessionOf = sessionResolver([picture, satellite], (sid) => here.has(sid));
+    const lane = (project_id: string, leader_place: string, leader_session: string) => ({ project_id, leader_place, leader_session, leader_seen_at: null });
+    const lanes = [lane('bizops', 'place:e8e2842d', STALE), lane('donel-dev', 'lider', ALL_OLD), lane('teamzone', 'place:remoto', ALL_OLD), lane('atlas', 'lider', ALL_NOW)];
+    expect(followLaneLeaders(lanes, sessionOf, () => ALL_NOW)).toEqual([
+      { project: 'bizops', place: 'place:e8e2842d', session: LIVE, was: STALE },
+      { project: 'donel-dev', place: 'lider', session: ALL_NOW, was: ALL_OLD },
+    ]);
+    // nothing alive resolves: the lane keeps what it has (the reserve, as before)
+    expect(followLaneLeaders(lanes, sessionResolver([picture, satellite], () => false), () => null)).toEqual([]);
+    // the seed's reading (no liveness) still names the stale holder: why the lane asks for a session alive here
+    expect(sessionResolver([picture])('bizops', 'place:e8e2842d')).toBe(STALE);
+  });
+
+  it('a mesma sessão recebe um aviso só na ronda, com todos os cartões; um cartão só segue com o texto dele', () => {
+    const A = 'aaaaaaaa-1111';
+    const B = 'bbbbbbbb-2222';
+    const notices = [
+      { session: A, card: 'c-1', text: `${LABEL} O cartão c-1 está parado.` },
+      { session: B, card: 'c-9', text: `${LABEL} O cartão c-9 está parado.` },
+      { session: A, card: 'c-2', text: `${LABEL} O cartão c-2 está parado.` },
+      { session: A, card: 'c-3', text: `${LABEL} O prazo do cartão c-3 venceu.` },
+    ];
+    const groups = groupNotices(notices, (n) => n.session, (n) => n.text);
+    expect(groups.map((g) => [g.session, g.items.map((n) => n.card)])).toEqual([
+      [A, ['c-1', 'c-2', 'c-3']],
+      [B, ['c-9']],
+    ]);
+    expect(groups[0]!.text.split(LABEL).length - 1).toBe(1);
+    for (const id of ['c-1', 'c-2', 'c-3']) expect(groups[0]!.text).toContain(`cartão ${id}`);
+    expect(groups[1]!.text).toBe(notices[1]!.text);
   });
 });
 

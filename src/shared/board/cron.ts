@@ -203,6 +203,59 @@ export function pickLeader(lane: { readonly leader_place: string | null; readonl
   return { kind: 'none', why };
 }
 
+/** A lane whose Líder now runs in another session than the one the board has (`followLaneLeaders`). */
+export interface LaneFollow {
+  readonly project: string;
+  readonly place: string;
+  readonly session: string;
+  readonly was: string | null;
+}
+
+/**
+ * The lanes' Líder follows its place (devolução do Revisor, 20/11): the board kept the session it was given, and a
+ * Líder that reopened or ran `/clear` left it pointing at a closed session, so every notice of the lane fell to the
+ * reserve. `sessionOf` answers which session alive here holds a place on a project (the seed's resolver, with the
+ * liveness test), `leaderOfAll` the Líder único alive here (the lane `lider`); a lane neither resolves keeps its
+ * session (the reserve, as before). Only the lanes that change come back.
+ */
+export function followLaneLeaders(
+  lanes: readonly { readonly project_id: string; readonly leader_place: string | null; readonly leader_session: string | null }[],
+  sessionOf: (projectId: string, placeId: string) => string | undefined,
+  leaderOfAll: () => string | null,
+): LaneFollow[] {
+  const out: LaneFollow[] = [];
+  for (const lane of lanes) {
+    const place = lane.leader_place;
+    if (!place) continue;
+    const session = place === 'lider' ? leaderOfAll() : sessionOf(lane.project_id, place);
+    if (session && session !== lane.leader_session) out.push({ project: lane.project_id, place, session, was: lane.leader_session });
+  }
+  return out;
+}
+
+/** One notice per session in a round: the texts of all its cards in one, in the order they came. */
+export interface NoticeGroup<T> {
+  readonly session: string;
+  readonly items: readonly T[];
+  readonly text: string;
+}
+
+/**
+ * The fieldIsFree check only sees whether the field holds text, so a session with three cards got three notices in a
+ * row in one round (devolução de 20/11). Grouped, it gets one: a single card keeps its own text; more join under one
+ * label, numbered.
+ */
+export function groupNotices<T>(items: readonly T[], sessionOf: (item: T) => string, textOf: (item: T) => string): NoticeGroup<T>[] {
+  const bySession = new Map<string, T[]>();
+  for (const item of items) bySession.set(sessionOf(item), [...(bySession.get(sessionOf(item)) ?? []), item]);
+  const bare = (text: string): string => (text.startsWith(LABEL) ? text.slice(LABEL.length).trim() : text);
+  return [...bySession].map(([session, list]) => ({
+    session,
+    items: list,
+    text: list.length === 1 ? textOf(list[0]!) : `${LABEL} ${list.length} avisos nesta ronda: ${list.map((item, i) => `(${i + 1}) ${bare(textOf(item))}`).join(' ')}`,
+  }));
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // A response on the card's link is someone else's (design §5: "mensagem de outra pessoa"). The sessions comment with
 // the same GitHub and Slack accounts the cron reads with, so what that account wrote never counts.
