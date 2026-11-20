@@ -1,6 +1,7 @@
 // Passo 9 (t-5358d400) — the entregador of the Oráculo: the MCP gate of this machine's sessions (47817), the recados
-// between them (`recados.json`), the Líder único found in this tmux, the sessions opened here with the PC off, the probe
-// and the board picture (`retrato.json`). Without the mark `entregador.separado` the registro runs it in its own process
+// between them (`recados.json`), the Líder único found in this tmux, the sessions opened here with the PC off, the
+// renewal of a session past the context limit with the PC away (renovar-local.ts, off by default), the probe and the
+// board picture (`retrato.json`). Without the mark `entregador.separado` the registro runs it in its own process
 // (`createEntregador` with the registro's ledger and relay, as before the split); with the mark it runs alone
 // (`runEntregador`, `DONEL_ORACULO_MODO=entregador`) and never opens the ledger: its `tarefa_*` go to the registro's
 // API, as a satellite's do, and a notice for another machine waits in `avisos-pendentes.json` until the registro takes it.
@@ -20,8 +21,9 @@ import { createBoardClient, readBoardConfig, type BoardStore } from './board-cli
 import { createLocalLeaderFinder, currentConversation } from './lider-local';
 import { RETRATO_PC_FILE } from './modo';
 import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForward, type BoardPicture, type GateDeps, type PictureSession } from './portao';
-import { createGateRecados, findTranscript, tmuxLocalSessions, type GateRecadosHandle } from './recados';
+import { createGateRecados, findTranscript, systemRecadosTmux, tmuxLocalSessions, type GateRecadosHandle } from './recados';
 import { FIRST_MESSAGES_FILE, placeOfSessionIn, rememberFirstMessage } from './primeiras';
+import { createLocalRenewal, readLocalRenewalConfig } from './renovar-local';
 import { deliverLocalFirst, type Relay } from './relay';
 import { createLocalPicture, tmuxLiveKnown, tmuxLiveNow } from './retrato-local';
 import { createRemotePictures, createRemotePicturesReader, type RemotePictureView, type RemotePictures } from './retrato-satelite';
@@ -459,6 +461,53 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
     return boardStore.store;
   };
 
+  // t-1a3f7150 (docs/adr/0009) — sessions opened in this tmux with the PC off: the Líder único's `sessao_abrir`, and the
+  // successor of a renewal (t-49dee38d).
+  const room = (): string | null => roomRefusal({ freeBytes: freemem(), loadPerCpu: loadavg()[0]! / Math.max(1, cpus().length) });
+  const openLocal = createOpenLocal({
+    sessionsDir,
+    oraculoDir: dir,
+    home: place.home,
+    picture: localPicture.get,
+    setSession: pictures.setSession,
+    forgetSession: pictures.forget,
+    leader: localLeader,
+    liveSessions,
+    deliver: toLeader,
+    run: runLocalScript,
+    room,
+    portFree: loopbackPortFree,
+    names: [hostname()],
+    // t-d461e003 — a board of another machine (its satellite pictures it): the opening goes there. Apart, the
+    // registro alone keeps those queues (`portoes-abrir/`), asked with this machine's local gate token for a
+    // board the reader of its pictures sees.
+    remote: openings ? async (call) => openings.request(call) : createRemoteOpenClient({ url: apart!.url, token: () => readGateToken(dir), view: remoteView }),
+  });
+  // t-49dee38d — a session past the context limit renewed here with the PC away (renovar-local.ts): off until
+  // `<dir>/renovar-local.json` says `"enabled": true` and lists the session in `"somente"` (empty = nobody). Only this
+  // daemon of the personal VPS runs it; the satellite does not.
+  const renewal = createLocalRenewal({
+    sessionsDir,
+    handoffsDir: join(place.home, '.donel', 'handoffs'),
+    config: () => readLocalRenewalConfig(dir),
+    pcAway: localPicture.away,
+    leader: localLeader,
+    liveSessions,
+    transcriptOf,
+    screen: (sid) => systemRecadosTmux.screen(sid),
+    type: (sid, text) => systemRecadosTmux.type(sid, text),
+    kill: (sid) => systemRecadosTmux.kill?.(sid) ?? Promise.resolve(false),
+    openSuccessor: (call) => openLocal.openSuccessor(call),
+    // The place the PC's own picture gives the session (never one made here): for a meta that names none.
+    placeOf: (sid) => {
+      const lugar = pictures.get()?.sessoes[sid]?.quemSou.lugar;
+      return typeof lugar === 'string' && lugar.startsWith('place:') ? lugar : undefined;
+    },
+    // No room = the handoff is not even asked; and the Líder hears two alive in a place, a lasting give-up, in flight.
+    room,
+    toLeader,
+  });
+
   let gate: { readonly port: number; close(): Promise<void> } | null = null;
   let probe: ReturnType<typeof createProbe> | null = null;
   let door: { close(): Promise<void> } | null = null;
@@ -516,24 +565,7 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
           firstMessage: (placeId, pedido) => rememberFirstMessage(join(dir, FIRST_MESSAGES_FILE), placeId, pedido, Date.now()),
           cards,
           // t-1a3f7150 (docs/adr/0009) — the Líder único's `sessao_abrir` with the PC off opens the session in this tmux.
-          abrir: createOpenLocal({
-            sessionsDir,
-            oraculoDir: dir,
-            picture: localPicture.get,
-            setSession: pictures.setSession,
-            forgetSession: pictures.forget,
-            leader: localLeader,
-            liveSessions,
-            deliver: toLeader,
-            run: runLocalScript,
-            room: () => roomRefusal({ freeBytes: freemem(), loadPerCpu: loadavg()[0]! / Math.max(1, cpus().length) }),
-            portFree: loopbackPortFree,
-            names: [hostname()],
-            // t-d461e003 — a board of another machine (its satellite pictures it): the opening goes there. Apart, the
-            // registro alone keeps those queues (`portoes-abrir/`), asked with this machine's local gate token for a
-            // board the reader of its pictures sees.
-            remote: openings ? async (call) => openings.request(call) : createRemoteOpenClient({ url: apart!.url, token: () => readGateToken(dir), view: remoteView }),
-          }),
+          abrir: openLocal,
           // Saída iii — a new phone app's key (the token never leaves the daemon) and the Líder's answer from chat_lider.py.
           // Apart (passo 9, PR 2): the registro's deliveries to these recados.
           local: junto ? junto.local : apartLocalRoutes(localDeliverRoute(recados), chat!, apart!.pair),
@@ -546,6 +578,9 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
       // The setup of a remote session reads this to point its MCP at the gate.
       writeFileSync(join(dir, 'portao'), `${gate.port}\n`, { mode: 0o600 });
       recados.start();
+      // A renewal cut by this restart is never resumed: logged for the Líder, the session stays out (renovar-local.ts).
+      await renewal.recover();
+      renewal.start();
       apart?.notices.start();
       // The sessions the PC has not pictured (its push, every 30 s, comes first: a fresh picture is not asked again).
       probe = createProbe({ sessionsDir, liveSessions, picture: pictures.get, setSession: pictures.setSession });
@@ -557,6 +592,7 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
       stopped = true;
       if (doorTimer) clearTimeout(doorTimer);
       probe?.stop();
+      renewal.stop();
       recados.stop();
       apart?.notices.stop();
       chat?.stop();

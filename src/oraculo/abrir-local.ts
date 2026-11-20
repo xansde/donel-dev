@@ -25,10 +25,16 @@
 // end. A failure removes the folder. A repeat of the same call (board, role, request, name) within 10 min answers the
 // same place (`abertas.json`). At boot, a folder still `criando` without its tmux is removed.
 //
+// t-49dee38d (20/11) — the successor of a session past the context limit, with the PC away (`openSuccessor`, called by
+// renovar-local.ts, never by a tool): the SAME place, role, worktree, name and model as the session that leaves, read
+// from the named fields of its meta (never its keys) and its `dir`; its meta gets `renovaDe` (the limitador reads it)
+// and the first message is "read the handoff". It never touches the old session: renovar-local.ts ends it after.
+//
 // The session folder holds keys: nothing read from a meta here is ever shown or logged.
 
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join, relative } from 'node:path';
 import type { OwnerMessage } from '../main/ledger-card-writer';
 import { OPEN_KIT_FILE, OPEN_KIT_VERSION, type OpenKit, type OpenKitRole } from '../main/open-kit';
@@ -42,7 +48,8 @@ import type { MindscapeBoard } from '../shared/mindscape/model';
 import { boardLeaders, hearingPlaceIds } from '../shared/mindscape/reach';
 import { buildRemoteInventoryScript, buildRoleScopeSettings, EMPTY_INVENTORY, parseRemoteInventoryOutput, type RoleScopeSettings } from '../shared/role-scope';
 import { LEADER_ROLE_ID } from '../shared/roles';
-import { worktreeNameFor, worktreeNameFromArgs } from '../shared/sessionWorktree';
+import { renewalLaunchArgs } from '../shared/sessionRenewal';
+import { remoteSpawnWorktree, worktreeNameFor, worktreeNameFromArgs } from '../shared/sessionWorktree';
 import type { GateAbrir, OpenCall } from './gate-abrir';
 import type { LocalLeader } from './lider-local';
 import { picturedBoards, type BoardPicture, type PictureSession } from './portao';
@@ -105,6 +112,8 @@ export interface OpenLocalDeps {
    * satellite pictures it (abrir-satelite.ts). `null` = no other machine has it (the refusal of today).
    */
   readonly remote?: (call: OpenCall) => Promise<BrowserToolOutcome | null>;
+  /** This machine's `$HOME` (default `os.homedir()`): a successor's project folder is its old `dir` relative to it. */
+  readonly home?: string;
   readonly now?: () => number;
   readonly newId?: () => string;
   readonly random?: () => number;
@@ -372,9 +381,86 @@ export interface OpeningOrder {
   readonly tarefa?: string;
 }
 
+/** t-49dee38d — the session the Oráculo opens in place of one past the context limit (renovar-local.ts). */
+export interface SuccessorCall {
+  /** The folder sid of the session that leaves. */
+  readonly de: string;
+  /** The new session's first message ("read the handoff"). */
+  readonly firstPrompt: string;
+  /** The board place the picture gives the old session, used only when its meta names none (`place:` ids only). */
+  readonly placeId?: string;
+}
+
+export type SuccessorOutcome = { readonly kind: 'aberta'; readonly sid: string } | { readonly kind: 'erro'; readonly text: string };
+
+/** A board place id: the app's (`place:<uuid>`), or `session:<sid>`, the one an opening here names (`open` below). */
+const PLACE_ID = /^(?:place|session):[A-Za-z0-9-]{1,64}$/;
+
+/** The fields of the old session's meta a successor inherits; never its keys. `null` = no readable meta. */
+interface SuccessorFacts {
+  readonly leaderOfAll: boolean;
+  readonly roleId?: string;
+  readonly placeId?: string;
+  readonly localCwd?: string;
+  readonly projectName?: string;
+  readonly name?: string;
+  readonly openedBy?: string;
+  readonly launchArgs: readonly string[];
+  readonly dir?: string;
+}
+
+function readSuccessorFacts(sessionsDir: string, sid: string): SuccessorFacts | null {
+  try {
+    const raw = JSON.parse(readFileSync(join(sessionsDir, sid, META_FILE), 'utf8')) as unknown;
+    if (!isRecord(raw)) return null;
+    const text = (key: string): string | undefined => (typeof raw[key] === 'string' && raw[key] ? (raw[key] as string) : undefined);
+    const placeId = text('placeId');
+    const dir = readDirFile(sessionsDir, sid);
+    return {
+      leaderOfAll: raw.leaderOfAll === true,
+      ...(text('roleId') ? { roleId: text('roleId') } : {}),
+      ...(placeId && PLACE_ID.test(placeId) ? { placeId } : {}),
+      ...(text('localCwd') ? { localCwd: text('localCwd') } : {}),
+      ...(text('projectName') ? { projectName: text('projectName') } : {}),
+      ...(text('name') ? { name: text('name') } : {}),
+      ...(text('openedBy') ? { openedBy: text('openedBy') } : {}),
+      launchArgs: Array.isArray(raw.launchArgs) ? raw.launchArgs.filter((arg): arg is string => typeof arg === 'string') : [],
+      ...(dir ? { dir } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** The role text the old session was born with (`role.md` of its folder; no key there). `null` = none. */
+function readOldRoleText(sessionsDir: string, sid: string): string | null {
+  try {
+    return readFileSync(join(sessionsDir, sid, 'role.md'), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/** Drops `--worktree <name>` (the setup makes the worktree, as for every remote launch). */
+function withoutWorktree(args: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    if (arg === '--worktree' || arg === '-w') {
+      if (args[i + 1] !== undefined && !args[i + 1]!.startsWith('-')) i += 1;
+      continue;
+    }
+    if (arg.startsWith('--worktree=')) continue;
+    out.push(arg);
+  }
+  return out;
+}
+
 export interface OpenLocal extends GateAbrir {
   /** The Líder único's opening, checked on the machine that took it (the satellite's `aberturas`). */
   openFor(order: OpeningOrder): Promise<BrowserToolOutcome>;
+  /** t-49dee38d — the successor of a session past the context limit (renovar-local.ts); never ends the old one. */
+  openSuccessor(call: SuccessorCall): Promise<SuccessorOutcome>;
 }
 
 export function createOpenLocal(deps: OpenLocalDeps): OpenLocal {
@@ -551,6 +637,9 @@ export function createOpenLocal(deps: OpenLocalDeps): OpenLocal {
       projectName: kitBoard.name,
       name,
       openedBy: opener,
+      // t-49dee38d — the place this opening answers (`session:<sid>`, the same the picture and the PC give it): a
+      // renewal here keeps it, and retrato-local hands it to the successor. The session's own identity is unchanged.
+      placeId: `session:${newSid}`,
       createdAt: new Date(at).toISOString(),
       homeRelativeDir: folderOf.homeRelativeDir,
       worktree,
@@ -601,7 +690,92 @@ export function createOpenLocal(deps: OpenLocalDeps): OpenLocal {
     return { kind: 'text', text };
   }
 
-  const inLine = (work: () => Promise<BrowserToolOutcome>): Promise<BrowserToolOutcome> => {
+  /**
+   * t-49dee38d — a new session in place of `call.de`: its place, role, worktree, name and model, with `renovaDe` and the
+   * handoff as its first message. The same order as an opening (the folder with its mark, the setup, the tmux last); a
+   * failure removes only the NEW folder. Never touches the old session's folder or tmux.
+   */
+  async function openSuccessor(call: SuccessorCall): Promise<SuccessorOutcome> {
+    const refuse = (text: string): SuccessorOutcome => ({ kind: 'erro', text });
+    if (!SID_PATTERN.test(call.de)) return refuse('id de sessão inválido');
+    const facts = readSuccessorFacts(deps.sessionsDir, call.de);
+    if (!facts) return refuse('sem o meta da sessão que sai');
+    if (facts.leaderOfAll) return refuse('o Líder único não é renovado pelo Oráculo');
+    if (!facts.localCwd) return refuse('o meta da sessão que sai não diz o quadro');
+    const noRoom = deps.room();
+    if (noRoom) return refuse(`sem vaga nesta máquina (${noRoom})`);
+    const kit = kitOf();
+    const kitBoard = kit?.boards.find((board) => board.localCwd === facts.localCwd);
+    const kitRole = facts.roleId ? kit?.roles.find((role) => role.id === facts.roleId) : undefined;
+    const home = deps.home ?? homedir();
+    const homeRelativeDir = facts.dir ? relative(home, projectRootOf(facts.dir)) || '.' : kitBoard?.homeRelativeDir;
+    if (!homeRelativeDir) return refuse('não sei a pasta do projeto da sessão que sai');
+    const name = facts.name ?? kitRole?.name ?? 'sessão';
+    // The same argv as the old session, minus what names its conversation; a meta without one: the role's, as an opening.
+    const fromOld = withoutWorktree(facts.launchArgs);
+    const launcherArgs = fromOld.length ? renewalLaunchArgs(fromOld, null, { name }) : [...(kitRole?.launcherArgs ?? []), '-n', name];
+    const worktree = remoteSpawnWorktree(facts.launchArgs, facts.dir ?? null);
+    const placeId = facts.placeId ?? (call.placeId && PLACE_ID.test(call.placeId) ? call.placeId : undefined);
+    const role = kitRole
+      ? { promptText: kitRole.promptText, scope: kitRole.scope, scopeSettings: await scopeSettingsOf(kitRole) }
+      : { promptText: facts.roleId ? readOldRoleText(deps.sessionsDir, call.de) : null, scope: undefined, scopeSettings: null };
+
+    const at = now();
+    const newSid = newId();
+    if (!SID_PATTERN.test(newSid) || newSid === call.de) return refuse('id de sessão inválido');
+    const folders = readFolders(deps.sessionsDir);
+    const ports = await freePorts(new Set(folders.flatMap((folder) => folder.ports)));
+    if (!ports) return refuse('não achei porta livre nesta máquina');
+    const [hookPort, mcpPort] = ports;
+    const plan = planRemoteLaunch({
+      sid: newSid,
+      launcherArgs,
+      extraArgs: ['--session-id', newSid],
+      launchArgs: [...launcherArgs, ...(worktree ? ['--worktree', worktree] : [])],
+      facts: facts.roleId ? { roleId: facts.roleId } : {},
+      role,
+      hooks: { on: true, port: hookPort, token: randomBytes(16).toString('hex'), statusLine: null },
+      mcp: { port: mcpPort, token: randomBytes(32).toString('hex') },
+      localCwd: facts.localCwd,
+      projectName: facts.projectName ?? kitBoard?.name ?? lastSegment(facts.localCwd),
+      name,
+      ...(facts.openedBy ? { openedBy: facts.openedBy } : {}),
+      ...(placeId ? { placeId } : {}),
+      renovaDe: call.de,
+      createdAt: new Date(at).toISOString(),
+      homeRelativeDir,
+      worktree,
+      repoUrl: kitBoard?.repoUrl ?? null,
+      branch: kitBoard?.branch ?? null,
+      openedWithoutPc: true,
+    });
+
+    const folder = join(deps.sessionsDir, newSid);
+    const undo = (why: string): SuccessorOutcome => {
+      rmSync(folder, { recursive: true, force: true });
+      log(`[oraculo] abrir: a sucessora de ${call.de.slice(0, 8)} não abriu: ${why}`);
+      return refuse(why);
+    };
+    try {
+      mkdirSync(folder, { recursive: true, mode: 0o700 });
+      writeFileSync(join(folder, CREATING_MARK), `${new Date(at).toISOString()}\n`, { mode: 0o600 });
+      writeFileSync(join(folder, 'pedido'), call.firstPrompt, { mode: 0o600 });
+    } catch (error) {
+      return undo(`não consegui preparar a pasta da sessão (${error instanceof Error ? error.message : String(error)})`);
+    }
+    const setup = await deps.run(plan.setupScript(newSid)).catch((error: unknown): ScriptRun => ({ code: null, stdout: '', stderr: error instanceof Error ? error.message : String(error) }));
+    const answer = parseRemoteSetupOutput(setup.stdout, setup.code, setup.stderr);
+    if (answer.kind !== 'new') return undo(answer.kind === 'error' ? answer.message : 'a pasta da sessão já estava em uso');
+    const tmux = await deps.run(tmuxStartScript(newSid)).catch((): ScriptRun => ({ code: null, stdout: '', stderr: '' }));
+    if (tmux.code !== 0) return undo('o tmux da sessão não subiu nesta máquina');
+    rmSync(join(folder, CREATING_MARK), { force: true });
+    log(
+      `[oraculo] abrir: sucessora ${newSid.slice(0, 8)} de ${call.de.slice(0, 8)} aberta (${placeId ?? 'sem lugar no meta'}, papel ${facts.roleId ?? 'nenhum'}, worktree ${worktree ?? 'nenhuma'}), com o PC fora.`,
+    );
+    return { kind: 'aberta', sid: newSid };
+  }
+
+  const inLine = <T>(work: () => Promise<T>): Promise<T> => {
     const turn = line.then(work);
     line = turn.catch(() => undefined);
     return turn;
@@ -609,5 +783,6 @@ export function createOpenLocal(deps: OpenLocalDeps): OpenLocal {
   return {
     abrir: (sid, _mine, call) => inLine(() => open(sid, call)),
     openFor: (order) => inLine(() => openFor(order)),
+    openSuccessor: (call) => inLine(() => openSuccessor(call)),
   };
 }

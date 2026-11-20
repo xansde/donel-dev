@@ -80,6 +80,11 @@ export interface RemoteSessionMeta {
    * place reads it so the renewed session (a new sid) stays that place. Absent = not known at launch.
    */
   readonly placeId?: string;
+  /**
+   * t-49dee38d — the session this one renews (its sid), when the Oráculo of the place renewed it with the PC away: the
+   * limitador lets it past the cap (`isencao_teto`). Absent on every other launch.
+   */
+  readonly renovaDe?: string;
   readonly createdAt: string;
 }
 

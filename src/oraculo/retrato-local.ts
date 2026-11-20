@@ -21,7 +21,7 @@
 // t-d461e003 (19/11, 15h04) — a session the app renewed (its context full: a new sid, the same place) keeps its place.
 // The PC's picture knows the place by the old sid, and the new folder is one it never pictured (the PC left right
 // after): it became `session:<sid>`, and with it "Só o lugar dono" on its tasks. Before `session:<sid>`, the place is
-// the one the app wrote in the folder's meta (`placeId`, `^place:`), and only when that place is on the pictured board
+// the one written in the folder's meta (`placeId`: the app's `place:`, or the `session:` an opening here named, t-49dee38d), and only when that place is on the pictured board
 // of the folder, is not closed and no other live session holds it. Never by tab name, role or opener (corte do Líder
 // único, 19/11: "matar a sessão errada é pior do que perder o lugar"); a renewal without `placeId` stays `session:<sid>`.
 
@@ -53,12 +53,16 @@ export interface LocalFolder {
   readonly roleId?: string;
   readonly openedBy?: string;
   readonly createdAt?: string;
-  /** t-d461e003 — the board place the app launched it for (`placeId` of the meta, only a `place:` id). */
+  /** t-d461e003 — the board place it was launched for (`placeId` of the meta: a `place:` id, or the `session:` one of an opening here). */
   readonly placeId?: string;
 }
 
-/** A board place id the app gives (`place:<uuid>`); never a `session:` one, which names a sid. */
-const PLACE_ID = /^place:[A-Za-z0-9-]{1,64}$/;
+/**
+ * A board place id: the app's (`place:<uuid>`), or `session:<sid>` — the place an opening with the PC off names and
+ * writes in its meta (abrir-local), so its renewal keeps it. Either one passes only the checks of `inheritedPlaces`
+ * (on the pictured board, not closed, no live session holding it).
+ */
+const PLACE_ID = /^(?:place|session):[A-Za-z0-9-]{1,64}$/;
 
 /** What the picture made here says besides the folders: this machine's label and the roles' names (the PC's kit). */
 export interface LocalPictureExtras {
