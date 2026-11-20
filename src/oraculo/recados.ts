@@ -54,7 +54,7 @@
 
 import { createHash, randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { promises as fsp } from 'node:fs';
+import { promises as fsp, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { BrowserToolOutcome } from '../shared/browser/mcp';
@@ -74,6 +74,7 @@ import { picturedBoards, type BoardPicture, type PictureSession } from './portao
 import type { CloseCall, GateHookResponse, GateRecados, ScreenCall, SendCall } from './gate-recados';
 import type { LocalLeader } from './lider-local';
 import { ageText, expiryNotice, isOwnerMessage, isStale, markLate, relaySenderOf, sentAtOf } from './vencimento';
+import { forgetFirstMessage, readFirstMessages } from './primeiras';
 
 /**
  * `devolvido` = its target left this machine before reading it: it went to the PC's relay with the same key (t-c3fbe852).
@@ -162,6 +163,13 @@ export interface GateRecadosDeps {
   readonly transcriptOf?: (sid: string) => Promise<string | undefined>;
   /** The last turn of a transcript (`null` = unreadable). Default: reads its end. */
   readonly lastTurn?: (path: string) => Promise<TranscriptTurn | null>;
+  /**
+   * t-f66595b2 — `<oraculo>/primeiras.json` (primeiras.ts): the opening requests this machine's gate saw the PC answer.
+   * Each goes into this queue once the session of its place is up here with a still, empty box. Absent = none.
+   */
+  readonly firstMessages?: string;
+  /** The place a session of this machine was opened for (its `meta.json`); needed with `firstMessages`. */
+  readonly placeOf?: (sid: string) => string | undefined;
   readonly now?: () => number;
   readonly log?: (line: string) => void;
 }
@@ -465,6 +473,19 @@ const IDLE_TURN_MS = 5 * 60_000;
  */
 const STILL_SCREEN_MS = 3_000;
 
+/**
+ * t-f66595b2 — a session that never had a turn (no transcript, or one with no message) is typed into only after its
+ * empty box has been still this long: a CLI that just came out of the limitador is still loading, and the PC, when it
+ * opened the tab a moment ago, may be pasting the first message right now.
+ */
+const FRESH_SETTLE_MS = 60_000;
+/** An opening request kept by the gate goes into the queue only after the box has been still this long. */
+const FIRST_SETTLE_MS = 2 * 60_000;
+/** ... and only this long after the PC answered the opening: the app types it itself for 240 s, never after. */
+const FIRST_PASTE_MS = 5 * 60_000;
+/** A request too long for one typing: this much of it is typed, and the whole of it waits in a file. */
+const FIRST_TYPED_CHARS = 3_000;
+
 /** How many lines of the screen `sessao_ver_tela` shows (its end: the input box and what came just before it). */
 const SCREEN_LINES = 60;
 
@@ -676,6 +697,24 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     // A transcript that could not be read says nothing: only one read with no message in it is a fresh session.
     return (await lastTurn(path))?.empty === true;
   }
+  /** Its conversation has a message (read, not guessed): it started. */
+  async function transcriptSaysStarted(sid: string): Promise<boolean> {
+    const path = await transcriptPath(sid);
+    const turn = path ? await lastTurn(path) : null;
+    return turn !== null && turn.empty !== true;
+  }
+  /**
+   * t-f66595b2 — a session that never had a turn, up and waiting on an empty box: the field free, nothing running nor a
+   * dialog on the screen, and the same screen for `ms` (call `screenIsQuiet` on this read first). A session still in
+   * the limitador shows no field at all.
+   */
+  async function freshAndSettled(sid: string, screenText: string, ms: number): Promise<boolean> {
+    const lines = plainScreen(screenText).split('\n');
+    const known = lastScreens.get(sid);
+    if (!known || known.text !== plainScreen(screenText) || now() - known.since < ms) return false;
+    if (BUSY_ON_SCREEN.test(screenText) || isWorking(lines) || blockingScreen(lines) || !fieldIsFree(screenText).free) return false;
+    return moodOf(sid) !== 'ocupada' && moodOf(sid) !== 'digitando' && transcriptSaysFresh(sid);
+  }
   let timer: ReturnType<typeof setInterval> | null = null;
   let ticking = false;
 
@@ -748,6 +787,63 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     if (item.estado === 'vencido') log(`recado ${id} para ${para.lugar} (${para.sid}) chegou vencido (${ageText(criado, at)}): não é entregue.`);
     write([...items, item]);
     return item;
+  }
+
+  /**
+   * t-f66595b2 — the opening request of `placeId` as the first item of `sid` (ahead of anything else waiting for it):
+   * its key (`primeira:<place>`) makes it one for as long as it is kept, whatever repeats. A request past one typing's
+   * ceiling is typed in part, and the whole of it waits in a file next to this queue that the session is told to read.
+   */
+  function enqueueFirst(sid: string, placeId: string, pedido: string): RecadoItem {
+    const at = now();
+    const chave = keyedChave(`primeira:${placeId}`);
+    const items = read();
+    const same = items.find((item) => item.chave === chave);
+    if (same) return same;
+    const id = `r-${randomBytes(4).toString('hex')}`;
+    const de = { lugar: '', nome: 'Oráculo' };
+    let words = `pedido de abertura desta sessão (ela esperou vaga para subir): ${pedido}`;
+    if (Buffer.byteLength(typeable(`${labelOf(id, de)} ${words}`)) > MAX_TYPING_BYTES) {
+      const whole = join(dirname(file), 'primeiras', `${sid}.md`);
+      io.mkdirSync(dirname(whole));
+      writeFileSync(whole, pedido, { mode: 0o600 });
+      words = `pedido de abertura desta sessão (ela esperou vaga para subir), longo demais para digitar: o texto inteiro, com as quebras de linha, está em ${whole} . Leia o arquivo todo antes de começar. O começo: ${pedido.slice(0, FIRST_TYPED_CHARS)} …`;
+    }
+    const item: RecadoItem = { id, chave, de, para: { lugar: placeId, sid }, texto: `${labelOf(id, de)} ${words}`, criado: at, estado: 'fila', tentativas: 0 };
+    write([item, ...items]);
+    return item;
+  }
+
+  /**
+   * t-f66595b2 — the opening requests the gate kept (primeiras.json): one whose session is up on this machine, never
+   * had a turn, and sits on a still, empty box goes into the queue (the step below types it); one whose session already
+   * started (the PC typed it in time) is dropped. Only the place and the session are logged, never the request.
+   */
+  async function firstMessagesIn(): Promise<void> {
+    const firstFile = deps.firstMessages;
+    if (!firstFile || !deps.placeOf) return;
+    const waiting = readFirstMessages(firstFile);
+    if (!waiting.length) return;
+    const at = now();
+    for (const sid of await localSessions()) {
+      if (!SID_PATTERN.test(sid)) continue;
+      const placeId = deps.placeOf(sid);
+      const entry = placeId ? waiting.find((candidate) => candidate.placeId === placeId) : undefined;
+      if (!entry) continue;
+      if (await transcriptSaysStarted(sid)) {
+        forgetFirstMessage(firstFile, entry.placeId, at);
+        log(`pedido de abertura de ${entry.placeId}: a sessão ${sid} já começou a conversa; nada a digitar.`);
+        continue;
+      }
+      if (at - entry.em < FIRST_PASTE_MS) continue;
+      const screen = await tmux.screen(sid);
+      if (!screen || screen.inMode) continue;
+      screenIsQuiet(sid, screen.text);
+      if (!(await freshAndSettled(sid, screen.text, FIRST_SETTLE_MS))) continue;
+      const item = enqueueFirst(sid, entry.placeId, entry.pedido);
+      forgetFirstMessage(firstFile, entry.placeId, at);
+      log(`pedido de abertura de ${entry.placeId} na fila da sessão ${sid} (${item.id}): ela subiu com a caixa vazia, ${ageText(entry.em, at)} depois de aberta.`);
+    }
   }
 
   /**
@@ -1305,6 +1401,8 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
           }
         }
       }
+      // t-f66595b2 — an opening request whose session came up after the PC gave up typing it joins the queue.
+      await firstMessagesIn().catch((error: unknown) => log(`pedidos de abertura: ${error instanceof Error ? error.message : String(error)}`));
       // 2. Stopped sessions with something queued: typed only on a free field.
       const queued = read().filter((item) => item.estado === 'fila' && item.tentativas < MAX_TYPINGS && !staleRecado(item, at));
       for (const sid of new Set(queued.map((item) => item.para.sid))) {
@@ -1315,7 +1413,11 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
         if (!screen || screen.inMode) continue;
         const quiet = screenIsQuiet(sid, screen.text);
         if (BUSY_ON_SCREEN.test(screen.text) || isWorking(plainScreen(screen.text).split('\n')) || !fieldIsFree(screen.text).free) continue;
-        if (mood?.mood !== 'parada' && !(await transcriptSaysStopped(sid, quiet))) continue;
+        // A session that never had a turn has no end of turn to read (t-f66595b2): its box empty and still for a minute.
+        // Only a first typing, or one whose text this tick cleared from the box: a typing the box took but no transcript
+        // shows (none found) is never typed again on the screen's word alone.
+        const firstTyping = clearedNow.has(sid) || queued.every((item) => item.para.sid !== sid || item.tentativas === 0);
+        if (mood?.mood !== 'parada' && !(await transcriptSaysStopped(sid, quiet)) && !(firstTyping && (await freshAndSettled(sid, screen.text, FRESH_SETTLE_MS)))) continue;
         // The conversation decides: an item typed before whose label is in the transcript came in, never typed again.
         const ids = new Set<string>();
         let bytes = 0;
