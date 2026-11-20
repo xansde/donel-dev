@@ -1808,7 +1808,14 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       }
       outgoing.sort((a, b) => a.at - b.at);
       const oracle = { lugar: '', nome: 'Oráculo' };
-      for (const out of outgoing) enqueue(oracle, { lugar, sid: para }, out.words, out.key);
+      // Counted only when it is queued now: one already forwarded (its key joins) is not "mais 1" on the call after the
+      // kill (ensaio 2 de 20/11: the owner's phrase, typed into the old one, was counted again, though sent once).
+      const queuedBefore = new Set(items.map((item) => item.chave));
+      let forwarded = 0;
+      for (const out of outgoing) {
+        if (!queuedBefore.has(keyedChave(out.key))) forwarded += 1;
+        enqueue(oracle, { lugar, sid: para }, out.words, out.key);
+      }
       const sources = new Set(outgoing.flatMap((out) => (out.source ? [out.source] : [])));
       if (sources.size)
         update(
@@ -1820,9 +1827,9 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
         (item) => item.para.sid === de && item.estado === 'fila',
         (item) => ({ ...item, para: { ...item.para, sid: para } }),
       );
-      if (outgoing.length || passed.length)
-        log(`renovação de ${de.slice(0, 8)}: ${outgoing.length} recado(s) ou mensagem(ns) que chegaram depois da passagem reencaminhado(s) a ${para.slice(0, 8)}; ${passed.length} da fila passado(s) a ela.`);
-      return { ok: true, reencaminhados: outgoing.length, passados: passed.length };
+      if (forwarded || passed.length)
+        log(`renovação de ${de.slice(0, 8)}: ${forwarded} recado(s) ou mensagem(ns) que chegaram depois da passagem reencaminhado(s) a ${para.slice(0, 8)}; ${passed.length} da fila passado(s) a ela.`);
+      return { ok: true, reencaminhados: forwarded, passados: passed.length };
     } catch (error) {
       return { ok: false, motivo: error instanceof Error ? error.message : String(error) };
     }
