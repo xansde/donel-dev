@@ -290,15 +290,23 @@ describe('com o PC desligado, abrir sessão no quadro de outra máquina pelo sat
     const compact = compactPicture(m.picture(), T0, m.slive);
     expect(compact.quadros[HOMOLOG]?.board?.links).toContainEqual(expect.objectContaining({ from: LIDER_H, to: `session:${NEW_SID}`, arrow: true, opened: true }));
 
+    // t-3b258224 — one Revisor per board: the Líder único's request for a 2nd one there is refused by the satellite.
+    expect(parsed(await m.ask({ nome: 'Outro revisor' }))).toMatchObject({ estado: 'pedido aceito' });
+    await m.satRound().round();
+    expect(m.satFolders()).toEqual([NEW_SID]);
+    const refused = await m.ask({ nome: 'Outro revisor' });
+    expect(refused.kind).toBe('error');
+    expect(refused.text).toContain(`já tem o Revisor session:${NEW_SID}`);
+
     // t-83b81fd2 — the Líder único's request to that board opens there directly, never handed to its live Líder: with
     // the PC off that Líder may not be able to open.
-    const viaVps = await m.ask({ nome: 'Outro revisor' });
+    const viaVps = await m.ask({ papel: 'dev', nome: 'Outro dev' });
     expect(parsed(viaVps)).toMatchObject({ estado: 'pedido aceito' });
     await m.satRound().round();
     expect(m.satFolders()).toHaveLength(2);
     const second = m.satFolders().find((sid) => sid !== NEW_SID)!;
     expect(m.metaOf(second)).toMatchObject({ openedBy: 'lider', localCwd: HOMOLOG });
-    expect(parsed(await m.ask({ nome: 'Outro revisor' }))).toMatchObject({ lugar: `session:${second}`, quadro: 'Homologação', nome: 'Outro revisor' });
+    expect(parsed(await m.ask({ papel: 'dev', nome: 'Outro dev' }))).toMatchObject({ lugar: `session:${second}`, quadro: 'Homologação', nome: 'Outro dev' });
   });
 
   it('nenhum outro abre: um Dev de qualquer das máquinas, e o portão do satélite pedindo abertura na VPS pessoal', async () => {
