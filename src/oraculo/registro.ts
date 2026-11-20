@@ -44,7 +44,7 @@ import { createChatCelularConsumer, createChatCelularQueue } from './chat-celula
 import { CELULAR_LOCAL_FILE, createCelularLocalStore } from './celular-local';
 import { createCelularV2Handler } from './celular-v2';
 import { createCredencialHandler } from './credencial';
-import { CHAT_AUDIO_TIMEOUT_MS, createChatAudioWorker, DAEMON_WHISPER_URL } from './chat-audio';
+import { createChatAudioWorker, daemonWhisper } from './chat-audio';
 import { createGlossarioStore, glossarioFile } from './glossario';
 import { startChatArquivoSweep } from './chat-arquivo';
 import { chatResponder } from './chat-responder';
@@ -296,7 +296,7 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
     try {
       audioWorker = createChatAudioWorker({
         store: celularLocal,
-        transcribe: whisperServerTranscriber({ url: process.env.DONEL_WHISPER_URL || DAEMON_WHISPER_URL, timeoutMs: CHAT_AUDIO_TIMEOUT_MS }),
+        transcribe: whisperServerTranscriber(daemonWhisper(process.env)),
         kick: (fila) => kick(fila),
         log: (line) => console.log(line),
       });
@@ -345,6 +345,8 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
     ...(chatHere ? {} : { port: registroPhonePort(), publicPort: MOBILE_PORT }),
     userDataDir: dir,
     io,
+    // t-0eb91241 — the Pedir by voice goes to the VPS transcriber too (it fell on :8178, the PC's, which is not here).
+    whisper: daemonWhisper(process.env),
     ledger: () => ledger,
     provasRoot: ledgerProofsDir(ledgerFile),
     cardWriter: () => cardWriter,
