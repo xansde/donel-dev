@@ -431,6 +431,61 @@ describe('sessão renovada na VPS com o PC fora (t-d461e003)', () => {
     expect(w.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(NOVO);
   });
 
+  // 1ª renovação real sem PC (20/11): 06:19 detectou 9c10729a, 06:20:27 abriu a sucessora (meta com placeId e renovaDe),
+  // 06:20:54 a sucessora chamou tarefa_andamento e o Oráculo recusou ("Só o lugar dono registra"): a velha, ainda viva
+  // até 06:22, segurava o lugar no retrato guardado, e a sucessora era session:<sid>.
+  it('sucessora com renovaDe da velha ainda viva: as duas respondem pelo lugar durante a troca', async () => {
+    const w = vps();
+    w.folder(SID_NOVO, { localCwd: PROJECT, projectName: 'atlas', name: 'Dev · atlas', roleId: 'dev', placeId: DEV, renovaDe: SID_DEV, createdAt: '2026-11-19T11:59:30Z' });
+    const who = JSON.parse((await w.tool(SID_NOVO, 'sessao_quem_sou')).text) as Record<string, unknown>;
+    expect(who).toMatchObject({ lugar: DEV, pasta: PROJECT });
+    expect(w.local.get()!.sessoes[SID_DEV]!.quemSou.lugar).toBe(DEV);
+
+    const created = await w.tool(SID_LIDER, 'tarefa_criar', { quadro: 'atlas', dono: DEV, titulo: 'x', pedido: 'x', criterio: 'x', prazo: '2026-11-30', risco: 'baixo' });
+    expect(created.error, created.text).toBe(false);
+    const id = idOf(created.text);
+    expect(await w.tool(SID_DEV, 'tarefa_assumir', { id })).toMatchObject({ error: false });
+    const fromNew = await w.tool(SID_NOVO, 'tarefa_andamento', { id, estado: 'trabalhando', proximo: 'li a passagem' });
+    expect(fromNew.error, fromNew.text).toBe(false);
+    const fromOld = await w.tool(SID_DEV, 'tarefa_andamento', { id, estado: 'trabalhando', proximo: 'passei o bastão' });
+    expect(fromOld.error, fromOld.text).toBe(false);
+
+    // A recado to the place in the switch goes to ONE session, the old one (the renewal forwards to the successor what
+    // reached the old one after the handoff, before closing it); the Líder único's fechar refuses to pick one of two.
+    const sent = await w.tool(SID_LIDER, 'sessao_enviar', { quadro: 'atlas', para: DEV, texto: 'no meio da troca', motivo: 'bloqueio' });
+    expect(sent.error, sent.text).toBe(false);
+    expect((await w.endTurn(SID_DEV)).reason).toContain('no meio da troca');
+    expect((await w.endTurn(SID_NOVO)).reason ?? '').not.toContain('no meio da troca');
+    w.screens.set(SID_DEV, '> ');
+    w.screens.set(SID_NOVO, '> ');
+    expect((await w.tool(SID_LIDER, 'sessao_fechar', { quadro: 'atlas', quem: DEV })).error).toBe(true);
+    expect(w.killed).toEqual([]);
+
+    // The old one closed (06:22): the successor alone has the place, and still answers for it.
+    w.live.delete(SID_DEV);
+    expect(w.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(DEV);
+    const delivered = await w.tool(SID_NOVO, 'tarefa_entregar', { id, provas: [{ tipo: 'texto', texto: 'npm run verify: 0 falhas' }] });
+    expect(delivered.error, delivered.text).toBe(false);
+    expect(w.forwarded).toEqual([]);
+  });
+
+  it('renovaDe não é passe-livre: sem ele, de outra sessão, ou com duas sucessoras, session:', () => {
+    const without = vps();
+    without.folder(SID_NOVO, { localCwd: PROJECT, name: 'Dev · atlas', roleId: 'dev', placeId: DEV, createdAt: '2026-11-19T11:59:30Z' });
+    expect(without.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(NOVO);
+
+    const other = vps();
+    other.folder(SID_NOVO, { localCwd: PROJECT, name: 'Dev · atlas', roleId: 'dev', placeId: DEV, renovaDe: SID_LIDER, createdAt: '2026-11-19T11:59:30Z' });
+    expect(other.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(NOVO);
+
+    const twins = vps();
+    twins.folder(SID_NOVO, { localCwd: PROJECT, name: 'Dev · atlas', roleId: 'dev', placeId: DEV, renovaDe: SID_DEV, createdAt: '2026-11-19T11:59:30Z' });
+    twins.folder(SID_REV, { localCwd: PROJECT, name: 'Dev · atlas', roleId: 'dev', placeId: DEV, renovaDe: SID_DEV, createdAt: '2026-11-19T11:59:40Z' });
+    const sessoes = twins.local.get()!.sessoes;
+    expect([sessoes[SID_NOVO]!.quemSou.lugar, sessoes[SID_REV]!.quemSou.lugar]).toEqual([NOVO, REV]);
+    expect(sessoes[SID_DEV]!.quemSou.lugar).toBe(DEV);
+  });
+
   it('com quem a abriu vivo, o recado ao Líder único é recusado (como no PC)', async () => {
     const w = renewed({ placeId: DEV });
     const dev = w.stored.picture!.sessoes[SID_DEV]!;

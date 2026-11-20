@@ -22,7 +22,8 @@
 // The PC's picture knows the place by the old sid, and the new folder is one it never pictured (the PC left right
 // after): it became `session:<sid>`, and with it "Só o lugar dono" on its tasks. Before `session:<sid>`, the place is
 // the one written in the folder's meta (`placeId`: the app's `place:`, or the `session:` an opening here named, t-49dee38d), and only when that place is on the pictured board
-// of the folder, is not closed and no other live session holds it. Never by tab name, role or opener (corte do Líder
+// of the folder, is not closed and no other live session holds it (but the one it renewed, `renovaDe`: both answer for
+// the place during the switch). Never by tab name, role or opener (corte do Líder
 // único, 19/11: "matar a sessão errada é pior do que perder o lugar"); a renewal without `placeId` stays `session:<sid>`.
 
 import { execFileSync } from 'node:child_process';
@@ -55,6 +56,8 @@ export interface LocalFolder {
   readonly createdAt?: string;
   /** t-d461e003 — the board place it was launched for (`placeId` of the meta: a `place:` id, or the `session:` one of an opening here). */
   readonly placeId?: string;
+  /** t-49dee38d — the sid this folder renewed (`renovaDe` of the meta, written by abrir-local `openSuccessor`). */
+  readonly renovaDe?: string;
 }
 
 /**
@@ -88,7 +91,8 @@ export function readLocalFolders(sessionsDir: string, live: ReadonlySet<string>)
       if (!isRecord(raw)) continue;
       const text = (key: string): Record<string, string> => (typeof raw[key] === 'string' && raw[key] ? { [key]: raw[key] as string } : {});
       const placeId = typeof raw.placeId === 'string' && PLACE_ID.test(raw.placeId) ? { placeId: raw.placeId } : {};
-      out.push({ sid, ...(raw.leaderOfAll === true ? { leaderOfAll: true } : {}), ...text('localCwd'), ...text('projectName'), ...text('name'), ...text('roleId'), ...text('openedBy'), ...text('createdAt'), ...placeId });
+      const renovaDe = typeof raw.renovaDe === 'string' && SID_PATTERN.test(raw.renovaDe) && raw.renovaDe !== sid ? { renovaDe: raw.renovaDe } : {};
+      out.push({ sid, ...(raw.leaderOfAll === true ? { leaderOfAll: true } : {}), ...text('localCwd'), ...text('projectName'), ...text('name'), ...text('roleId'), ...text('openedBy'), ...text('createdAt'), ...placeId, ...renovaDe });
     } catch {
       // no meta (closed, or not made yet): not a session here
     }
@@ -262,12 +266,21 @@ export function withLocalSessions(stored: BoardPicture | null, folders: readonly
  * folder that names its place (`placeId`) gets one, and only that one: when it is on the pictured board of the folder
  * (a card or a listed place), is not closed and no other live session of the picture holds it. Two folders claiming the
  * same place get neither. In any doubt the folder stays `session:<sid>`: losing the place is fine, a wrong one never is.
+ *
+ * t-49dee38d (20/11, 1ª renovação real sem PC) — the successor `openSuccessor` opened lives for ~2 min beside the old
+ * one, which the renewal closes only after the successor's first turn; that first turn reports on the place's task, and
+ * the old one, alive, held the place ("Só o lugar dono registra"). So a place held by exactly one live session is still
+ * given to the folder whose `renovaDe` is that session's sid: both answer for the place during the switch, and the old
+ * one keeps its own in the stored picture. Held by more than one, or `renovaDe` naming another sid: no inheritance.
  */
 function inheritedPlaces(stored: BoardPicture | null, folders: readonly LocalFolder[], alive: ((sid: string) => boolean) | undefined): Map<string, string> {
   const boards = picturedBoards(stored);
-  const held = new Set<string>();
+  /** Board folder + place → the live sessions of the picture holding it. */
+  const held = new Map<string, string[]>();
   for (const [sid, session] of Object.entries(stored?.sessoes ?? {})) {
-    if (typeof session.quemSou.lugar === 'string' && (alive?.(sid) ?? true)) held.add(`${String(session.quemSou.pasta)}\n${session.quemSou.lugar}`);
+    if (typeof session.quemSou.lugar !== 'string' || !(alive?.(sid) ?? true)) continue;
+    const key = `${String(session.quemSou.pasta)}\n${session.quemSou.lugar}`;
+    held.set(key, [...(held.get(key) ?? []), sid]);
   }
   const claims = new Map<string, string[]>();
   for (const folder of folders) {
@@ -277,7 +290,8 @@ function inheritedPlaces(stored: BoardPicture | null, folders: readonly LocalFol
     const onBoard = Boolean(listed) || pictured?.board?.cards[folder.placeId]?.kind === 'session';
     if (!onBoard || listed?.estado === 'fechada') continue;
     const key = `${folder.localCwd}\n${folder.placeId}`;
-    if (held.has(key)) continue;
+    const holders = held.get(key);
+    if (holders && !(holders.length === 1 && holders[0] === folder.renovaDe)) continue;
     claims.set(key, [...(claims.get(key) ?? []), folder.sid]);
   }
   const out = new Map<string, string>();
