@@ -3,9 +3,14 @@
 //
 //   node board-cron.mjs ronda   every 15 min: justification cron, vigia, lanes alive, page
 //   node board-cron.mjs lider   every minute: the PC's requests for a lane's Líder (board.leader_requests)
+//   node board-cron.mjs semear [--seco] [--ledger <arquivo>] [--host <host>] [--pc-raiz <C:\...\seazone>]
+//                               once, by hand: projects and one card per live task of the Oráculo (semente.ts); the
+//                               Oráculo's ledger read-only; --seco prints the plan and opens nothing else
 //
 // Config (nothing hardcoded: the repo goes public):
-//   ~/.donel/board/supabase.json  {url, serviceKeyFile}             missing = the board is off, the cron exits 0
+//   ~/.donel/board/sqlite.json    {file}                            the board in a SQLite of this machine (20/11)
+//   ~/.donel/board/supabase.json  {url, serviceKeyFile}             only without sqlite.json; neither = the board is
+//                                                                   off, the cron exits 0
 //   ~/.donel/board/cron.json      {host?, vigiaSombra?, slackReader?, pagina?}
 //     host (default "vps-pessoal"): only the projects that run here (projects.host); another machine's sessions are
 //       not in this tmux, and reading them as closed would tell the Líder something false.
@@ -24,7 +29,9 @@ import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, rmdirSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, closeSync, renameSync, statSync, writeFileSync, fstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { createBoardClient, readBoardConfig, type CardRow, type LaneRow } from '../oraculo/board-client';
+import type { BoardCronStore, BoardStore, CardRow, LaneRow } from '../oraculo/board-client';
+import { BOARD_SQLITE_CONFIG, chooseBoard, createBoardSqlite, openBoard } from '../oraculo/board-sqlite';
+import { planSeed, readLedgerReadOnly, runSeed } from './semente';
 import { afterBusyField, fieldHoldsOnlyNotice, fieldIsFree, fieldTextOf, LABEL, linkKind, planJustify, planVigia, responseSince, withShadowNotice, type CronAction, type CronCard, type SessionState, type ShadowNotice } from '../shared/board/cron';
 import { renderBoardPage } from '../shared/board/page';
 
@@ -370,7 +377,7 @@ function cronCard(row: CardRow): CronCard {
   };
 }
 
-type Client = ReturnType<typeof createBoardClient>;
+type Client = BoardStore & BoardCronStore;
 
 /** What typing into a session would do, read only (the shadow): the same checks as `wakeSession`, nothing typed. */
 function wouldWake(uuid: string): 'campo livre' | `campo: ${string}` {
@@ -525,24 +532,60 @@ async function lider(client: Client, config: CronConfig): Promise<void> {
   }
 }
 
-async function main(): Promise<number> {
-  const mode = process.argv[2];
-  if (mode !== 'ronda' && mode !== 'lider') {
-    console.error('uso: board-cron.mjs ronda|lider');
-    return 2;
+/** The value after `--flag`, if any. */
+const argOf = (flag: string): string | undefined => {
+  const at = process.argv.indexOf(flag);
+  return at > 0 ? process.argv[at + 1] : undefined;
+};
+
+/** `semear`: needs the SQLite board (the Supabase one is seeded by its own SQL, never from here). */
+async function semear(boardFile: string | null): Promise<number> {
+  const ledgerFile = argOf('--ledger') ?? join(process.env.DONEL_ORACULO_DIR || join(HOME, '.donel', 'oraculo'), 'ledger.sqlite');
+  const pcRoot = argOf('--pc-raiz');
+  const plan = planSeed(readLedgerReadOnly(ledgerFile), { host: argOf('--host') ?? readCronConfig().host, vpsHome: HOME, ...(pcRoot ? { pcRoot } : {}) });
+  const byStage = plan.cards.reduce<Record<string, number>>((acc, card) => ({ ...acc, [card.stage]: (acc[card.stage] ?? 0) + 1 }), {});
+  if (process.argv.includes('--seco')) {
+    for (const project of plan.projects) console.log(`projeto ${project.id} (${project.name}, ${project.host}): ${project.aliases.join(' | ')}`);
+    for (const card of plan.cards) console.log(`cartão ${card.taskId} → ${card.projectId} ${card.stage}${card.place ? ` ${card.place}` : ''}${card.front ? ` [${card.front}]` : ''}: ${card.title} — ${card.note}`);
+    console.log(JSON.stringify({ seco: true, ledger: ledgerFile, projetos: plan.projects.length, cartoes: plan.cards.length, porColuna: byStage, deFora: plan.skipped, quadro: boardFile ?? '(sem sqlite.json)' }));
+    return 0;
   }
-  const configFile = process.env.DONEL_BOARD_CONFIG || join(DIR, 'supabase.json');
-  if (!existsSync(configFile)) return 0; // the board is off: nothing touched
-  const boardConfig = readBoardConfig(configFile);
-  if (!boardConfig) {
-    console.error(`[quadro] ${configFile} existe mas é inválido: precisa de {"url": "https://…", "serviceKeyFile": "…"}`);
+  if (!boardFile) {
+    console.error(`[semear] sem ${join(DIR, BOARD_SQLITE_CONFIG)} válido: a semente só grava no quadro em SQLite. Rode com --seco para ver o plano.`);
     return 1;
   }
+  const store = createBoardSqlite(boardFile);
+  try {
+    const result = await runSeed(store, plan, (line) => console.log(line));
+    console.log(JSON.stringify({ ledger: ledgerFile, quadro: boardFile, ...result, porColuna: byStage, deFora: plan.skipped }));
+  } finally {
+    store.close();
+  }
+  return 0;
+}
+
+async function main(): Promise<number> {
+  const mode = process.argv[2];
+  if (mode !== 'ronda' && mode !== 'lider' && mode !== 'semear') {
+    console.error('uso: board-cron.mjs ronda|lider|semear [--seco]');
+    return 2;
+  }
+  const choice = chooseBoard({ sqliteConfig: process.env.DONEL_BOARD_SQLITE_CONFIG || join(DIR, BOARD_SQLITE_CONFIG), supabaseConfig: process.env.DONEL_BOARD_CONFIG || join(DIR, 'supabase.json') });
+  if (choice.kind === 'invalid') {
+    console.error(`[quadro] ${choice.file} existe mas é inválido: precisa de ${choice.expected}`);
+    return 1;
+  }
+  if (mode === 'semear') return semear(choice.kind === 'sqlite' ? choice.file : null);
+  if (choice.kind === 'off') return 0; // the board is off: nothing touched
   mkdirSync(DIR, { recursive: true });
-  const client = createBoardClient(boardConfig);
+  const client = openBoard(choice);
   const config = readCronConfig();
-  if (mode === 'ronda') await ronda(client, config);
-  else await lider(client, config);
+  try {
+    if (mode === 'ronda') await ronda(client, config);
+    else await lider(client, config);
+  } finally {
+    client.close?.();
+  }
   return 0;
 }
 
