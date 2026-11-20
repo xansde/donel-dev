@@ -100,6 +100,12 @@ export const MAX_TRIES = 2;
 /** No room before the request: looked at again after this (no try counted). */
 const NO_ROOM_RETRY_MS = 5 * 60_000;
 const TAIL_BYTES = 400 * 1024;
+/**
+ * The successor's transcript is read from its start, up to this (ensaio 20/11: it was born with ~465 KB, a skill the
+ * ultracode hook injects right after the first message, and a 400 KB tail never saw that first message). Past it, the
+ * successor's state is unknown: never closed, never "silent".
+ */
+export const SUCCESSOR_READ_MAX_BYTES = 32 * 1024 * 1024;
 const SID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
 /** A board place: `place:<uuid>` (the PC's), or `session:<sid>` (the one an opening with the PC off names, abrir-local). */
 const PLACE_PATTERN = /^(?:place|session):[A-Za-z0-9-]{1,64}$/;
@@ -217,7 +223,7 @@ function isSyntheticEntry(entry: Record<string, unknown>, message: Record<string
  * the connection drops mid-answer the CLI writes a real entry with only an empty thinking and end of turn, then the
  * synthetic "Connection lost" (seen in this VPS's transcripts, 19/11).
  */
-export function successorProgress(tail: string): 'respondeu' | 'trabalhando' | 'calada' {
+export function successorProgress(tail: string): 'respondeu' | 'trabalhando' | 'calada' | 'sem-pergunta' {
   let asked = false;
   let active = false;
   let answered = false;
@@ -247,7 +253,20 @@ export function successorProgress(tail: string): 'respondeu' | 'trabalhando' | '
     answered = (message.stop_reason === 'end_turn' || message.stop_reason === 'stop_sequence') && !toolPending && hasText;
   }
   if (answered) return 'respondeu';
-  return active ? 'trabalhando' : 'calada';
+  if (active) return 'trabalhando';
+  return asked ? 'calada' : 'sem-pergunta';
+}
+
+/**
+ * Pure — a successor's state from a read of its transcript. Only a read from the file's first byte decides: a cut one
+ * may have left its first message out (ensaio 20/11), and then it is `nao-sei` (never silent, never closed). With the
+ * whole file, no first message yet is as silent as no answer (the CLI never took it); no file at all, the same.
+ */
+export function successorState(read: { readonly text: string; readonly whole: boolean } | null): 'respondeu' | 'trabalhando' | 'calada' | 'nao-sei' {
+  if (read === null) return 'calada';
+  if (!read.whole) return 'nao-sei';
+  const progress = successorProgress(read.text);
+  return progress === 'sem-pergunta' ? 'calada' : progress;
 }
 
 /** Pure — the successor ANSWERED its first message (its last real entry ends the turn with text; no API error after). */
@@ -304,8 +323,8 @@ export interface LocalRenewalDeps {
   readonly liveSessions: () => Promise<ReadonlySet<string>>;
   /** The transcript the session's tmux writes now. */
   readonly transcriptOf: (sid: string) => Promise<string | undefined>;
-  /** The last bytes of a file and its mtime; `null` = unreadable. */
-  readonly readTail?: (path: string) => Promise<{ readonly text: string; readonly mtimeMs: number } | null>;
+  /** The last `maxBytes` of a file, its mtime and whether that is the whole file; `null` = unreadable. */
+  readonly readTail?: (path: string, maxBytes: number) => Promise<TranscriptRead | null>;
   readonly screen: (sid: string) => Promise<{ readonly inMode: boolean; readonly text: string } | null>;
   /** Types one line in the session's input field and presses Enter (`false` = tmux refused). */
   readonly type: (sid: string, text: string) => Promise<boolean>;
@@ -341,15 +360,22 @@ export interface LocalRenewal {
   stop(): void;
 }
 
-async function readFileTail(path: string): Promise<{ readonly text: string; readonly mtimeMs: number } | null> {
+/** What a transcript read gave: its last bytes, its mtime and whether they are the whole file (from its first byte). */
+export interface TranscriptRead {
+  readonly text: string;
+  readonly mtimeMs: number;
+  readonly whole: boolean;
+}
+
+async function readFileTail(path: string, maxBytes: number): Promise<TranscriptRead | null> {
   try {
     const handle = await fsp.open(path, 'r');
     try {
       const { size, mtimeMs } = await handle.stat();
-      const length = Math.min(size, TAIL_BYTES);
+      const length = Math.min(size, maxBytes);
       const buffer = Buffer.alloc(length);
       await handle.read(buffer, 0, length, size - length);
-      return { text: buffer.toString('utf8'), mtimeMs };
+      return { text: buffer.toString('utf8'), mtimeMs, whole: length >= size };
     } finally {
       await handle.close();
     }
@@ -463,10 +489,12 @@ export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
     return null;
   };
 
-  const transcriptTail = async (sid: string): Promise<{ readonly text: string; readonly mtimeMs: number } | null> => {
+  const transcriptTail = async (sid: string, maxBytes: number = TAIL_BYTES): Promise<TranscriptRead | null> => {
     const path = await deps.transcriptOf(sid);
-    return path ? readTail(path) : null;
+    return path ? readTail(path, maxBytes) : null;
   };
+  /** The successor's transcript from its start (`whole: false` = past the cap: its state is unknown). */
+  const successorTranscript = (sid: string): Promise<TranscriptRead | null> => transcriptTail(sid, SUCCESSOR_READ_MAX_BYTES);
 
   /** T1 — the forward, never throwing: absent or failed = `ok: false` (the old one stays). */
   const forwardTo = async (call: ForwardCall): Promise<ForwardOutcome> => {
@@ -499,17 +527,19 @@ export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
    * stopped and its transcript quiet for `QUIET_MS` after it, and once more on a last read: a text the network cut gets
    * its synthetic "Connection lost" up to minutes later, with the turn still running on the screen meanwhile.
    */
-  async function waitAnswer(newSid: string): Promise<'respondeu' | 'saiu' | 'calada' | 'sem-fim'> {
+  async function waitAnswer(newSid: string): Promise<'respondeu' | 'saiu' | 'calada' | 'sem-fim' | 'nao-sei'> {
     const startedAt = now();
     let active = false;
     for (;;) {
       if (!(await deps.liveSessions()).has(newSid)) return 'saiu';
-      const tail = await transcriptTail(newSid);
-      const progress = tail === null ? 'calada' : successorProgress(tail.text);
+      const tail = await successorTranscript(newSid);
+      const progress = successorState(tail);
+      // Past the cap its first message cannot be seen: it only grows, so waiting will not tell (never "silent").
+      if (progress === 'nao-sei') return 'nao-sei';
       if (progress !== 'calada') active = true;
       if (progress === 'respondeu' && tail && now() - tail.mtimeMs >= QUIET_MS && screenIsIdle(await deps.screen(newSid))) {
-        const again = await transcriptTail(newSid);
-        if (again && again.mtimeMs === tail.mtimeMs && successorProgress(again.text) === 'respondeu') return 'respondeu';
+        const again = await successorTranscript(newSid);
+        if (again && again.mtimeMs === tail.mtimeMs && successorState(again) === 'respondeu') return 'respondeu';
       }
       const elapsed = now() - startedAt;
       if (!active && elapsed >= ANSWER_WAIT_MS) return 'calada';
@@ -696,6 +726,14 @@ export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
       } else {
         giveUp(`duas vivas no lugar: a nova ${new8} ficou calada e o tmux recusou fechá-la; ${sid8} segue viva; o Líder decide`, { lasting: true, extra: { sucessora: opened.sid } });
       }
+      return;
+    }
+    if (answer === 'nao-sei') {
+      // Its transcript is past the cap: whether it answered is unknown, so it is never closed. Both stay; the Líder decides.
+      giveUp(`duas vivas no lugar: não consegui ler a 1ª mensagem da nova ${new8} (transcript acima de 32 MB) e não a fecho; ${sid8} segue viva; o Líder decide`, {
+        lasting: true,
+        extra: { sucessora: opened.sid },
+      });
       return;
     }
     if (answer === 'sem-fim') {

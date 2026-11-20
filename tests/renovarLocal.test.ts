@@ -6,7 +6,7 @@
 // O detector roda com tmux, transcript e abertura falsos; a abertura da sucessora roda o script de verdade (bash) numa
 // HOME temporária, com `claude` e `tmux` falsos no PATH (como abrir-sessao-sem-pc.test.ts).
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, truncateSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -139,9 +139,9 @@ function fake(options: FakeOptions = {}) {
           state.newSeen = text;
           state.newMtime = clock;
         }
-        return text === null ? null : { text, mtimeMs: state.newMtime };
+        return text === null ? null : { text, mtimeMs: state.newMtime, whole: true };
       }
-      return { text: state.oldTail, mtimeMs: state.oldMtime };
+      return { text: state.oldTail, mtimeMs: state.oldMtime, whole: true };
     },
     screen: async (sid) => {
       if (sid === NEW) return { inMode: false, text: state.newScreen() };
@@ -1207,5 +1207,53 @@ describe('renovar-local: sessão aberta pela VPS renova no mesmo lugar', () => {
     // The opened one itself (its folder names its own place) keeps its identity even without the stored picture.
     const self = withLocalSessions(null, [{ ...successor!, sid: OLD, placeId: `session:${OLD}` }], at);
     expect(self!.sessoes[OLD]!.quemSou.lugar).toBe(`session:${OLD}`);
+  });
+});
+
+// ---- ensaio de 20/11 05:40: a sucessora respondeu, mas a 1ª mensagem ficou fora da janela de 400 KB ----------------
+
+/** The successor's transcript as the CLI writes it with the ultracode hook: the first message, then a skill injected as
+ * a user entry bigger than 400 KB, a tool call, its result and the answer (synthetic data in the real file's form). */
+function bigSkillTranscript(answer: boolean): string {
+  const first = JSON.stringify({ type: 'user', message: { role: 'user', content: `[Donel Dev · sessão renovada em voo] Esta sessão continua a ${OLD.slice(0, 8)}. Leia primeiro a passagem.` } });
+  const command = JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: '<command-message>workflow-authoring</command-message>\n<command-name>/workflow-authoring</command-name>' } });
+  const skill = JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: [{ type: 'text', text: `# Workflow\n${'referência do roteiro. '.repeat(20_000)}` }] } });
+  const tool = assistant(40_000, 'tool_use', [{ type: 'tool_use', id: 'r', name: 'Read', input: { file_path: '/tmp/passagem.md' } }]);
+  const result = JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'r', content: 'passagem' }] } });
+  const lines = [first, command, skill, ...(answer ? [tool, result, assistant(41_000, 'end_turn', [{ type: 'text', text: 'Li a passagem; prioridade: X.' }])] : [])];
+  return `${lines.join('\n')}\n`;
+}
+
+/** The fake VPS reading REAL transcript files with the daemon's own readers (no `readTail` stand-in). */
+function onDisk(vps: ReturnType<typeof fake>, newText: string, newSize?: number) {
+  const oldPath = join(vps.home, 'old.jsonl');
+  const newPath = join(vps.home, 'new.jsonl');
+  writeFileSync(oldPath, ENDED);
+  utimesSync(oldPath, (T0 - 120_000) / 1000, (T0 - 120_000) / 1000);
+  writeFileSync(newPath, newText);
+  if (newSize !== undefined) truncateSync(newPath, newSize);
+  utimesSync(newPath, T0 / 1000, T0 / 1000);
+  const real: LocalRenewalDeps = { ...vps.deps, transcriptOf: async (sid) => (sid === OLD ? oldPath : sid === NEW ? newPath : undefined) };
+  delete (real as { readTail?: unknown }).readTail;
+  return createLocalRenewal(real);
+}
+
+describe('renovar-local: a sucessora é lida desde o começo (ensaio de 20/11)', () => {
+  it('1ª mensagem seguida de uma entrada de mais de 400 KB e da resposta: é "respondeu" e a velha fecha', async () => {
+    const text = bigSkillTranscript(true);
+    expect(Buffer.byteLength(text)).toBeGreaterThan(400 * 1024);
+    const vps = fake();
+    await onDisk(vps, text).tick();
+    expect(vps.events).not.toContain(KILL_NEW);
+    expect(vps.events).toContain(KILL_OLD);
+  });
+
+  it('sem ler o começo da nova (transcript acima do teto) e sem resposta: não fecha a nova nem a velha', async () => {
+    const vps = fake();
+    await onDisk(vps, bigSkillTranscript(false), 33 * 1024 * 1024).tick();
+    expect(vps.events).not.toContain(KILL_NEW);
+    expect(vps.events).not.toContain(KILL_OLD);
+    expect(vps.markOf()).toMatchObject({ passo: 'desistiu', permanente: true });
+    expect(vps.toLeader.some((message) => message.leaderText.includes('duas vivas no lugar'))).toBe(true);
   });
 });
