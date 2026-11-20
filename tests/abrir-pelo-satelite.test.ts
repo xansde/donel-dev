@@ -136,7 +136,6 @@ function machines(options: Options = {}) {
   if (options.boardLeader) sfolder(SID_LIDER_H, { localCwd: HOMOLOG, name: 'Líder · Homologação', roleId: 'lider' });
   const ids = [NEW_SID];
   let counter = 0;
-  const delivered: unknown[] = [];
   const satOpen = createOpenLocal({
     sessionsDir: sat.sessionsDir,
     oraculoDir: sat.oraculoDir,
@@ -146,10 +145,6 @@ function machines(options: Options = {}) {
     },
     leader: async () => null,
     liveSessions: async () => new Set(slive),
-    deliver: async (message) => {
-      delivered.push(message);
-      return { placeId: message.placeId };
-    },
     run: async (script) => {
       const done = await sat.run(script);
       if (script.includes('new-session -d') && done.code === 0) for (const folder of readdirSync(sat.sessionsDir)) slive.add(folder);
@@ -215,7 +210,6 @@ function machines(options: Options = {}) {
     setSession: () => undefined,
     leader: async () => ({ sid: SID_LIDER }),
     liveSessions: async () => new Set([SID_LIDER, SID_DEV]),
-    deliver: async () => null,
     run: vps.run,
     room: () => null,
     portFree: async () => true,
@@ -228,7 +222,7 @@ function machines(options: Options = {}) {
     vpsOpen.abrir(sid, vpicture.sessoes[sid]!, { tool: 'sessao_abrir', papel: 'revisor', pedido: PEDIDO, quadro: 'Homologação', onde: 'Homologações', ...args } as never);
   const satFolders = (): string[] => readdirSync(sat.sessionsDir).filter((sid) => sid !== SID_HDEV && sid !== SID_LIDER_H);
   const metaOf = (sid: string): Record<string, unknown> => JSON.parse(readFileSync(join(sat.sessionsDir, sid, 'meta.json'), 'utf8')) as Record<string, unknown>;
-  return { clock, dir, sat, vps, project, satOpen, satRound, ask, cut, post, calls, satFolders, metaOf, slive, delivered, picture: () => spicture };
+  return { clock, dir, sat, vps, project, satOpen, satRound, ask, cut, post, calls, satFolders, metaOf, slive, picture: () => spicture };
 }
 
 const parsed = (outcome: { kind: string; text?: string }): Record<string, unknown> => JSON.parse(outcome.text ?? '') as Record<string, unknown>;
@@ -296,13 +290,15 @@ describe('com o PC desligado, abrir sessão no quadro de outra máquina pelo sat
     const compact = compactPicture(m.picture(), T0, m.slive);
     expect(compact.quadros[HOMOLOG]?.board?.links).toContainEqual(expect.objectContaining({ from: LIDER_H, to: `session:${NEW_SID}`, arrow: true, opened: true }));
 
-    // The Líder único's request to that board goes to its live Líder there (12/11), never a session past him.
+    // t-83b81fd2 — the Líder único's request to that board opens there directly, never handed to its live Líder: with
+    // the PC off that Líder may not be able to open.
     const viaVps = await m.ask({ nome: 'Outro revisor' });
     expect(parsed(viaVps)).toMatchObject({ estado: 'pedido aceito' });
     await m.satRound().round();
-    expect(m.delivered).toEqual([expect.objectContaining({ projectPath: HOMOLOG, placeId: LIDER_H })]);
-    expect(m.satFolders()).toEqual([NEW_SID]);
-    expect((await m.ask({ nome: 'Outro revisor' })).text).toContain('Entregue ao Líder do quadro Homologação');
+    expect(m.satFolders()).toHaveLength(2);
+    const second = m.satFolders().find((sid) => sid !== NEW_SID)!;
+    expect(m.metaOf(second)).toMatchObject({ openedBy: 'lider', localCwd: HOMOLOG });
+    expect(parsed(await m.ask({ nome: 'Outro revisor' }))).toMatchObject({ lugar: `session:${second}`, quadro: 'Homologação', nome: 'Outro revisor' });
   });
 
   it('nenhum outro abre: um Dev de qualquer das máquinas, e o portão do satélite pedindo abertura na VPS pessoal', async () => {

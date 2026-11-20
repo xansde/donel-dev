@@ -1121,7 +1121,6 @@ function machine(meta: Record<string, unknown>) {
     setSession: () => undefined,
     leader: async () => null,
     liveSessions: async () => new Set([OLD]),
-    deliver: async () => null,
     run,
     room: () => null,
     portFree: async () => true,

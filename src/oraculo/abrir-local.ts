@@ -5,9 +5,10 @@
 // (`mindscape.json`) is never written here.
 //
 // Rules (the board Líder's decisions, 18/11): only the Líder único local opens; any role but `lider`; the board is
-// named and must be in the picture and in the PC's kit (`abrir.json`, open-kit.ts); a board with a live Líder gets
-// the request instead (its Líder hands it out); the kit's `openCap` is counted on this machine's folders opened by the
-// same opener on that board; no room (memory, load), no opening.
+// named and must be in the picture and in the PC's kit (`abrir.json`, open-kit.ts); the kit's `openCap` is counted on
+// this machine's folders opened by the same opener on that board; no room (memory, load), no opening. Until
+// t-83b81fd2 (20/11) a board with a live Líder got the Líder único's request instead; now he opens there directly too
+// (that board Líder could not always open without the PC).
 //
 // t-d461e003 (19/11): the request the Líder único hands to a board Líder alive here would stop there, since that Líder
 // got `NOT_THE_LEADER`. So a board Líder alive in this machine's tmux (`boardLeaders` of his board in the picture names
@@ -36,16 +37,14 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, relative } from 'node:path';
-import type { OwnerMessage } from '../main/ledger-card-writer';
 import { OPEN_KIT_FILE, OPEN_KIT_VERSION, type OpenKit, type OpenKitRole } from '../main/open-kit';
 import { planRemoteLaunch } from '../main/remote-launch-plan';
 import { parseRemoteSetupOutput, REMOTE_TMUX_SOCKET, shQuote } from '../main/remote-session';
 import type { BrowserToolOutcome } from '../shared/browser/mcp';
 import { MCP_SERVER_NAME } from '../shared/browser/mcp';
-import type { LedgerDeliveredTo } from '../shared/ledger/contract';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import type { MindscapeBoard } from '../shared/mindscape/model';
-import { boardLeaders, hearingPlaceIds } from '../shared/mindscape/reach';
+import { boardLeaders } from '../shared/mindscape/reach';
 import { buildRemoteInventoryScript, buildRoleScopeSettings, EMPTY_INVENTORY, parseRemoteInventoryOutput, type RoleScopeSettings } from '../shared/role-scope';
 import { LEADER_ROLE_ID } from '../shared/roles';
 import { renewalLaunchArgs } from '../shared/sessionRenewal';
@@ -90,8 +89,6 @@ export interface OpenLocalDeps {
   readonly leader: () => Promise<LocalLeader | null>;
   /** This machine's live tmux sessions (folder sids). */
   readonly liveSessions: () => Promise<ReadonlySet<string>>;
-  /** To the board's Líder: the recados of this machine, else the PC's relay. */
-  readonly deliver: (message: OwnerMessage) => Promise<LedgerDeliveredTo>;
   /** Runs a bash script (on stdin) as the sessions' user, with its login PATH: the setup, the tmux, the inventory. */
   readonly run: (script: string) => Promise<ScriptRun>;
   /** Why this machine has no room now; `null` = room. */
@@ -275,12 +272,6 @@ function readOpened(file: string, now: number): Record<string, OpenedEntry> {
 function writePrivate(file: string, content: string): void {
   writeFileSync(`${file}.tmp`, content, { mode: 0o600 });
   renameSync(`${file}.tmp`, file);
-}
-
-function placeStatesOf(places: readonly unknown[]): Map<string, string> {
-  const states = new Map<string, string>();
-  for (const place of places) if (isRecord(place) && typeof place.id === 'string') states.set(place.id, typeof place.estado === 'string' ? place.estado : '');
-  return states;
 }
 
 /**
@@ -543,7 +534,7 @@ export function createOpenLocal(deps: OpenLocalDeps): OpenLocal {
       const names = [...boards.keys()].map(lastSegment).join(', ') || 'nenhum';
       return fail(`Com o PC desligado, conheço só os quadros do último retrato (${names}); "${quadro}" não está entre eles. Tente quando o PC ligar.`);
     }
-    return openOn(kit, role, found, opener, call, !boardLeaderOf);
+    return openOn(kit, role, found, opener, call);
   }
 
   /**
@@ -557,7 +548,7 @@ export function createOpenLocal(deps: OpenLocalDeps): OpenLocal {
     if (typeof role === 'string') return fail(role);
     const found = [...picturedBoards(deps.picture())].find(([pasta]) => pasta === order.pasta);
     if (!found) return fail(`Não abri: o quadro ${lastSegment(order.pasta)} não está mais no retrato de ${kit.place.label}.`);
-    return openOn(kit, role, found, LEADER_OF_ALL, order, true);
+    return openOn(kit, role, found, LEADER_OF_ALL, order);
   }
 
   async function openOn(
@@ -566,8 +557,6 @@ export function createOpenLocal(deps: OpenLocalDeps): OpenLocal {
     [pasta, base]: [string, { readonly listar: readonly unknown[]; readonly board?: MindscapeBoard }],
     opener: string,
     call: { readonly pedido: string; readonly nome?: string; readonly tarefa?: string },
-    /** The Líder único's request (a live board Líder gets it instead); `false` = that Líder himself opens. */
-    toBoardLeader: boolean,
   ): Promise<BrowserToolOutcome> {
     const label = kit.place.label;
     const kitBoard = kit.boards.find((board) => board.localCwd === pasta);
@@ -579,30 +568,9 @@ export function createOpenLocal(deps: OpenLocalDeps): OpenLocal {
     const repeat = opened[key];
     if (repeat && existsSync(join(deps.sessionsDir, repeat.sid))) return { kind: 'text', text: repeat.answer };
 
-    // A board with a live Líder: the request goes to him (he hands it out), never a session past him; he himself opens
-    // (boardLeaderOf, t-d461e003). With the PC off
-    // (the only case this runs) the picture is frozen: a board Líder that closed after it still reads "parada". So he
-    // counts as live only with his session (the one whose `quemSou.lugar` is his place) alive in this machine's tmux;
-    // one with no session in the picture, or out of the tmux, lives on the PC that is off or closed (t-d461e003).
-    const states = placeStatesOf(base.listar);
-    const hearing = hearingPlaceIds(states);
-    const tmuxNow = await deps.liveSessions();
-    const sessions = Object.entries(deps.picture()?.sessoes ?? {});
-    const aliveHere = (placeId: string): boolean => sessions.some(([folder, session]) => session.quemSou.lugar === placeId && tmuxNow.has(folder));
-    const boardLeader = toBoardLeader ? boardLeaders(base.board).find((id) => hearing.has(id) && aliveHere(id)) : undefined;
-    if (boardLeader) {
-      const words = `pedido do Líder único (papel ${role.id}, "${name}"), com o PC desligado: ${call.pedido}`;
-      const to = await deps.deliver({
-        projectPath: pasta,
-        placeId: boardLeader,
-        text: `◆ Oráculo: ${words}`,
-        leaderText: `◆ Oráculo, quadro ${kitBoard.name}: ${words}`,
-        key: `abrir:${key}`,
-      });
-      const how = to === null ? ' Ele não está nesta máquina: recebe quando o PC ligar.' : '';
-      return { kind: 'text', text: `Entregue ao Líder do quadro ${kitBoard.name} (${boardLeader}), que reparte o pedido; não abri sessão nova.${how}` };
-    }
-
+    // t-83b81fd2 (20/11) — the Líder único's request opens here even on a board with a live Líder: with the PC off that
+    // Líder could not always open (on another machine, or by a gate that refused), and the request stopped with him.
+    // The board Líder's own opening (boardLeaderOf) is unchanged.
     const noRoom = deps.room();
     if (noRoom) return fail(`Não abri: esta máquina está sem vaga agora (${noRoom}). Tente de novo em alguns minutos.`);
     const folders = readFolders(deps.sessionsDir);

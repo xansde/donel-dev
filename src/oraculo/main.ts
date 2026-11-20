@@ -128,7 +128,6 @@ async function runSatellite(dir: string, url: string): Promise<void> {
     // The Líder único never lives on a satellite.
     leader: async () => null,
     liveSessions: tmuxLocalSessions,
-    deliver: async (message) => (await recados.deliverLocal(message).catch(() => null)) ?? (await notices.send(message), null),
     run: runLocalScript,
     room: () => roomRefusal({ freeBytes: freemem(), loadPerCpu: loadavg()[0]! / Math.max(1, cpus().length) }),
     portFree: loopbackPortFree,
