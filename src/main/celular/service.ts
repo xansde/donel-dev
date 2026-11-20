@@ -25,7 +25,7 @@ import { createMobileHandler, MOBILE_PORT, startMobileServer, type MobileRequest
 import { createHash } from 'node:crypto';
 import { pickTailscaleAddress } from './tailscale';
 import { createMobilePedidosPort, createPedidoRouter, createPedidosStore, type MobilePedidosPort, type PedidoTarefa } from './pedidos';
-import { createTranscriptionJobs, DEFAULT_WHISPER_URL, whisperServerTranscriber } from './transcrever';
+import { createTranscriptionJobs, DEFAULT_WHISPER_URL, whisperServerTranscriber, type Transcribe } from './transcrever';
 import { createPushStore, isPushSubscription, newlyWaiting, pushMessageFor, sendPush, type PushFetch } from './webpush';
 import type { LedgerDoc } from '../../shared/ledger/contract';
 
@@ -53,6 +53,8 @@ export interface CelularCoreDeps {
   readonly whisperUrl?: string | null;
   /** t-0eb91241 — the daemon on the VPS: the VPS transcriber (`daemonWhisper`), its message and its longer wait. */
   readonly whisper?: { readonly url: string; readonly where: 'pc' | 'vps'; readonly timeoutMs: number };
+  /** t-0eb91241 — the PC: the VPS transcriber over ssh (`sshVpsTranscriber`); wins over `whisper` and `whisperUrl`. */
+  readonly transcribe?: Transcribe;
   /** Saída iii (18/11): the phone app's routes under `/api/v2/` (the daemon only). */
   readonly v2?: () => ((request: MobileRequest) => Promise<MobileResponse>) | null;
   /**
@@ -120,7 +122,7 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
       writeFileSync(path, bytes);
     },
     exists: existsSync,
-    transcribe: whisperServerTranscriber(deps.whisper ?? { url: deps.whisperUrl ?? (process.env.DONEL_WHISPER_URL || DEFAULT_WHISPER_URL) }),
+    transcribe: deps.transcribe ?? whisperServerTranscriber(deps.whisper ?? { url: deps.whisperUrl ?? (process.env.DONEL_WHISPER_URL || DEFAULT_WHISPER_URL) }),
   });
   const router = createPedidoRouter({
     store: pedidosStore,
