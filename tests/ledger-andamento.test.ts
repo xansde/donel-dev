@@ -458,6 +458,24 @@ describe('andamento no ledger, não no chat do Líder', () => {
     expect(events.map(progressOf).filter(Boolean)).toEqual([{ estado: 'precisa-do-dono', precisa: '[dado-do-dono] decidir a cor' }]);
   });
 
+  it('t-e1e992ab — fora o lugar dono, só o serviço limitador registra, e só "esperando" em tarefa viva', async () => {
+    const t = await team();
+    const id = Object.values(parseLedgerDoc(JSON.parse(readFileSync(t.file, 'utf8'))).tasks).find((task) => task.ownerPlaceId === 'place:dev1')!.id;
+    const esperando = { estado: 'esperando' as const, precisa: 'vaga na VPS pessoal (limitador): teto de sessões' };
+    const limitador = { kind: 'lugar' as const, placeId: 'servico:limitador', roleId: 'servico' };
+    // Another place and another service still may not.
+    expect((await t.service.apply({ kind: 'lugar', placeId: 'place:dev2', roleId: 'dev' }, { op: 'andamento', id, progress: esperando })).ok).toBe(false);
+    expect((await t.service.apply({ kind: 'lugar', placeId: 'servico:mencoes', roleId: 'servico' }, { op: 'andamento', id, progress: esperando })).ok).toBe(false);
+    // The limiter never says the session is stuck nor that it needs the owner: that would reach the Líder at once.
+    for (const estado of ['travada', 'precisa-do-dono', 'trabalhando', 'pronta'] as const)
+      expect((await t.service.apply(limitador, { op: 'andamento', id, progress: { estado } })).ok).toBe(false);
+    expect(progressRecords(t)).toEqual([]);
+    expect((await t.service.apply(limitador, { op: 'andamento', id, progress: esperando })).ok).toBe(true);
+    expect(progressRecords(t)).toEqual([{ owner: 'place:dev1', progress: esperando }]);
+    expect(await settle(t)).toBeUndefined();
+    expect(t.sent).toEqual([]);
+  });
+
   it('modo antigo (Preferências): o "◆ … terminou" volta ao chat e nada vai ao ledger', async () => {
     const t = await team();
     t.mode = 'chat';

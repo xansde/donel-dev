@@ -10,7 +10,22 @@
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ASKED_BY_OWNER, cleanAskedBy, SERVICE_PLACE_PREFIX, SERVICE_ROLE, type LedgerActor, type LedgerOp } from '../shared/ledger/contract';
+import {
+  ASKED_BY_OWNER,
+  cardKindOf,
+  cleanAskedBy,
+  isClosed,
+  isRequestId,
+  lastWorkAt,
+  LIMITER_SERVICE,
+  SERVICE_PLACE_PREFIX,
+  SERVICE_ROLE,
+  type LedgerActor,
+  type LedgerDoc,
+  type LedgerOp,
+  type LedgerTask,
+} from '../shared/ledger/contract';
+import type { LedgerProgress } from '../shared/ledger/andamento';
 
 export const SERVICE_PATH = '/v1/servico/apply';
 export const SERVICES_DIR = 'servicos';
@@ -60,6 +75,7 @@ export function serviceOpRefusal(op: unknown, name?: string): string | null {
     if ((op as { risk?: unknown }).risk !== undefined) return 'o reconciliador não muda o risco: quem decide é o Líder';
     return typeof reason === 'string' && reason.trim() ? null : 'motivo obrigatório';
   }
+  if (kind === 'andamento' && name === LIMITER_SERVICE) return limiterProgressRefusal(op as Record<string, unknown>);
   if (!SERVICE_OPS.has(kind)) return 'serviço só cria, assume e entrega tarefas';
   // The owner's mark puts the task in the owner's progress (Jobu); a service names the person, never the owner.
   if (typeof requestedBy === 'string' && cleanAskedBy(requestedBy).toLowerCase() === ASKED_BY_OWNER) return 'serviço não marca pedido do dono';
@@ -90,4 +106,57 @@ export function checkNotice(op: Record<string, unknown>, name: string): NoticeCh
   return { ok: true, texto, chave };
 }
 
-export type ServiceOp = Extract<LedgerOp, { op: 'criar' | 'assumir' | 'entregar' | 'transferir' }>;
+export type ServiceOp = Extract<LedgerOp, { op: 'criar' | 'assumir' | 'entregar' | 'transferir' | 'andamento' }>;
+
+/**
+ * t-e1e992ab — the limiter's progress line: `{ op: 'andamento', lugar?, reserva, progress, requestId? }`. The limiter
+ * knows only the place of who waited (or none: a cron routine, the Líder único); the Oráculo picks the task
+ * (`limiterTaskOf`). No `id`, but this is not a confinement: `reserva` is a task id from the limiter's own config, and
+ * the Oráculo writes there whatever live task it names. What holds the line is the ledger (contract.ts, `andamento`):
+ * only "esperando", only on a live task, signed `servico:limitador`, never reaching the Líder.
+ */
+export interface LimiterProgressOp {
+  readonly op: 'andamento';
+  readonly lugar?: string;
+  readonly reserva: string;
+  readonly progress: LedgerProgress;
+  readonly requestId?: string;
+}
+
+const LIMITER_KEYS: ReadonlySet<string> = new Set(['op', 'lugar', 'reserva', 'progress', 'requestId']);
+const LIMITER_PROGRESS_KEYS: ReadonlySet<string> = new Set(['estado', 'precisa', 'prova', 'proximo']);
+/** A whole place id (`place:<uuid>`), or its start with 8 hex at least (`place:8be0d000`, what `--quem` carries). */
+const LIMITER_PLACE = /^place:[0-9a-f]{8}[0-9a-f-]{0,28}$/;
+const TASK_ID = /^t-[0-9a-f]{8}$/;
+
+function limiterProgressRefusal(op: Record<string, unknown>): string | null {
+  const strange = Object.keys(op).find((key) => !LIMITER_KEYS.has(key));
+  if (strange) return `o limitador não manda "${strange}": o Oráculo acha a tarefa pelo lugar`;
+  if (op.lugar !== undefined && (typeof op.lugar !== 'string' || !LIMITER_PLACE.test(op.lugar))) return '"lugar" é place:<8 hex ou mais>';
+  if (typeof op.reserva !== 'string' || !TASK_ID.test(op.reserva)) return '"reserva" é o id da tarefa de reserva (t-xxxxxxxx)';
+  if (op.requestId !== undefined && !isRequestId(op.requestId)) return '"requestId" de 8 a 64 letras, números, - ou _';
+  const progress = op.progress;
+  if (typeof progress !== 'object' || progress === null || Array.isArray(progress)) return '"progress" obrigatório';
+  for (const [key, value] of Object.entries(progress)) {
+    if (!LIMITER_PROGRESS_KEYS.has(key)) return `o limitador não manda "progress.${key}"`;
+    if (typeof value !== 'string') return `"progress.${key}" é texto`;
+  }
+  return (progress as { estado?: unknown }).estado === 'esperando' ? null : 'o limitador só registra "esperando"';
+}
+
+/**
+ * The task the limiter's line goes to: the live task of the place (a whole id, or a start that only one owner has),
+ * the one in execution that moved last, else the live one that moved last. No place, a start shared by two owners,
+ * or a place with no live task: `reserva` (a closed reserve is the contract's refusal, never a guess).
+ */
+export function limiterTaskOf(doc: LedgerDoc, lugar: string | undefined, reserva: string): string {
+  if (!lugar) return reserva;
+  const live = Object.values(doc.tasks).filter((task) => !isClosed(task) && !task.slack && !cardKindOf(task));
+  let mine = live.filter((task) => task.ownerPlaceId === lugar);
+  if (mine.length === 0) {
+    mine = live.filter((task) => task.ownerPlaceId.startsWith(lugar));
+    if (new Set(mine.map((task) => task.ownerPlaceId)).size !== 1) return reserva;
+  }
+  const newest = (tasks: LedgerTask[]): LedgerTask | undefined => tasks.reduce<LedgerTask | undefined>((best, task) => (!best || lastWorkAt(task) > lastWorkAt(best) ? task : best), undefined);
+  return (newest(mine.filter((task) => task.state === 'em-execucao')) ?? newest(mine))?.id ?? reserva;
+}
