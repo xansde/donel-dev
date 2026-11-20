@@ -1,8 +1,39 @@
 # OpenRig — registro de absorção
 
-Último commit absorvido: eca040204b4fa6bf97a22ff917970e6ca1650331
+Último commit absorvido: d29937aff7266c06249d70c3e92dba8a18742344
 
 Referência de design do Mindscape (github.com/mvschwarz/openrig). Procedimento na skill `absorver-openrig`. Cada rodada lista o que virou PR, o que ficou adiado, o que espera o dono e o que foi descartado.
+
+## 2026-11-20 — eca0402..d29937a
+
+21 commits do OpenRig; sem versão nova além da v0.7.19 (já absorvida). A main do OpenRig já carrega as notas da 0.7.19 e as flags da 0.7.20 em docs.
+
+### Vale → PR
+
+Nenhum.
+
+### Vale → adiado
+
+Nenhum (teto de 3 PRs não foi atingido).
+
+### Vale → pendente para o dono
+
+- **Consentimento da pessoa primeiro** (OpenRig `49eff29`, `985991f`): o agente pergunta antes de responder qualquer prompt do time; aprovar o plano não vale como resposta aos prompts que o trabalho levanta; quem mandou o prompt repassa a resposta (para não sair em dobro); o trabalho vai como tarefa com rota de volta; e quando o app da pessoa recusa o repasse, o agente diz o que foi recusado e por quê e não tenta por outro caminho. É insumo para a pergunta já aberta desde 08/11 sobre responder ao "esperando você" em nome do dono, não uma pergunta nova. Pergunta: o Líder pode responder sozinho a um "esperando você" de uma sessão abaixo dele, ou segue a posição do OpenRig: a resposta é sempre sua, e o Líder só repassa o que você escolheu, uma vez?
+
+Seguem abertas as perguntas das seções anteriores (fila durável do item 13, desde 10/11; pausa até o reset do limite de uso, desde 12/11).
+
+### Descartado
+
+- Pool de seats: avisos, export/drift e rollup de seats planejados: Mecânica de daemon e pool de seats com export/bundle em YAML. A rodada de 19/11 já descartou isso e o Donel não tem pool de seats.
+- Uso de runner Pi alimenta lane de contexto e série de burn: Só serve ao runner Pi, que o Donel não tem. O consumo por conta do Donel mora em `src/main/accounts/`, que fica fora da absorção.
+- Fila e handoff: tags adicionáveis depois e Continuation com evidence-ref: É fila durável e workflow do CLI rig. A fila do item 13 continua com o dono (pergunta aberta desde 10/11) e o ledger com prova (item 19) já cobre o recibo. Não há ideia nova.
+- CLI: `rig attach --self` falho nomeia a rota sem junção: Robustez do CLI rig. O Donel já tem o equivalente: o `sessao_enviar` a um lugar fechado diz como retomá-lo (PR #427).
+- Terminal Herdr: tiles de tamanho fixo pré-0.7.10 não reutilizados: Mecânica de Herdr/tmux, que a régua manda descartar.
+- Desempenho do daemon: SQLite temp em memória e leitura de execution view: Refactor interno de daemon/SQLite, sem ideia nova.
+- Slack opt-in: cartão de pergunta resolvido nomeia a opção escolhida: Integração Slack própria do OpenRig, já descartada em rodadas anteriores.
+- TUI: control socket degrada em vez de encerrar o launcher: A TUI está fora de escopo (dono, 03/11).
+- Release 0.7.19 na main, docs de CLI/referência e instruções de upgrade: Packaging, release e docs do próprio OpenRig.
+- Testes e CI do OpenRig: Só testes e CI do OpenRig (tmux, dsh).
 
 ## 2026-11-19 — 6254aff..eca0402
 
