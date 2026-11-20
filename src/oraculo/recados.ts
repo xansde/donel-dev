@@ -63,6 +63,9 @@ import { listedPlaces, resolveAddress } from '../shared/mindscape/address';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { BOARD_LEADER, canReach, canReachLeader, isBoardOrchestrator, isLiveListedPlace, LEADER_OF_ALL_FROM, MY_OPENER, successorOf, whoHears, type ListedPlace } from '../shared/mindscape/reach';
 import { blockingScreen, isWorking } from '../shared/chat/screen';
+import { locateInputBox } from '../shared/cliInputBox';
+import { maskSecrets } from '../shared/ledger/secret-scan';
+import { MAX_SCREEN_TEXT } from './tela-satelite';
 import type { MindscapeBoard } from '../shared/mindscape/model';
 import type { LedgerDeliveredTo, LedgerTask } from '../shared/ledger/contract';
 import type { LedgerToolCall } from '../shared/ledger/tools';
@@ -209,11 +212,23 @@ export interface GateRecadosDeps {
    * that far). Default: `readTranscriptSince`.
    */
   readonly readTranscript?: (path: string, since: number) => Promise<string | null>;
+  /**
+   * t-69eefa2c — the Líder único's `sessao_ver_tela` of a place that runs on another machine (the Homologações, whose
+   * satellite pictures it): asked of that machine's satellite (tela-satelite.ts). `null` = no other machine runs it.
+   * Absent = only this machine's tmux.
+   */
+  readonly remoteScreen?: (projectPath: string, placeId: string) => Promise<BrowserToolOutcome | null>;
   readonly now?: () => number;
   readonly log?: (line: string) => void;
 }
 
 export interface GateRecadosHandle extends GateRecados {
+  /**
+   * t-69eefa2c — the satellite's side of a `sessao_ver_tela` asked from the personal VPS: the screen of the one live
+   * session of `placeId` (board `projectPath`) in this machine's tmux, its secrets masked, with its state read from it.
+   * `ok: false` = why not (no live session here, two of them, tmux silent).
+   */
+  screenOf(projectPath: string, placeId: string): Promise<{ readonly ok: boolean; readonly text: string }>;
   /**
    * t-4c60b815 — the owner's word on a card or his decision (the card writer), when the session that owns the task runs
    * here: queued in `recados.json` (the same key joins, even after delivered) and answered as delivered to it. `null` =
@@ -512,6 +527,36 @@ function plainScreen(text: string): string {
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
     .replace(/\x1b./g, '')
     .replace(/\s+$/, '');
+}
+
+/**
+ * t-69eefa2c (r-4f20422c) — what a session's screen says of it, for `sessao_ver_tela`: never the list the PC pushed
+ * before it left (frozen with the PC away: a session "parada" there may be mid-turn now). Mid-turn = the CLI's spinner
+ * above the box or "esc to interrupt" under it (`isWorking`); with no box drawn, "esc to interrupt" anywhere. A dialog
+ * or a box-less screen holding the CLI = it needs the owner (`pergunta`: what it asks). Else stopped. Pure.
+ */
+export function screenState(text: string): { readonly estado: 'trabalhando' | 'parada' | 'precisa do dono'; readonly pergunta?: string } {
+  const lines = plainScreen(text).split('\n');
+  if (isWorking(lines) || (!locateInputBox(lines) && BUSY_ON_SCREEN.test(text))) return { estado: 'trabalhando' };
+  const dialog = blockingScreen(lines);
+  if (dialog) return { estado: 'precisa do dono', pergunta: dialog.title };
+  return { estado: 'parada' };
+}
+
+/**
+ * The answer of `sessao_ver_tela`: the place, its state read from the screen, the screen's end, and where it came from.
+ * With `maxChars`, the screen loses its first characters until the answer fits (what goes to another machine).
+ */
+function screenAnswer(placeId: string, text: string, fonte: string, maxChars = Infinity): string {
+  const lines = plainScreen(text).split('\n');
+  let tela = lines.slice(-SCREEN_LINES).join('\n');
+  const answer = (): string => JSON.stringify({ id: placeId, ...screenState(text), tela, fonte }, null, 1);
+  let out = answer();
+  while (out.length > maxChars && tela) {
+    tela = tela.slice(Math.max(1, out.length - maxChars));
+    out = answer();
+  }
+  return out;
 }
 
 /** A turn that did not end (an Esc, a lost Stop) and wrote nothing for this long, with a quiet screen, is not running. */
@@ -1358,7 +1403,18 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
    * the PC (`findPlace`): only the exact id of a place of the board, never a role, "lider-quadro", "quem-me-abriu" nor
    * the successor of a closed place (closing would end a live sibling); two live sessions with the place = refused.
    */
-  async function leaderLocalTarget(call: ScreenCall | CloseCall, verb: string): Promise<{ readonly placeId: string; readonly sid: string; readonly estado?: string } | string> {
+  async function leaderLocalTarget(call: ScreenCall | CloseCall, verb: string): Promise<{ readonly placeId: string; readonly sid: string } | string> {
+    const place = await leaderPlace(call);
+    if (typeof place === 'string') return place;
+    if (!place.sid) return `"${place.placeId}" não roda nesta máquina: com o PC fora, ${verb} só sessões do tmux daqui.`;
+    return { placeId: place.placeId, sid: place.sid };
+  }
+
+  /**
+   * The place the Líder único names (as `leaderLocalTarget`), with the sid of its one live session in this machine's
+   * tmux, or none (`sid` absent: it may run on another machine). A string = why not.
+   */
+  async function leaderPlace(call: ScreenCall | CloseCall): Promise<{ readonly projectPath: string; readonly placeId: string; readonly sid?: string } | string> {
     const boards = picturedBoards(deps.picture());
     const names = [...boards.keys()].map(lastSegment).join(', ') || 'nenhum';
     const id = call.quem.trim();
@@ -1375,9 +1431,8 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     const reach = board ? canReach({ schemaVersion: 8, boards: { [projectPath]: board } }, LEADER_OF_ALL_FROM, { projectPath, placeId: id }) : { ok: false as const, reason: 'o retrato não tem as setas deste quadro.' };
     if (!reach.ok) return `Sem ligação: o Líder único não alcança "${id}" no quadro ${lastSegment(projectPath)}: ${reach.reason}`;
     const sids = sidsOfPlace(projectPath, id, await localSessions());
-    if (!sids.length) return `"${id}" não roda nesta máquina: com o PC fora, ${verb} só sessões do tmux daqui.`;
     if (sids.length > 1) return `"${id}" tem ${sids.length} sessões vivas nesta máquina (${sids.join(', ')}); não sei qual é a do lugar. Espere o PC voltar.`;
-    return { placeId: id, sid: sids[0]!, ...(estado ? { estado } : {}) };
+    return { projectPath, placeId: id, ...(sids[0] ? { sid: sids[0] } : {}) };
   }
 
   /** When each target with a waiting item was first missing from tmux (memory only). */
@@ -1917,15 +1972,30 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     },
 
     async verTela(_sid, call) {
-      const target = await leaderLocalTarget(call, 'vejo');
+      const target = await leaderPlace(call);
       if (typeof target === 'string') return { kind: 'error', text: target };
+      if (!target.sid) {
+        // t-69eefa2c — a place of another machine (the Homologações): its satellite sends the screen of its tmux.
+        const remote = deps.remoteScreen ? await deps.remoteScreen(target.projectPath, target.placeId) : null;
+        return remote ?? { kind: 'error', text: `"${target.placeId}" não roda nesta máquina: com o PC fora, vejo só sessões do tmux daqui.` };
+      }
       const screen = await tmux.screen(target.sid);
       if (!screen) return { kind: 'error', text: `O tmux de "${target.placeId}" não respondeu; tente de novo em instantes.` };
-      const lines = plainScreen(screen.text).split('\n');
-      return {
-        kind: 'text',
-        text: JSON.stringify({ id: target.placeId, ...(target.estado ? { estado: target.estado } : {}), tela: lines.slice(-SCREEN_LINES).join('\n'), fonte: 'tmux desta VPS (o PC está fora)' }, null, 1),
-      };
+      // The state from the screen (r-4f20422c): the list the PC left is frozen while it is away.
+      return { kind: 'text', text: screenAnswer(target.placeId, screen.text, 'tmux desta VPS (o PC está fora)') };
+    },
+
+    async screenOf(projectPath, placeId) {
+      const sids = sidsOfPlace(projectPath, placeId, await localSessions());
+      const sessions = deps.picture()?.sessoes ?? {};
+      const named = sids.map((sid) => sessions[sid]?.quemSou.roda).find((name): name is string => typeof name === 'string' && name.length > 0);
+      const roda = named ?? 'esta máquina';
+      if (!sids.length) return { ok: false, text: `"${placeId}" não tem sessão viva em ${roda}.` };
+      if (sids.length > 1) return { ok: false, text: `"${placeId}" tem ${sids.length} sessões vivas em ${roda}; não sei qual é a do lugar.` };
+      const screen = await tmux.screen(sids[0]!);
+      if (!screen) return { ok: false, text: `O tmux de "${placeId}" em ${roda} não respondeu; tente de novo em instantes.` };
+      // The screen leaves this machine: its secrets masked first (never in a log).
+      return { ok: true, text: screenAnswer(placeId, maskSecrets(plainScreen(screen.text)).text, `tmux ${named ? `da ${named}` : 'da máquina de lá'} pelo satélite (o PC está fora)`, MAX_SCREEN_TEXT) };
     },
 
     async fechar(_sid, call) {

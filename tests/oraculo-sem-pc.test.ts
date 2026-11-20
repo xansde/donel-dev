@@ -328,10 +328,19 @@ describe('com o PC ligado, o retrato do PC manda', () => {
 
   it('o Líder único com o PC fora: ver_tela e fechar pelo tmux daqui, sem tocar o túnel', async () => {
     const w = vps();
-    w.screens.set(SID_DEV, 'fiz o teste vermelho\n> ');
+    // r-4f20422c — the PC's last list says "parada"; the screen says a turn runs. The screen wins.
+    const dev = w.stored.picture!.sessoes[SID_DEV]!;
+    w.stored.picture = { ...w.stored.picture!, sessoes: { [SID_DEV]: { ...dev, listar: [{ ...LISTAR[0]!, estado: 'parada' }] } } };
+    const RULE = '─'.repeat(40);
+    w.screens.set(SID_DEV, `● lendo o código\n\n✻ Cogitating… (12s · ↓ 300 tokens)\n${RULE}\n❯ \n${RULE}\n  ⏵⏵ bypass permissions on\n`);
+    const busy = await w.tool(SID_LIDER, 'sessao_ver_tela', { quadro: 'atlas', quem: DEV });
+    expect(busy.error, busy.text).toBe(false);
+    expect(JSON.parse(busy.text)).toMatchObject({ id: DEV, estado: 'trabalhando' });
+    w.screens.set(SID_DEV, `fiz o teste vermelho\n\n✻ Worked for 26s\n${RULE}\n❯ \n${RULE}\n  ? for shortcuts\n`);
     const seen = await w.tool(SID_LIDER, 'sessao_ver_tela', { quadro: 'atlas', quem: DEV });
     expect(seen.error, seen.text).toBe(false);
     expect(seen.text).toContain('fiz o teste vermelho');
+    expect(JSON.parse(seen.text)).toMatchObject({ estado: 'parada' });
     expect(await w.tool(SID_LIDER, 'sessao_fechar', { quadro: 'atlas', quem: DEV })).toEqual({ error: false, text: 'Fechada.' });
     expect(w.killed).toEqual([SID_DEV]);
     expect(w.forwarded).toEqual([]);

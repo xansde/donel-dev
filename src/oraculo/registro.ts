@@ -32,6 +32,7 @@ import { renewBeforeCard, renewBeforeTask } from './recados';
 import { createRemotePictures } from './retrato-satelite';
 import { tmuxLiveKnown } from './retrato-local';
 import { createRemoteOpenings } from './abrir-satelite';
+import { createRemoteScreens } from './tela-satelite';
 import { readOpenKit } from './abrir-local';
 import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
 import { createDaemonVigia } from './vigia';
@@ -212,6 +213,8 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
   const remotes = entregador ? entregador.remotes : createRemotePictures({ dir, io, shareHeard: true });
   // t-d461e003 — the Líder único's openings on other machines' boards: one queue per machine, beside their pictures.
   const openings = entregador ? entregador.openings : remotes ? createRemoteOpenings({ dir, pictures: remotes, kit: () => readOpenKit(dir) }) : null;
+  // t-69eefa2c — the Líder único's look at a screen of another machine: an order its satellite takes in the exchange.
+  const screens = entregador ? entregador.screens : remotes ? createRemoteScreens({ pictures: remotes }) : null;
   /**
    * The local recados when the entregador runs here; apart (passo 9, PR 2), through its gate on the loopback: with it
    * down, `deliverLocalFirst` takes the message to the PC's relay with the same key (never twice when it comes back).
@@ -421,6 +424,7 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
       notice: toLeader,
       ...(remotes ? { pictures: remotes } : {}),
       ...(openings ? { openings: { queue: openings, isLocal: (name: string) => isLocalGate(dir, name) } } : {}),
+      ...(screens ? { screens: { queue: screens, isLocal: (name: string) => isLocalGate(dir, name) } } : {}),
       // Apart, the Líder único of this machine reaches the ledger through the entregador's gate (never a satellite's).
       ...(entregador ? {} : { leader: { isLocal: (name: string) => isLocalGate(dir, name), picture: () => (remotes ? remotes.combine(picture()) : picture()) } }),
       // Passo 9 — apart, a message of the entregador's sessions for a place of another machine is queued here.
