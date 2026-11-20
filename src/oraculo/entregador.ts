@@ -21,6 +21,7 @@ import { createLocalLeaderFinder, currentConversation } from './lider-local';
 import { RETRATO_PC_FILE } from './modo';
 import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForward, type BoardPicture, type GateDeps, type PictureSession } from './portao';
 import { createGateRecados, findTranscript, tmuxLocalSessions, type GateRecadosHandle } from './recados';
+import { FIRST_MESSAGES_FILE, placeOfSessionIn, rememberFirstMessage } from './primeiras';
 import { deliverLocalFirst, type Relay } from './relay';
 import { createLocalPicture, tmuxLiveKnown, tmuxLiveNow } from './retrato-local';
 import { createRemotePictures, createRemotePicturesReader, type RemotePictureView, type RemotePictures } from './retrato-satelite';
@@ -385,6 +386,8 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
       leader: localLeader,
       transcriptOf,
       localSessions: liveSessions,
+      firstMessages: join(dir, FIRST_MESSAGES_FILE),
+      placeOf: placeOfSessionIn(sessionsDir),
     });
   } else {
     let url: string;
@@ -416,6 +419,8 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
       leader: localLeader,
       transcriptOf,
       localSessions: liveSessions,
+      firstMessages: join(dir, FIRST_MESSAGES_FILE),
+      placeOf: placeOfSessionIn(sessionsDir),
     });
   }
   // Passo 9, PR 3 — apart, the chat lives here: a message for a Líder único not on this machine goes to the registro's
@@ -508,6 +513,7 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
           recados,
           forward: tunnelForward,
           serverVersion: 'oraculo-vps',
+          firstMessage: (placeId, pedido) => rememberFirstMessage(join(dir, FIRST_MESSAGES_FILE), placeId, pedido, Date.now()),
           cards,
           // t-1a3f7150 (docs/adr/0009) — the Líder único's `sessao_abrir` with the PC off opens the session in this tmux.
           abrir: createOpenLocal({

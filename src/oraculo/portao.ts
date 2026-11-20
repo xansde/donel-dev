@@ -70,6 +70,7 @@ import type { BoardStore } from './board-client';
 import { runCardTool } from './board-tools';
 import type { GateRecados } from './gate-recados';
 import type { GateAbrir } from './gate-abrir';
+import { openedPlaceOf } from './primeiras';
 
 export const GATE_PORT = 47817;
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -207,6 +208,11 @@ export interface GateDeps {
   /** t-d461e003 — where an owner place's session may live off the board's list (`withLiveOwner`); absent = the list alone. */
   readonly liveOwner?: LiveOwnerSource;
   readonly timeouts?: { readonly localAnswerMs?: number };
+  /**
+   * t-f66595b2 — a `sessao_abrir` the PC answered ok: the place it opened and its request, kept on this machine
+   * (primeiras.ts) for when that session comes up after the PC gave up typing it (the limitador held it). Absent = not kept.
+   */
+  readonly firstMessage?: (placeId: string, pedido: string) => void;
   readonly log?: (line: string) => void;
 }
 
@@ -800,7 +806,19 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     } else {
       forwarded = await forwarding;
     }
-    if (forwarded !== 'desligado') return withGateTools(request.body, forwarded, cards !== null, tasksAnsweredHere(mine));
+    if (forwarded !== 'desligado') {
+      if (call?.name === 'sessao_abrir' && deps.firstMessage && typeof call.args.pedido === 'string' && call.args.pedido.trim()) {
+        const opened = openedPlaceOf(forwarded);
+        if (opened) {
+          try {
+            deps.firstMessage(opened, call.args.pedido);
+          } catch (error) {
+            log(`[oraculo] portão: não guardei o pedido de abertura de ${opened}: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+      }
+      return withGateTools(request.body, forwarded, cards !== null, tasksAnsweredHere(mine));
+    }
     if (request.method !== 'POST') return { status: 405, headers: { Allow: 'POST' }, body: '' };
     // Nothing reached the PC: a `sessao_enviar` the recados passed on is theirs again, now with the PC off. A session the
     // PC has no picture of is made here (nothing of the PC serves it).
