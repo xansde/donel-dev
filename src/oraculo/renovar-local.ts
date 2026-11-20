@@ -9,30 +9,37 @@
 //   1. Off unless `<oraculo dir>/renovar-local.json` says `"enabled": true` AND lists the session (its sid or its
 //      `place:`) in `"somente"` (missing or empty = nobody). Only roles in `"papeis"` (default `["dev"]`); the Líder de
 //      quadro (`lider`) and the Theo (`theo-west`) only when listed there AND `"liberarLideres": true`; the Líder único
-//      never (the successor opening refuses it too). Only with the PC away (`pcAway`: the app renews when it is on),
+//      (`lider-unico`, or `leaderOfAll` in the meta) never, whatever the switch says (the successor opening refuses it too). Only with the PC away (`pcAway`: the app renews when it is on),
 //      never a session born under 30 min ago. The switch, the list and `pcAway` are read again before typing the
 //      request, before opening the successor and before the kill: any of them off = stop there, opening/killing nothing.
 //   2. Only at the end of a turn: the last main entry of the transcript is the assistant's end of turn with no tool
 //      call pending, the transcript quiet for 60 s, and the screen with no turn running, no background work waited
 //      on and an empty input field — read again right before the request is typed.
-//   3. The old session dies only after the NEW one ANSWERED (its transcript has an assistant end of turn after its
-//      first message, seen and then seen alive again, within 5 min; otherwise only the new one, which never worked, is
-//      closed), and only while the old one is still stopped (screen idle, no new transcript entry since the handoff
-//      was ready). Back at work: wait up to 10 min for it to stop; still working = kill nothing, both stay alive, the
-//      Líder decides ("duas vivas no lugar").
+//   3. The old session dies only after the NEW one ANSWERED (its transcript has a real assistant end of turn after its
+//      first message, seen and then seen alive again; an API error the CLI writes itself — `isApiErrorMessage`, model
+//      `<synthetic>` — is no answer). A new one SILENT for 5 min (no real assistant entry after its first message) is
+//      closed: it never worked. A new one with any assistant activity is never closed: it gets up to 30 min to end its
+//      turn; without that, both stay alive ("duas vivas no lugar", lasting) and the Líder is told. The old one dies
+//      only while it is still stopped (screen idle, no new transcript entry since the handoff was ready). Back at work:
+//      wait up to 10 min for it to stop; still working = kill nothing, both stay alive ("duas vivas no lugar").
 //   4. The mark `renovacao-local` in the session folder (`~/.donel/s/<sid>`) is written before anything is asked, and
-//      a mark that does not write stops the renewal. A give-up for a passing cause (tmux refused, no room, port taken,
-//      the new one did not answer, the switch or the PC changed midway) lasts 30 min; a lasting one (live work declared
-//      twice, two sessions alive in the place) stays until deleted by hand. A mark left midway (the entregador restarted
-//      during a renewal) is never resumed: `recover` logs it for the Líder and the session stays out. The old folder is
-//      never deleted.
+//      a mark that does not write stops the renewal. No room on this machine, or another session alive in the same
+//      place (a successor a give-up left alive counts), is checked BEFORE the handoff is asked: then nothing is asked
+//      and no try is counted ("adiou"). A give-up for a passing cause after the request (tmux refused, no room, port
+//      taken, the new one silent or gone, no handoff, the switch or the PC changed midway) lasts 30 min and counts one
+//      try; the 2nd in a row is lasting. Lasting ones (2 tries, two sessions alive in the place, the session gone from
+//      the tmux) stay until the mark is deleted by hand, and the Líder is told. A mark left midway (the entregador
+//      restarted during a renewal) is never resumed: `recover` tells the Líder and the session stays out. The old folder
+//      is never deleted.
 //   5. Nothing read from a meta here is logged but the named fields (never a key).
 //
-// Each step logs one line `[oraculo] renovar-local: <passo> ...` (detectou, pediu, pronta, abriu, respondeu, fechou,
-// desistiu, em voo).
+// Each step logs one line `[oraculo] renovar-local: <passo> ...` (adiou, detectou, pediu, pronta, abriu, respondeu,
+// fechou, desistiu, em voo). The Líder (deps.toLeader) hears one line, never a key, on: two sessions alive in the place,
+// a lasting give-up, a renewal found in flight at start.
 
 import { existsSync, mkdirSync, promises as fsp, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { OwnerMessage } from '../main/ledger-card-writer';
 import { isWorking } from '../shared/chat/screen';
 import { contextTokensFromLine } from '../shared/contextWindow';
 import { LEADER_ROLE_ID } from '../shared/roles';
@@ -55,13 +62,15 @@ export interface LocalRenewalConfig extends SessionRenewalPrefs {
   readonly somente: readonly string[];
   /** The roles it may renew (default only `dev`). */
   readonly papeis: readonly string[];
-  /** The leaders' roles (`lider`, `theo-west`) only with this AND the role listed in `papeis`. */
+  /** The leaders' roles (`lider`, `theo-west`) only with this AND the role listed in `papeis`. Never the Líder único. */
   readonly liberarLideres: boolean;
 }
 
 export const DEFAULT_LOCAL_RENEWAL: LocalRenewalConfig = { enabled: false, limitTokens: 250_000, somente: [], papeis: ['dev'], liberarLideres: false };
 /** Roles held back unless the switch frees them explicitly. */
-export const GUARDED_ROLES: ReadonlySet<string> = new Set([LEADER_ROLE_ID, 'theo-west', 'lider-unico']);
+export const GUARDED_ROLES: ReadonlySet<string> = new Set([LEADER_ROLE_ID, 'theo-west']);
+/** Roles no switch frees: the Líder único (also barred by `leaderOfAll` in the meta). */
+export const NEVER_ROLES: ReadonlySet<string> = new Set(['lider-unico']);
 /** How often the loop looks. */
 export const RENEW_TICK_MS = 30_000;
 /** A session born this recently is never renewed (the limitador's renewal window). */
@@ -71,17 +80,24 @@ export const QUIET_MS = 60_000;
 /** How long the session has to write its handoff (the app's `RENEWAL_HANDOFF_WAIT_MS`). */
 export const HANDOFF_WAIT_MS = 7 * 60_000;
 const HANDOFF_POLL_MS = 10_000;
-/** How long the successor has to answer its first message. */
+/** How long a successor with no assistant activity at all has before it is closed as silent. */
 export const ANSWER_WAIT_MS = 5 * 60_000;
+/** How long a successor already working (assistant entries, tools) has to end its first turn; never closed after. */
+export const TURN_WAIT_MS = 30 * 60_000;
 const ANSWER_POLL_MS = 5_000;
 /** How long the old one may take to stop again once it went back to work. */
 export const STOP_WAIT_MS = 10 * 60_000;
 const STOP_POLL_MS = 10_000;
 /** How long a give-up for a passing cause keeps the session out. */
 export const PASSING_GIVE_UP_MS = 30 * 60_000;
+/** Passing give-ups in a row (after a request) that make the give-up lasting. */
+export const MAX_TRIES = 2;
+/** No room before the request: looked at again after this (no try counted). */
+const NO_ROOM_RETRY_MS = 5 * 60_000;
 const TAIL_BYTES = 400 * 1024;
 const SID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
-const PLACE_PATTERN = /^place:[A-Za-z0-9-]{1,64}$/;
+/** A board place: `place:<uuid>` (the PC's), or `session:<sid>` (the one an opening with the PC off names, abrir-local). */
+const PLACE_PATTERN = /^(?:place|session):[A-Za-z0-9-]{1,64}$/;
 const ROLE_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 /** The steps of a renewal under way: a mark left on one of them was cut midway. */
 const IN_FLIGHT_STEPS: ReadonlySet<string> = new Set(['detectou', 'pediu', 'pronta', 'abriu', 'respondeu']);
@@ -120,7 +136,7 @@ export function readLocalRenewalConfig(oraculoDir: string): LocalRenewalConfig {
 
 /** Pure — the role may be renewed under this switch. */
 export function roleAllowed(roleId: string | undefined, config: LocalRenewalConfig): boolean {
-  if (!roleId || !config.papeis.includes(roleId)) return false;
+  if (!roleId || NEVER_ROLES.has(roleId) || !config.papeis.includes(roleId)) return false;
   return !GUARDED_ROLES.has(roleId) || config.liberarLideres;
 }
 
@@ -183,12 +199,19 @@ export function screenIsIdle(screen: { readonly inMode: boolean; readonly text: 
   return fieldIsFree(screen.text).free;
 }
 
+/** An entry the CLI writes itself when the call failed (API error, timeout): never the model answering. */
+function isSyntheticEntry(entry: Record<string, unknown>, message: Record<string, unknown>): boolean {
+  return entry.isApiErrorMessage === true || message.model === '<synthetic>';
+}
+
 /**
- * Pure — the transcript of a successor shows it ANSWERED: after its first message (a user entry with text), an
- * assistant end of turn with no tool call pending.
+ * Pure — where a successor is after its first message (a user entry with text): `respondeu` = a real assistant end of
+ * turn with no tool call pending; `trabalhando` = real assistant entries, turn not ended; `calada` = none at all. The
+ * CLI's own error entries (`isApiErrorMessage`, model `<synthetic>`) count as nothing.
  */
-export function answeredFirstMessage(tail: string): boolean {
+export function successorProgress(tail: string): 'respondeu' | 'trabalhando' | 'calada' {
   let asked = false;
+  let active = false;
   for (const line of tail.split('\n')) {
     let entry: unknown;
     try {
@@ -203,11 +226,17 @@ export function answeredFirstMessage(tail: string): boolean {
       asked = typeof content === 'string' ? content.trim() !== '' : Array.isArray(content) && content.some((part) => isRecord(part) && part.type === 'text');
       continue;
     }
-    if (!asked || entry.type !== 'assistant') continue;
+    if (!asked || entry.type !== 'assistant' || isSyntheticEntry(entry, message)) continue;
+    active = true;
     const toolPending = Array.isArray(content) && content.some((part) => isRecord(part) && part.type === 'tool_use');
-    if ((message.stop_reason === 'end_turn' || message.stop_reason === 'stop_sequence') && !toolPending) return true;
+    if ((message.stop_reason === 'end_turn' || message.stop_reason === 'stop_sequence') && !toolPending) return 'respondeu';
   }
-  return false;
+  return active ? 'trabalhando' : 'calada';
+}
+
+/** Pure — the successor ANSWERED its first message (a real end of turn; an API error is no answer). */
+export function answeredFirstMessage(tail: string): boolean {
+  return successorProgress(tail) === 'respondeu';
 }
 
 /** The fields of a session's meta this needs (never its keys). */
@@ -270,6 +299,10 @@ export interface LocalRenewalDeps {
   readonly openSuccessor: (call: SuccessorCall) => Promise<SuccessorOutcome>;
   /** The board place the picture gives a session (`place:` ids only), for a meta that names none. */
   readonly placeOf?: (sid: string) => string | undefined;
+  /** Why this machine has no room for one more session; `null` = room (abrir-local `roomRefusal`). Read before asking. */
+  readonly room?: () => string | null;
+  /** One line to the Líder único (the entregador's `toLeader`): two alive in the place, lasting give-up, in flight. */
+  readonly toLeader?: (message: OwnerMessage) => Promise<unknown>;
   readonly now?: () => number;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly log?: (line: string) => void;
@@ -313,10 +346,12 @@ function readText(path: string): string | null {
 }
 
 interface GiveUpOptions {
-  /** Stays out until the mark is deleted by hand (default: 30 min, then a candidate again). */
+  /** Stays out until the mark is deleted by hand (default: 30 min, then a candidate again, one try counted). */
   readonly lasting?: boolean;
   readonly extra?: Record<string, unknown>;
 }
+
+const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim();
 
 export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
   const now = deps.now ?? Date.now;
@@ -360,11 +395,43 @@ export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
     return !(Number.isFinite(until) && now() >= until);
   };
 
+  /** The session's board place: its meta's, else the one the PC's picture gives it. */
+  const placeOfSession = (sid: string): string | undefined => readRenewMeta(deps.sessionsDir, sid)?.placeId ?? deps.placeOf?.(sid);
   /** The session is in the switch's list, by its sid or by its place (meta, else the PC's picture). */
   const listed = (sid: string, cfg: LocalRenewalConfig): boolean => {
     if (cfg.somente.includes(sid)) return true;
-    const place = readRenewMeta(deps.sessionsDir, sid)?.placeId ?? deps.placeOf?.(sid);
+    const place = placeOfSession(sid);
     return place !== undefined && cfg.somente.includes(place);
+  };
+  /**
+   * Another session alive in the place of `sid`: the successor a give-up left (`sucessora` of the mark), or any live
+   * session of this tmux naming the same place. While one lives, no successor is opened.
+   */
+  const companionAlive = async (sid: string, leftBehind: string | undefined): Promise<string | undefined> => {
+    const live = await deps.liveSessions();
+    if (leftBehind && leftBehind !== sid && live.has(leftBehind)) return leftBehind;
+    const place = placeOfSession(sid);
+    if (!place) return undefined;
+    for (const other of live) if (other !== sid && SID_PATTERN.test(other) && placeOfSession(other) === place) return other;
+    return undefined;
+  };
+  /** One line to the Líder único, never a key (of the meta only the session's board folder). */
+  const tellLeader = (sid: string, line: string): void => {
+    if (!deps.toLeader) return;
+    const words = oneLine(`renovação sem o PC: ${line}`);
+    const message: OwnerMessage = {
+      projectPath: readRenewMeta(deps.sessionsDir, sid)?.localCwd ?? '',
+      placeId: '',
+      text: `◆ Oráculo: ${words}`,
+      leaderText: `◆ Oráculo: ${words}`,
+      key: `renovar-local:${sid}:${now()}`,
+    };
+    const failed = (error: unknown): void => say(`o aviso ao Líder sobre ${sid.slice(0, 8)} não saiu (${error instanceof Error ? error.message : String(error)}).`);
+    try {
+      void deps.toLeader(message).catch(failed);
+    } catch (error) {
+      failed(error);
+    }
   };
   /** The switch, the list and the PC read NOW: why to stop here, or `null` = go on. */
   const stopReason = (sid: string): string | null => {
@@ -395,17 +462,25 @@ export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
     return verdict.tokens;
   }
 
-  /** The successor answered its first message (seen, then seen alive again), left the tmux, or stayed silent 5 min. */
-  async function waitAnswer(newSid: string): Promise<'respondeu' | 'saiu' | 'calada'> {
+  /**
+   * The successor answered its first message (seen, then seen alive again), left the tmux, stayed silent 5 min (no
+   * real assistant entry at all), or worked 30 min without ending its first turn (`sem-fim`: never closed).
+   */
+  async function waitAnswer(newSid: string): Promise<'respondeu' | 'saiu' | 'calada' | 'sem-fim'> {
     const startedAt = now();
     let seen = false;
+    let active = false;
     for (;;) {
       if (!(await deps.liveSessions()).has(newSid)) return 'saiu';
       const tail = await transcriptTail(newSid);
-      const answered = tail !== null && answeredFirstMessage(tail.text);
+      const progress = tail === null ? 'calada' : successorProgress(tail.text);
+      if (progress !== 'calada') active = true;
+      const answered = progress === 'respondeu';
       if (answered && seen) return 'respondeu';
       seen = answered;
-      if (now() - startedAt >= ANSWER_WAIT_MS + (seen ? ANSWER_POLL_MS : 0)) return 'calada';
+      const elapsed = now() - startedAt - (seen ? ANSWER_POLL_MS : 0);
+      if (!active && elapsed >= ANSWER_WAIT_MS) return 'calada';
+      if (active && elapsed >= TURN_WAIT_MS) return 'sem-fim';
       await sleep(ANSWER_POLL_MS);
     }
   }
@@ -439,13 +514,38 @@ export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
   async function renew(sid: string, tokens: number, cfg: LocalRenewalConfig): Promise<void> {
     const sid8 = sid.slice(0, 8);
     const previous = readMark(sid);
-    const liveWorkBefore = previous !== null && previous !== 'ilegivel' && typeof previous.trabalhoVivo === 'number' ? previous.trabalhoVivo : 0;
-    const carry = liveWorkBefore > 0 ? { trabalhoVivo: liveWorkBefore } : {};
+    const before = previous !== null && previous !== 'ilegivel' ? previous : {};
+    const triesBefore = typeof before.tentativas === 'number' && Number.isFinite(before.tentativas) ? before.tentativas : 0;
+    const leftBehind = typeof before.sucessora === 'string' && SID_PATTERN.test(before.sucessora) ? before.sucessora : undefined;
+    const carry = triesBefore > 0 ? { tentativas: triesBefore } : {};
+    /** The handoff was asked: from here a passing give-up counts one try. */
+    let asked = false;
     const giveUp = (why: string, options: GiveUpOptions = {}): void => {
-      const lasting = options.lasting === true;
-      mark(sid, 'desistiu', { motivo: why, ...carry, ...options.extra, ...(lasting ? { permanente: true } : { ate: iso(now() + PASSING_GIVE_UP_MS) }) });
-      say(`desistiu de ${sid8}: ${why}; ${lasting ? 'fica de fora até apagarem a marca' : 'volta a ser candidata em 30 min'}.`);
+      const tries = asked && options.lasting !== true ? triesBefore + 1 : triesBefore;
+      const capped = options.lasting !== true && asked && tries >= MAX_TRIES;
+      const lasting = options.lasting === true || capped;
+      const reason = capped ? `${why} (${tries}ª desistência seguida)` : why;
+      mark(sid, 'desistiu', { motivo: reason, ...(tries > 0 ? { tentativas: tries } : {}), ...options.extra, ...(lasting ? { permanente: true } : { ate: iso(now() + PASSING_GIVE_UP_MS) }) });
+      say(`desistiu de ${sid8}: ${reason}; ${lasting ? 'fica de fora até apagarem a marca' : 'volta a ser candidata em 30 min'}.`);
+      if (lasting) tellLeader(sid, `desisti de renovar ${sid8} de vez: ${reason}. Fica de fora até apagarem ${RENEW_MARK} da pasta dela.`);
     };
+    /** Not now: nothing asked, no try counted, a candidate again after `forMs`. */
+    const defer = (why: string, forMs: number, extra: Record<string, unknown> = {}): void => {
+      if (mark(sid, 'desistiu', { motivo: why, adiada: true, ...carry, ...extra, ate: iso(now() + forMs) })) {
+        say(`adiou ${sid8}: ${why}; nada foi pedido, olha de novo em ${Math.round(forMs / 60_000)} min.`);
+      }
+    };
+    // Before asking anything: another session alive in the place (never a 2nd successor), and room for the new one.
+    const companion = await companionAlive(sid, leftBehind);
+    if (companion) {
+      defer(`outra sessão viva no lugar (${companion.slice(0, 8)})`, PASSING_GIVE_UP_MS, leftBehind ? { sucessora: leftBehind } : {});
+      return;
+    }
+    const noRoom = deps.room?.() ?? null;
+    if (noRoom) {
+      defer(`sem vaga nesta máquina (${noRoom})`, NO_ROOM_RETRY_MS);
+      return;
+    }
     // The mark first: while it stands this session is not taken again. Not written = not renewed.
     if (!mark(sid, 'detectou', carry)) return;
     say(`detectou ${sid8} em ${formatTokensK(tokens)} (limite ${formatTokensK(cfg.limitTokens)}), turno parado.`);
@@ -476,9 +576,11 @@ export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
       return;
     }
     if (!(await deps.type(sid, typeable(handoffRequestPrompt({ contextTokens: tokens, limitTokens: cfg.limitTokens, instructionsPath }))))) {
+      asked = true;
       giveUp('o tmux recusou o pedido de passagem');
       return;
     }
+    asked = true;
     if (!mark(sid, 'pediu', { passagem: handoffPath, ...carry })) return;
     say(`pediu a passagem a ${sid8} em ${handoffPath}.`);
 
@@ -506,10 +608,9 @@ export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
       break;
     }
     if (!ready) {
+      // Passing, one try; the 2nd in a row (live work again, or any other cause) makes the give-up lasting.
       if (lastLiveWork) {
-        // Live work once is passing (try again later); declared again on the next try, the session stays out.
-        const times = liveWorkBefore + 1;
-        giveUp(`a passagem declara trabalho vivo (${lastLiveWork.slice(0, 80)}) até o prazo de 7 min`, { lasting: times >= 2, extra: { trabalhoVivo: times } });
+        giveUp(`a passagem declara trabalho vivo (${lastLiveWork.slice(0, 80)}) até o prazo de 7 min`);
       } else {
         giveUp('a passagem não veio em 7 min');
       }
@@ -522,6 +623,11 @@ export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
     const beforeOpen = stopReason(sid);
     if (beforeOpen) {
       giveUp(`${beforeOpen}; a sessão nova não foi aberta`);
+      return;
+    }
+    const companionNow = await companionAlive(sid, leftBehind);
+    if (companionNow) {
+      giveUp(`outra sessão viva no lugar (${companionNow.slice(0, 8)}); a sessão nova não foi aberta`);
       return;
     }
     const opened = await deps.openSuccessor({
@@ -548,8 +654,20 @@ export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
       return;
     }
     if (answer === 'calada') {
-      const closed = await deps.kill(opened.sid);
-      giveUp(`a nova não respondeu em 5 min (${closed ? 'fechei' : 'o tmux recusou fechar'} ${new8}, que nunca trabalhou); a velha segue viva`, { extra: { sucessora: opened.sid } });
+      // Silent for real (no assistant entry after its first message): it never worked, and only then is it closed.
+      if (await deps.kill(opened.sid)) {
+        giveUp(`a nova não respondeu: calada 5 min, sem nenhuma entrada do assistente (fechei ${new8}); a velha segue viva`, { extra: { sucessora: opened.sid } });
+      } else {
+        giveUp(`duas vivas no lugar: a nova ${new8} ficou calada e o tmux recusou fechá-la; ${sid8} segue viva; o Líder decide`, { lasting: true, extra: { sucessora: opened.sid } });
+      }
+      return;
+    }
+    if (answer === 'sem-fim') {
+      // Working: never closed. Both stay alive and the Líder decides.
+      giveUp(`duas vivas no lugar: a nova ${new8} trabalha há 30 min sem encerrar o 1º turno e não é fechada; ${sid8} segue viva; o Líder decide`, {
+        lasting: true,
+        extra: { sucessora: opened.sid },
+      });
       return;
     }
     if (!mark(sid, 'respondeu', { sucessora: opened.sid, ...carry })) return;
@@ -572,6 +690,7 @@ export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
     const killed = await deps.kill(sid);
     mark(sid, killed ? 'fechou' : 'nao-fechou', { sucessora: opened.sid });
     say(killed ? `fechou o tmux de ${sid8} (a pasta fica); ${new8} segue no lugar dela.` : `nao-fechou: o tmux recusou encerrar ${sid8}; ${new8} já está viva no lugar dela.`);
+    if (!killed) tellLeader(sid, `duas vivas no lugar: o tmux recusou encerrar ${sid8}, e ${new8} já respondeu no lugar dela; o Líder decide.`);
   }
 
   async function tick(): Promise<void> {
@@ -608,10 +727,11 @@ export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
       if (current === null || current === 'ilegivel' || typeof current.passo !== 'string' || !IN_FLIGHT_STEPS.has(current.passo)) continue;
       found.push(sid);
       const successor = typeof current.sucessora === 'string' && SID_PATTERN.test(current.sucessora) ? ` (sucessora ${current.sucessora.slice(0, 8)})` : '';
-      say(
+      const line =
         `em voo: a renovação de ${sid.slice(0, 8)} parou no passo '${current.passo}'${successor} quando o entregador reiniciou; ` +
-          `não retomo, o Líder decide (apagar ${RENEW_MARK} da pasta devolve a sessão à fila).`,
-      );
+        `não retomo, o Líder decide (apagar ${RENEW_MARK} da pasta devolve a sessão à fila).`;
+      say(line);
+      tellLeader(sid, line);
     }
     return found;
   }

@@ -393,8 +393,8 @@ export interface SuccessorCall {
 
 export type SuccessorOutcome = { readonly kind: 'aberta'; readonly sid: string } | { readonly kind: 'erro'; readonly text: string };
 
-/** A board place id the app gives (`place:<uuid>`). */
-const PLACE_ID = /^place:[A-Za-z0-9-]{1,64}$/;
+/** A board place id: the app's (`place:<uuid>`), or `session:<sid>`, the one an opening here names (`open` below). */
+const PLACE_ID = /^(?:place|session):[A-Za-z0-9-]{1,64}$/;
 
 /** The fields of the old session's meta a successor inherits; never its keys. `null` = no readable meta. */
 interface SuccessorFacts {
@@ -637,6 +637,9 @@ export function createOpenLocal(deps: OpenLocalDeps): OpenLocal {
       projectName: kitBoard.name,
       name,
       openedBy: opener,
+      // t-49dee38d — the place this opening answers (`session:<sid>`, the same the picture and the PC give it): a
+      // renewal here keeps it, and retrato-local hands it to the successor. The session's own identity is unchanged.
+      placeId: `session:${newSid}`,
       createdAt: new Date(at).toISOString(),
       homeRelativeDir: folderOf.homeRelativeDir,
       worktree,

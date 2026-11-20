@@ -458,6 +458,7 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
 
   // t-1a3f7150 (docs/adr/0009) — sessions opened in this tmux with the PC off: the Líder único's `sessao_abrir`, and the
   // successor of a renewal (t-49dee38d).
+  const room = (): string | null => roomRefusal({ freeBytes: freemem(), loadPerCpu: loadavg()[0]! / Math.max(1, cpus().length) });
   const openLocal = createOpenLocal({
     sessionsDir,
     oraculoDir: dir,
@@ -469,7 +470,7 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
     liveSessions,
     deliver: toLeader,
     run: runLocalScript,
-    room: () => roomRefusal({ freeBytes: freemem(), loadPerCpu: loadavg()[0]! / Math.max(1, cpus().length) }),
+    room,
     portFree: loopbackPortFree,
     names: [hostname()],
     // t-d461e003 — a board of another machine (its satellite pictures it): the opening goes there. Apart, the
@@ -497,6 +498,9 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
       const lugar = pictures.get()?.sessoes[sid]?.quemSou.lugar;
       return typeof lugar === 'string' && lugar.startsWith('place:') ? lugar : undefined;
     },
+    // No room = the handoff is not even asked; and the Líder hears two alive in a place, a lasting give-up, in flight.
+    room,
+    toLeader,
   });
 
   let gate: { readonly port: number; close(): Promise<void> } | null = null;
