@@ -5,8 +5,10 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { RemoteHealthReport } from '../src/shared/health/remote';
 import type { RemoteSessionReading } from '../src/shared/health/remoteSessions';
-import { buildVigiaProbeScript, classifySshFailure, detectTravas, parseVigiaProbe, planRound, type PlaceProbe, type VigiaState } from '../src/shared/vigia/travas';
-import { createVigiaService, vigiaCard, vigiaClock } from '../src/main/vigia/vigia-service';
+import { buildVigiaProbeScript, classifySshFailure, detectTravas, parseVigiaProbe, parseVigiaState, planRound, type PlaceProbe, type VigiaState } from '../src/shared/vigia/travas';
+import { createVigiaService, vigiaClock } from '../src/main/vigia/vigia-service';
+import { liveCard, NO_AFFECTED, repeatCard } from '../src/shared/vigia/aviso';
+import { closedAlone } from '../src/shared/ledger/contract';
 import { sanitizeVigiaPrefs } from '../src/shared/vigia/config';
 import { forOwnerRefusal, type LedgerOp } from '../src/shared/ledger/contract';
 import { ownerInbox } from '../src/shared/ledger/inbox';
@@ -130,13 +132,25 @@ describe('rodadas: uma carta por trava', () => {
     expect(planRound(planRound(gone.state, [trava], NOW).state, [trava], NOW).toOpen).toHaveLength(1);
   });
 
-  it('sem carta (sem quadro ou Oráculo fora): a trava que passou e volta é uma trava nova, com aviso novo', () => {
+  it('sem carta (sem quadro ou Oráculo fora): a trava que passou vira registro, e se volta é uma trava nova, com aviso novo', () => {
     const warned: VigiaState = { open: { 'cofre:vps': { firstSeen: NOW, rounds: 2, cartaId: null, notified: true, endedAt: null, trava } } };
     const passed = planRound(warned, [], NOW + 5 * MIN);
-    expect(passed.state.open['cofre:vps']!.endedAt).toBe(NOW + 5 * MIN);
+    expect(passed.passed).toEqual([{ key: 'cofre:vps', trava, firstSeen: NOW, endedAt: NOW + 5 * MIN }]);
+    expect(passed.state.open).toEqual({});
     const back = planRound(passed.state, [trava], NOW + 60 * MIN);
     expect(back.state.open['cofre:vps']).toMatchObject({ firstSeen: NOW + 60 * MIN, rounds: 1, notified: false, endedAt: null });
     expect(planRound(back.state, [trava], NOW + 65 * MIN).toOpen).toEqual([{ trava, firstSeen: NOW + 60 * MIN }]);
+  });
+
+  it('uma leitura só (um soluço) não vira registro; a passada que o vigia entregou ao daemon é dele', () => {
+    expect(planRound(planRound({ open: {} }, [trava], NOW).state, [], NOW + 5 * MIN).passed).toEqual([]);
+    const handed: VigiaState = { open: { 'cofre:vps': { firstSeen: NOW, rounds: 4, cartaId: null, notified: false, endedAt: null, handedOver: true, trava } } };
+    expect(planRound(handed, [], NOW + 5 * MIN).passed).toEqual([]);
+  });
+
+  it('o estado antigo (trava que passou esperando a carta) vira registro, não se perde', () => {
+    const old = parseVigiaState({ open: { 'cofre:vps': { firstSeen: NOW, rounds: 2, cartaId: null, notified: true, endedAt: NOW + 30 * MIN, trava } } });
+    expect(planRound(old, [], NOW + 40 * MIN).passed).toEqual([{ key: 'cofre:vps', trava, firstSeen: NOW, endedAt: NOW + 30 * MIN }]);
   });
 });
 
@@ -220,7 +234,7 @@ describe('serviço: uma carta por trava, aviso no PC quando o Oráculo não resp
     expect(JSON.stringify(card[0])).toContain(vigiaClock(NOW)); // since the first reading, not since the card
   });
 
-  it('a trava passa com o Oráculo fora: a carta de registro sai quando ele volta, com início e fim', async () => {
+  it('a trava passa com o Oráculo fora: o registro sai quando ele volta, com início e fim, sem pedir decisão', async () => {
     const t = setup();
     t.state.oraculoUp = false;
     t.state.reached = false;
@@ -230,15 +244,18 @@ describe('serviço: uma carta por trava, aviso no PC quando o Oráculo não resp
     t.state.reached = true;
     t.state.locked = false;
     const endedAt = t.state.clock;
-    await t.rounds(vigia, 2); // passed, Oráculo still down: nothing yet
+    await t.rounds(vigia, 2); // passed, Oráculo still down: queued
     t.state.oraculoUp = true;
     await t.rounds(vigia, 2);
-    const items = ownerInbox((await t.ledger.load()).doc, null, t.state.clock);
-    expect(items).toHaveLength(1);
-    const text = JSON.stringify(items[0]!.task);
+    const { doc } = await t.ledger.load();
+    expect(ownerInbox(doc, null, t.state.clock)).toEqual([]);
+    const records = Object.values(doc.tasks).filter((task) => closedAlone(task));
+    expect(records).toHaveLength(1);
+    const text = JSON.stringify(records[0]);
     expect(text).toContain(vigiaClock(NOW));
-    expect(text).toContain(vigiaClock(endedAt));
+    expect(text).toContain(vigiaClock(endedAt).slice(-5));
     expect(JSON.parse(readFileSync(t.statePath, 'utf8')).open).toEqual({});
+    expect(JSON.parse(readFileSync(t.statePath, 'utf8')).records).toEqual([]);
   });
 
   it('sem o adaptador do cofre na config, o vigia não olha cofre nenhum', async () => {
@@ -252,10 +269,12 @@ describe('serviço: uma carta por trava, aviso no PC quando o Oráculo não resp
     expect(sanitizeVigiaPrefs({ cofre: COFRE })).toEqual({ cofre: COFRE, quadro: null });
   });
 
-  it('a carta de cada tipo de trava, aberta ou já passada, passa na regra do Oráculo (texto de gente, sem código)', () => {
+  it('a carta de cada tipo de trava, viva ou repetida, passa na regra do Oráculo (texto de gente, sem código)', () => {
     for (const kind of ['vps-fora', 'vps-login', 'cofre', 'sessoes'] as const) {
-      expect(forOwnerRefusal(vigiaCard({ kind, label: 'Homologações' }, NOW), [{ kind: 'texto', text: 'prova' }]), kind).toBeNull();
-      expect(forOwnerRefusal(vigiaCard({ kind, label: 'Homologações' }, NOW, NOW + 30 * MIN), [{ kind: 'texto', text: 'prova' }]), kind).toBeNull();
+      const live = liveCard({ label: 'Homologações', kind, firstSeen: NOW, affected: NO_AFFECTED, detail: 'x' });
+      expect(forOwnerRefusal(live.forOwner, [{ kind: 'texto', text: 'prova' }]), kind).toBeNull();
+      const passages = [0, 1, 2].map((i) => ({ firstSeen: NOW + i * 60 * MIN, endedAt: NOW + i * 60 * MIN + 20 * MIN, cause: 'carga' }));
+      expect(forOwnerRefusal(repeatCard({ label: 'Homologações', kind, passages }).forOwner, [{ kind: 'texto', text: 'prova' }]), kind).toBeNull();
     }
   });
 });
