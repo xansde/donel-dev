@@ -13,13 +13,22 @@
 
 import { appendFileSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { TranscribeError, type Transcribe } from '../main/celular/transcrever';
+import { TranscribeError, VPS_TRANSCRIBE_TIMEOUT_MS, type Transcribe } from '../main/celular/transcrever';
 import { CHAT_AUDIO_DIR, CHAT_AUDIO_MIMES, CHAT_AUDIO_PARTE_MS, duracaoTexto, transcricaoFile, type AudioPendente, type CelularLocalStore } from './celular-local';
 import { audioHeader, emendar, ffmpegMidia, limitedTranscriber, minutosTexto, planPedacos, type AudioMidia, type Pedaco, type TranscribePedaco } from './chat-audio-longo';
 
 /** The daemon's transcriber (the PC's OpenWhispr is :8178). */
 export const DAEMON_WHISPER_URL = 'http://127.0.0.1:8179';
-export const CHAT_AUDIO_TIMEOUT_MS = 60_000;
+/** t-0eb91241 — the transcriber may hold an audio while the VPS is loaded (`VPS_TRANSCRIBE_TIMEOUT_MS`). */
+export const CHAT_AUDIO_TIMEOUT_MS = VPS_TRANSCRIBE_TIMEOUT_MS;
+
+/**
+ * t-0eb91241 — the one transcriber of the daemon, for the chat's audio and for the Pedir by voice (the phone talks to the
+ * VPS; the PC's OpenWhispr is not there): `DONEL_WHISPER_URL`, else the VPS's resident transcriber.
+ */
+export function daemonWhisper(env: NodeJS.ProcessEnv): { readonly url: string; readonly where: 'vps'; readonly timeoutMs: number } {
+  return { url: env.DONEL_WHISPER_URL || DAEMON_WHISPER_URL, where: 'vps', timeoutMs: VPS_TRANSCRIBE_TIMEOUT_MS };
+}
 /** A connection refused is the transcriber restarting: tried again this many times, then `falhou`. */
 const CONNECTION_RETRIES = 2;
 const RETRY_DELAY_MS = 5_000;

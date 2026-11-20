@@ -51,6 +51,8 @@ export interface CelularCoreDeps {
   readonly suspended?: () => boolean;
   /** Pedido por áudio: o whisper do PC (ausente = sem transcrição, o celular manda texto). */
   readonly whisperUrl?: string | null;
+  /** t-0eb91241 — the daemon on the VPS: the VPS transcriber (`daemonWhisper`), its message and its longer wait. */
+  readonly whisper?: { readonly url: string; readonly where: 'pc' | 'vps'; readonly timeoutMs: number };
   /** Saída iii (18/11): the phone app's routes under `/api/v2/` (the daemon only). */
   readonly v2?: () => ((request: MobileRequest) => Promise<MobileResponse>) | null;
   /**
@@ -107,7 +109,8 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
   const ledger: MobileLedgerPort = createLedgerMobilePort(deps.ledger, deps.placeName, deps.cardWriter);
   const push = createPushStore(join(deps.userDataDir, 'celular-push.json'), deps.io);
   const pushFetch: PushFetch = deps.pushFetch ?? ((url, init) => fetch(url, init));
-  // Pedir pelo Oráculo: a fila no disco, o áudio numa pasta, a transcrição pelo whisper.cpp local do OpenWhispr.
+  // Pedir pelo Oráculo: a fila no disco, o áudio numa pasta, a transcrição pelo whisper.cpp local do OpenWhispr (no PC)
+  // ou pelo transcritor residente da VPS (no daemon do Oráculo, t-0eb91241).
   const audioDir = join(deps.userDataDir, 'pedidos-audio');
   const pedidosStore = createPedidosStore({ filePath: join(deps.userDataDir, 'pedidos-do-dono.json'), io: deps.io });
   const audioJobs = createTranscriptionJobs({
@@ -117,7 +120,7 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
       writeFileSync(path, bytes);
     },
     exists: existsSync,
-    transcribe: whisperServerTranscriber({ url: deps.whisperUrl ?? (process.env.DONEL_WHISPER_URL || DEFAULT_WHISPER_URL) }),
+    transcribe: whisperServerTranscriber(deps.whisper ?? { url: deps.whisperUrl ?? (process.env.DONEL_WHISPER_URL || DEFAULT_WHISPER_URL) }),
   });
   const router = createPedidoRouter({
     store: pedidosStore,

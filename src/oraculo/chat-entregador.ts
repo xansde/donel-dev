@@ -12,7 +12,7 @@ import { open as openFile } from 'node:fs/promises';
 import { hostname, userInfo } from 'node:os';
 import { join } from 'node:path';
 import type { MobileHandler } from '../main/celular/server';
-import { createChatAudioWorker, CHAT_AUDIO_TIMEOUT_MS, DAEMON_WHISPER_URL } from './chat-audio';
+import { createChatAudioWorker, daemonWhisper } from './chat-audio';
 import { startChatArquivoSweep } from './chat-arquivo';
 import { createChatCelularConsumer, createChatCelularQueue, parseChatReplies, type ChatCelularReplies } from './chat-celular';
 import { chatResponder } from './chat-responder';
@@ -213,7 +213,7 @@ export function createEntregadorChat(deps: {
     try {
       audioWorker = createChatAudioWorker({
         store,
-        transcribe: whisperServerTranscriber({ url: process.env.DONEL_WHISPER_URL || DAEMON_WHISPER_URL, timeoutMs: CHAT_AUDIO_TIMEOUT_MS }),
+        transcribe: whisperServerTranscriber(daemonWhisper(process.env)),
         kick,
         log,
       });
