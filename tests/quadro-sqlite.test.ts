@@ -12,7 +12,7 @@ import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, nodeLedgerProofFs } from '../src/main/ledger-store';
 import { openSqliteLedgerStore } from '../src/oraculo/ledger-sqlite';
 import { chooseBoard, createBoardSqlite, type BoardSqliteStore } from '../src/oraculo/board-sqlite';
-import { planSeed, readLedgerReadOnly, runSeed } from '../src/board-cron/semente';
+import { planSeed, readLedgerReadOnly, runSeed, sessionResolver } from '../src/board-cron/semente';
 
 const dirs: string[] = [];
 const stores: BoardSqliteStore[] = [];
@@ -151,5 +151,55 @@ describe('semente a partir do Oráculo', () => {
     expect(byTask.get(running)?.note).toContain('travada');
     expect(byTask.get(owner)).toMatchObject({ stage: 'inbox' });
     expect(await store.projectOf('/home/u/seazone/Donel Dev/.claude/worktrees/y')).toBe('donel-dev');
+  });
+
+  it('o cartão leva a sessão do lugar (session:<uuid>, ou quem segura o lugar no retrato), também numa segunda rodada', async () => {
+    const dir = tmp();
+    const ledgerFile = join(dir, 'ledger.sqlite');
+    const ledgerStore = openSqliteLedgerStore(ledgerFile);
+    const ledger = createLedgerService({ filePath: join(dir, 'ledger.json'), io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs, store: ledgerStore });
+    const folder = 'C:\\Users\\dono\\seazone\\Donel Dev';
+    const SID = 'd381c7ed-c788-469e-8e08-d4504d7efae8';
+    const HOLDER = '9c10729a-bbdb-47d3-b820-12d1dcd8b118';
+    const RENEWED = '11111111-2222-4333-8444-555555555555';
+    const make = async (ownerPlaceId: string) => {
+      const made = await ledger.apply({ kind: 'dono' }, { op: 'criar', projectPath: folder, request: ownerPlaceId, doneWhen: 'pronto', due: '2026-11-30', ownerPlaceId, risk: 'baixo' });
+      if (!made.ok) throw new Error(made.reason);
+      expect((await ledger.apply({ kind: 'lugar', placeId: ownerPlaceId }, { op: 'assumir', id: made.task.id })).ok).toBe(true);
+      return made.task.id;
+    };
+    const bySession = await make(`session:${SID}`);
+    const byPlace = await make('place:dev-quadro');
+    const unknown = await make('place:sem-retrato');
+    ledgerStore.close();
+    const ledgerRead = readLedgerReadOnly(ledgerFile);
+    const options = { host: 'vps-pessoal', vpsHome: '/home/u' };
+
+    // without a picture only session:<uuid> resolves
+    const store = board();
+    const first = await runSeed(store, planSeed(ledgerRead, options));
+    expect(first.sessions).toBe(1);
+    const cards = async () => new Map((await store.listCards('donel-dev', {})).map((card) => [card.oraculo_id, card]));
+    expect((await cards()).get(byPlace)?.session_id).toBeNull();
+    const versions = new Map([...(await cards())].map(([id, card]) => [id, card.version]));
+
+    // the picture says who holds place:dev-quadro now (a renewed holder hands over: its successor holds it)
+    const picture = {
+      at: NOW,
+      sessoes: {
+        [RENEWED]: { quemSou: { lugar: 'place:dev-quadro', pasta: folder }, listar: [], at: NOW, renovadaPara: HOLDER },
+        [HOLDER]: { quemSou: { lugar: 'place:dev-quadro', pasta: `${folder}\\.claude\\worktrees\\x` }, listar: [], at: NOW - 60_000 },
+      },
+    };
+    const second = await runSeed(store, planSeed(ledgerRead, { ...options, sessionOf: sessionResolver([picture]) }));
+    expect(second).toMatchObject({ created: 0, existing: 3, sessions: 1 });
+    const after = await cards();
+    expect(after.get(bySession)?.session_id).toBe(SID);
+    expect(after.get(byPlace)?.session_id).toBe(HOLDER);
+    expect(after.get(unknown)?.session_id).toBeNull();
+    // who to wake is not a step of the card: no version, no column change
+    for (const [id, card] of after) expect(card).toMatchObject({ version: versions.get(id), stage: 'doing' });
+    // the Líder gave the card to another place: the old place's session is not attached to it
+    expect(await store.fillSession(after.get(unknown)!.id, 'place:outro', HOLDER)).toBe(false);
   });
 });

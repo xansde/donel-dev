@@ -1,5 +1,7 @@
-// Quadro de tarefas (t-1e354d15) — the daemon's client of the task board in the owner's Supabase, schema `board`
-// (docs/board/schema.sql), over PostgREST. Off unless `<home>/.donel/board/supabase.json` says where it is:
+// Quadro de tarefas (t-1e354d15) — what the daemon and the cron need of the task board (`BoardStore`, `BoardCronStore`,
+// the rows), and the client of the board in the owner's Supabase, schema `board` (docs/board/schema.sql), over
+// PostgREST. Since 20/11 the board in use is the VPS's SQLite (board-sqlite.ts, which implements the same interfaces);
+// this client is used only without `sqlite.json` (`chooseBoard`). Off unless `<home>/.donel/board/supabase.json` says where it is:
 // `{ "url": "https://<ref>.supabase.co", "serviceKeyFile": "<path of a 600 file with the service key>" }`. Nothing
 // here is hardcoded (the repo goes public): no URL, no key. The key is read at each call and never logged, never put in
 // an error message.

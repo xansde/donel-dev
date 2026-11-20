@@ -73,6 +73,68 @@ continuam sendo os que estão na `staging`; muda só o armazenamento.
 8. Daemon: o bundle novo do Oráculo como nas implantações anteriores (guardar `oraculo.mjs.antes-AAAAMMDD-HHMM`,
    copiar, reiniciar `donel-oraculo`). As `card_*` aparecem na lista de ferramentas das sessões da VPS.
 
+## Reentrega: o vigia alcança a sessão e o Líder (devolução do Revisor, 20/11)
+
+O Revisor devolveu a t-1e354d15: dos 32 cartões em Fazendo só 1 tinha `session_id`, a tabela `lanes` estava vazia, e
+toda linha `[sombra]` acabava em "sem Líder aberto aqui (nenhum)", inclusive em cartão de sessão viva. A leitura do
+link contava comentário da própria conta e não lia Slack. O que mudou:
+
+- **Sessão do cartão (semente).** `session_id` sai do lugar do cartão, pelo retrato desta máquina (`retrato.json` e
+  os retratos dos satélites em `portoes-retrato/`): primeiro a sessão que segura o lugar agora (`quemSou.lugar`, sem
+  `renovadaPara`; a mais nova), que é a pasta `donel-<sid>` do tmux; senão o uuid de um lugar `session:<uuid>`; senão
+  a conversa do card do lugar no quadro retratado (`picturedBoards`, a mesma leitura do portão). Sem retrato, só
+  `session:<uuid>`. Rodar a semente de novo **preenche** os cartões que já existem sem sessão (`fillSession`: só se o
+  cartão ainda não tem sessão e o lugar dele continua o mesmo; não sobe versão, não move, não grava em `moves`).
+  `semear --seco` abre o quadro só para leitura e lista o que "ganharia sessão".
+- **Entregue no Oráculo não é parado.** O vigia lê o Oráculo só para leitura (as linhas das tarefas dos cartões em
+  Fazendo, pelo `oraculo_id`): tarefa `entregue` espera o aceite do Revisor, e o vigia não mexe no cartão; tarefa já
+  fechada (aceita ou cancelada) com o cartão ainda em Fazendo vai ao Líder **uma vez**, para mover a Feito. Escolhi
+  isso a uma justificativa automática porque Fazendo com justificativa exige link, e a única página honesta seria a do
+  próprio Oráculo, que não tem endereço; e a marca é o estado vivo do Oráculo, que muda sozinho quando o Revisor
+  aceita ou devolve. Oráculo fora do ar = o vigia julga só pelo cartão, como antes.
+- **Raias.** `board-cron.mjs raia <projeto> <lugar> [<sessão>]` faz o `touch_lane` com força (o mesmo do daemon
+  quando o Líder usa uma `card_*`) e imprime a raia. É o caminho de quem não tem as `card_*` na sessão: o Líder único
+  (lugar `lider`) e um Líder de outra máquina. A `ronda` mantém `leader_seen_at` de Líder vivo no tmux
+  (`touchLiveLeaders`, inalterado). O Líder único é reconhecido como sessão viva: o tmux é `donel-<sid>` e o
+  transcript é a conversa atual da sessão (`current` da pasta dela, `currentConversation`), não só `<sid>.jsonl`.
+- **Quem ouve o aviso de Líder.** O Líder da raia vivo aqui; senão o **Líder único** vivo aqui (a mesma escolha do
+  daemon, `pickLocalLeader`), que alcança todo quadro. O log diz qual e por quê.
+- **Sessão fechada.** Não existe caminho reutilizável para reabrir uma sessão fora do app a partir de um cron: o
+  `abrir-local.ts` (abrir e sucessora) roda dentro do daemon, com o kit e a fila dele, e não tem rota local; o
+  `claude --resume` do §6 do desenho não existe no código. Não fiz um terceiro jeito de abrir sessão. O vigia leva ao
+  Líder (o "ou o Líder" do critério 3), que retoma pela `sessao_retomar`, e o log diz `sessão <uuid> fechada; avisaria o Líder …`.
+- **Resposta de outra pessoa.** GitHub: a conta do `gh` desta máquina (`gh api user`, uma vez por rodada) não conta
+  em comentário, review, merge nem fechamento; `gh` sem conta = o link vale só pelo prazo. Slack: `slackReader`
+  (`ler_fio.py`) e `slackSelf` (os nomes e ids que o leitor mostra para a conta com que as sessões escrevem) no
+  `cron.json`; só conta mensagem nova de outro autor. Limite: o leitor dá o nome (ou o id, quando não sabe o nome),
+  não a conta; e o dono escreve com a mesma conta a.lentz das sessões, então uma resposta dele no fio também não
+  acorda a sessão.
+
+Prova (20/11, ronda em sombra numa **cópia** do quadro, com o retrato, o Oráculo e o tmux reais só para leitura; o
+cartão com justificativa saiu de Fazendo na cópia para nada ser digitado): "acordaria a sessão
+9f4d5fd8-… (cartão c-3aa3a031daab, woken): campo livre", "sessão 9c10729a-… fechada; avisaria o Líder lider da raia
+donel-dev, sessão d908a6ae-…" e, na raia bizops com o Líder fechado, "avisaria o Líder único (a sessão 757511b0-… do
+Líder place:e8e2842d-… da raia está fechada)".
+
+### Instalar a reentrega (VPS pessoal)
+
+1. `npm run build:quadro` no clone em dia; guardar o bundle de agora
+   (`cp ~/.donel/board/bin/board-cron.mjs ~/.donel/board/bin/board-cron.mjs.antes-AAAAMMDD-HHMM`) e copiar
+   `out/board-cron/board-cron.mjs` para `~/.donel/board/bin/`.
+2. `~/.donel/board/cron.json`: acrescentar `"slackReader": "<home>/seazone/theo-west/vigia-dono/ler_fio.py"` e
+   `"slackSelf": ["<nome da conta das sessões no Slack>", "<id dela>"]`.
+3. `node ~/.donel/board/bin/board-cron.mjs semear --seco > <arquivo>` e conferir as linhas "ganharia sessão"; depois
+   `node ~/.donel/board/bin/board-cron.mjs semear`.
+4. Raias, uma por Líder (rodar de novo quando a sessão do Líder mudar; o Líder que usa `card_*` se registra sozinho):
+   - Líder único (donel-dev e teamzone, decisão r-1eaf1e4e): `node ~/.donel/board/bin/board-cron.mjs raia donel-dev
+     lider <sid do Líder único>` e o mesmo com `teamzone`.
+   - Líder do BizOps: `node ~/.donel/board/bin/board-cron.mjs raia bizops <place: dele> <sid dele>`.
+   - Dalton (Homologação): `node ~/.donel/board/bin/board-cron.mjs raia homologacao <place: dele> <sid dele>`. A raia
+     é da Homologações (`projects.host`): o cron desta VPS não olha esses cartões; vale para quando o cron rodar lá.
+5. `quadro-lider` no crontab (passo 7 de cima), um comando só para ele.
+6. Volta: o bundle `.antes-…` de volta e as duas chaves novas fora do `cron.json`. As raias e as sessões gravadas
+   ficam (são só quem acordar); para limpar, `DELETE FROM lanes` no `board.sqlite`.
+
 ## Fica igual
 
 - Vigia em sombra por padrão; a `ronda` do despertador só sai depois de um dia em paralelo (§6 do desenho).

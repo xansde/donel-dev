@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { afterBusyField, BUSY_MAX, CHARGE_EVERY_MS, CHARGE_MAX, fieldHoldsOnlyNotice, fieldIsFree, linkKind, planJustify, planVigia, responseSince, VIGIA_MAX_PER_DAY, withShadowNotice, type CronCard } from '../src/shared/board/cron';
+import { afterBusyField, BUSY_MAX, CHARGE_EVERY_MS, CHARGE_MAX, fieldHoldsOnlyNotice, fieldIsFree, linkKind, othersOnGithub, othersOnSlack, pickLeader, planJustify, planVigia, responseSince, VIGIA_MAX_PER_DAY, withShadowNotice, type CronCard } from '../src/shared/board/cron';
 import { STALL_MS } from '../src/shared/board/rules';
 import { renderBoardPage } from '../src/shared/board/page';
 
@@ -70,10 +70,55 @@ describe('vigia', () => {
   });
 
   it('sessão fechada ou no teto do dia vai ao Líder, uma vez a cada 2 h', () => {
-    expect(planVigia(card(), closed, [], NOW).do).toBe('leader');
+    expect(planVigia(card(), closed, [], NOW)).toMatchObject({ do: 'leader', closed: SESSION });
     const wakes = Array.from({ length: VIGIA_MAX_PER_DAY }, (_, i) => NOW - (i + 1) * 3600_000).reverse();
     expect(planVigia(card(), idle, wakes, NOW).do).toBe('leader');
     expect(planVigia(card({ leaderNoticedAt: NOW - 60_000 }), idle, wakes, NOW).do).toBe('skip');
+  });
+
+  it('entregue no Oráculo esperando o aceite não é parado; rejeitada volta a ser; aceita vai ao Líder uma vez', () => {
+    expect(planVigia(card({ desk: { state: 'entregue', closed: false } }), idle, [], NOW).do).toBe('skip');
+    expect(planVigia(card({ desk: { state: 'rejeitada', closed: false } }), idle, [], NOW).do).toBe('wake');
+    expect(planVigia(card({ desk: { state: 'entregue', closed: false } }), closed, [], NOW).do).toBe('skip');
+    // accepted on the desk and still in Fazendo: the Líder hears it once, to move it to Feito
+    expect(planVigia(card({ desk: { state: 'aceita', closed: true } }), idle, [], NOW)).toMatchObject({ do: 'leader' });
+    expect(planVigia(card({ desk: { state: 'aceita', closed: true }, leaderNoticedAt: NOW - 9 * 3600_000 }), idle, [], NOW).do).toBe('skip');
+  });
+
+  it('o aviso vai ao Líder da raia vivo; sem ele, ao Líder único vivo; sem nenhum, diz por quê', () => {
+    const lane = { leader_place: 'place:lider', leader_session: 'aaaaaaaa-1111' };
+    const alive = (live: string[]) => (sid: string) => live.includes(sid);
+    expect(pickLeader(lane, alive(['aaaaaaaa-1111']), 'bbbbbbbb-2222')).toEqual({ kind: 'lane', session: 'aaaaaaaa-1111', place: 'place:lider' });
+    expect(pickLeader(lane, alive(['bbbbbbbb-2222']), 'bbbbbbbb-2222')).toMatchObject({ kind: 'reserve', session: 'bbbbbbbb-2222' });
+    expect(pickLeader(undefined, alive([]), 'bbbbbbbb-2222')).toMatchObject({ kind: 'none', why: 'a raia não tem Líder registrado' });
+  });
+});
+
+describe('a resposta no link é de outra pessoa', () => {
+  const since = NOW - 3600_000;
+  const at = new Date(NOW - 60_000).toISOString();
+  it('GitHub: comentário, review, merge ou fechamento da própria conta não conta', () => {
+    expect(othersOnGithub({ comments: [{ user: { login: 'xande-seazone' }, created_at: at }] }, 'xande-seazone', since)).toBe(false);
+    expect(othersOnGithub({ comments: [{ user: { login: 'fazolin' }, created_at: at }] }, 'xande-seazone', since)).toBe(true);
+    expect(othersOnGithub({ comments: [], reviews: [{ user: { login: 'Xande-Seazone' }, submitted_at: at }] }, 'xande-seazone', since)).toBe(false);
+    expect(othersOnGithub({ comments: [], pull: { merged_at: at, merged_by: { login: 'xande-seazone' } }, issue: { closed_at: at, closed_by: { login: 'xande-seazone' } } }, 'xande-seazone', since)).toBe(false);
+    expect(othersOnGithub({ comments: [], issue: { closed_at: at, closed_by: { login: 'dono' } } }, 'xande-seazone', since)).toBe(true);
+    // older than the justification: never
+    expect(othersOnGithub({ comments: [{ user: { login: 'fazolin' }, created_at: new Date(since - 1).toISOString() }] }, 'xande-seazone', since)).toBe(false);
+  });
+
+  it('Slack: só mensagem nova de outro autor do fio acorda', () => {
+    const ts = (ms: number) => (ms / 1000).toFixed(6);
+    const fio = [
+      `--- 20/11 09:00 Alexandre Heckert Lentz (ts ${ts(since - 60_000)})`,
+      'pergunta ao Fazolin',
+      `--- 20/11 10:58 Alexandre Heckert Lentz (ts ${ts(NOW - 60_000)})`,
+      'cobrando de novo (ts 9999999999.000000)',
+    ].join('\n');
+    const self = ['Alexandre Heckert Lentz', 'U0102UQT77A'];
+    expect(othersOnSlack(fio, self, since)).toBe(false);
+    expect(othersOnSlack(`${fio}\n--- 20/11 10:59 Pedro Fazolin (ts ${ts(NOW - 30_000)}) [mensagem do link]\nfeito`, self, since)).toBe(true);
+    expect(othersOnSlack(`--- 20/11 10:59 U0102UQT77A (ts ${ts(NOW - 30_000)})`, self, since)).toBe(false);
   });
 });
 
