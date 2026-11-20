@@ -113,6 +113,11 @@ describe('uso de IA no celular', () => {
     // A leitura da máquina tirada antes do fim da W46 fica com os 6 dias da fonte.
     expect(r.semanas.find((s: any) => s.semana === '2026-W46').leituras.vps).toMatchObject({ dias: 6, parcial: true });
 
+    // Um painel da W47 lido antes do fim, mesmo com "7 dias com envio", não é o final: não congela.
+    painel(root, '2026-W47', '20261120T1400', '2026-11-20T14:00:00-03:00', atBelt(5), 7);
+    montarUsoIa({ dir: root, estado }, depois);
+    expect(Object.keys(JSON.parse(readFileSync(join(estado, 'fechadas.json'), 'utf8')))).toEqual(['2026-W46']);
+
     // Chega o painel final: a W47 congela com ele, e não muda mais.
     painel(root, '2026-W47', '20261120T1835', '2026-11-20T18:35:00-03:00', atBelt(5), 7);
     const r2 = montarUsoIa({ dir: root, estado }, depois + 3_600_000) as any;

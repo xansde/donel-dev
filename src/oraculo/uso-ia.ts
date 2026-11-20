@@ -243,9 +243,10 @@ function panelReading(raw: unknown): Leitura | null {
   if (!isRecord(raw.valores)) return null;
   const valores: Partial<Record<Criterio, number>> = {};
   for (const [k, v] of Object.entries(raw.valores)) if (isCriterio(k) && typeof v === 'number' && Number.isFinite(v)) valores[k] = v;
-  const dias = typeof raw.dias_com_envio === 'number' && Number.isFinite(raw.dias_com_envio) ? Math.max(0, Math.min(7, raw.dias_com_envio)) : null;
+  // Days with a send are NOT elapsed days (TeamZone faixas.ts, diasFechados): the panel's days come from the hour it was
+  // read (atualizado_em), and it is final only when read at or after the end of its week.
   const fonte = typeof raw.fonte === 'string' && raw.fonte.trim() ? raw.fonte.trim() : 'painel do TeamZone';
-  return { semana: raw.semana, maquina: 'todas', medidoMs: Date.parse(raw.atualizado_em), medidoEm: raw.atualizado_em, fonte, dias, valores, pretas: {} };
+  return { semana: raw.semana, maquina: 'todas', medidoMs: Date.parse(raw.atualizado_em), medidoEm: raw.atualizado_em, fonte, dias: null, valores, pretas: {} };
 }
 
 /** Every reading on disk, the newest per (week, machine). */
