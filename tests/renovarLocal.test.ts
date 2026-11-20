@@ -15,6 +15,8 @@ import { buildClaudeArgs } from '../src/shared/commandBuilder';
 import type { OwnerMessage } from '../src/main/ledger-card-writer';
 import { createOpenLocal, syntheticPicture, type ScriptRun } from '../src/oraculo/abrir-local';
 import { readLocalFolders, withLocalSessions } from '../src/oraculo/retrato-local';
+import { createSystemConfigIoDeps } from '../src/main/config-store';
+import { createGateRecados, type ForwardCall, type ForwardOutcome, type RecadosTmux } from '../src/oraculo/recados';
 import { createLocalRenewal, readLocalRenewalConfig, RENEW_CONFIG_FILE, RENEW_MARK, type LocalRenewalDeps, type SuccessorOutcome } from '../src/oraculo/renovar-local';
 
 const dirs: string[] = [];
@@ -105,6 +107,14 @@ function fake(options: FakeOptions = {}) {
     onOpen: null as null | (() => void),
     /** Sids whose `tmux kill-session` is refused. */
     killRefuse: new Set<string>(),
+    /** The successor's screen now (default: stopped, empty box). */
+    newScreen: (): string => QUIET_SCREEN,
+    /** The successor's transcript: its last text read and when it last changed (its mtime). */
+    newSeen: undefined as string | null | undefined,
+    newMtime: 0,
+    /** T1 — what the forward got, and how it answers (default: all forwarded). */
+    forwardCalls: [] as ForwardCall[],
+    forwardAnswer: null as null | ((call: ForwardCall) => Promise<ForwardOutcome>),
   };
   const toLeader: OwnerMessage[] = [];
   const deps: LocalRenewalDeps = {
@@ -124,12 +134,17 @@ function fake(options: FakeOptions = {}) {
     readTail: async (path) => {
       if (path === '/fake/new.jsonl') {
         const text = state.newTailFn ? state.newTailFn() : state.newTail;
-        return text === null ? null : { text, mtimeMs: clock };
+        // The file's mtime moves only when its text changes (a quiet transcript stays old).
+        if (text !== state.newSeen) {
+          state.newSeen = text;
+          state.newMtime = clock;
+        }
+        return text === null ? null : { text, mtimeMs: state.newMtime };
       }
       return { text: state.oldTail, mtimeMs: state.oldMtime };
     },
     screen: async (sid) => {
-      if (sid === NEW) return { inMode: false, text: QUIET_SCREEN };
+      if (sid === NEW) return { inMode: false, text: state.newScreen() };
       state.screenReads += 1;
       return { inMode: false, text: state.oldScreen() };
     },
@@ -146,6 +161,11 @@ function fake(options: FakeOptions = {}) {
       if (state.killRefuse.has(sid)) return false;
       live.delete(sid);
       return true;
+    },
+    forward: async (call) => {
+      events.push(`reencaminhou:${call.de.slice(0, 4)}`);
+      state.forwardCalls.push(call);
+      return state.forwardAnswer ? state.forwardAnswer(call) : { ok: true, reencaminhados: call.mensagens.length };
     },
     openSuccessor: async (call) => {
       events.push(`abriu:${call.de.slice(0, 4)}`);
@@ -190,7 +210,7 @@ describe('renovar-local: a ordem nunca mata antes da hora', () => {
   it('pede a passagem, abre a sucessora e só então encerra o tmux da velha (sem apagar a pasta)', async () => {
     const vps = fake();
     await vps.renewal.tick();
-    expect(vps.events).toEqual([`pediu:${OLD.slice(0, 4)}`, `abriu:${OLD.slice(0, 4)}`, `matou:${OLD.slice(0, 4)}`]);
+    expect(vps.events.filter((event) => !event.startsWith('reencaminhou'))).toEqual([`pediu:${OLD.slice(0, 4)}`, `abriu:${OLD.slice(0, 4)}`, `matou:${OLD.slice(0, 4)}`]);
     expect(existsSync(join(vps.sessionsDir, OLD))).toBe(true);
     for (const step of ['detectou', 'pediu', 'pronta', 'abriu', 'fechou']) expect(vps.lines.some((line) => line.includes(`renovar-local: ${step}`))).toBe(true);
   });
@@ -674,7 +694,7 @@ describe('renovar-local: teto de tentativas, sem laço (S3/S4/S5)', () => {
     expect(vps.events).toEqual([]);
     noRoom = null;
     await vps.renewal.tick();
-    expect(vps.events).toEqual([o4, `abriu:${OLD.slice(0, 4)}`, KILL_OLD]);
+    expect(vps.events.filter((event) => !event.startsWith('reencaminhou'))).toEqual([o4, `abriu:${OLD.slice(0, 4)}`, KILL_OLD]);
   });
 });
 
@@ -740,6 +760,215 @@ describe('renovar-local: avisos ao Líder', () => {
     vps.advance(31 * MIN);
     await vps.renewal.tick();
     expect(vps.toLeader).toHaveLength(1);
+  });
+});
+
+// ---- travas para ligar a chave: T2 (resposta só com a tela parada) e T1 (o que chegou à velha vai à nova) -----------
+
+const CUT_TEXT = assistant(40_000, 'end_turn', [{ type: 'text', text: 'Leio a passagem e começo pela prioridade.' }]);
+
+describe('renovar-local T2: "respondeu" só com a tela da sucessora parada e o transcript quieto 60 s', () => {
+  /** The successor writes a text with end_turn 20 s after opening, and the "Connection lost" `gap` s after it. */
+  function cutAnswer(vps: ReturnType<typeof fake>, gap: number, busyWhileStalled: boolean): void {
+    let openedAt = Number.POSITIVE_INFINITY;
+    vps.state.onOpen = () => {
+      openedAt = vps.clock();
+    };
+    vps.state.newTailFn = () => {
+      const since = vps.clock() - openedAt;
+      if (since < 20_000) return FIRST_USER;
+      if (since < 20_000 + gap * 1000) return `${FIRST_USER}${CUT_TEXT}\n`;
+      return `${FIRST_USER}${CUT_TEXT}\n${CONNECTION_LOST}`;
+    };
+    // While the stream hangs, the CLI shows the turn running (spinner, "esc to interrupt").
+    if (busyWhileStalled) vps.state.newScreen = () => (vps.clock() - openedAt < 20_000 + gap * 1000 ? BUSY_SCREEN : QUIET_SCREEN);
+  }
+
+  it.each([30, 50])('sonda do revisor: texto cortado e "Connection lost" %i s depois, com a tela parada: a velha não morre', async (gap) => {
+    const vps = fake();
+    cutAnswer(vps, gap, false);
+    await vps.renewal.tick();
+    expect(vps.events).not.toContain(KILL_OLD);
+    expect(vps.events).not.toContain(KILL_NEW);
+  });
+
+  it.each([30, 50, 153, 251])('sonda do revisor: texto cortado e "Connection lost" %i s depois, com o turno na tela: a velha não morre', async (gap) => {
+    const vps = fake();
+    cutAnswer(vps, gap, true);
+    await vps.renewal.tick();
+    expect(vps.events).not.toContain(KILL_OLD);
+    expect(vps.events).not.toContain(KILL_NEW);
+  });
+
+  it('a resposta com texto e a tela da nova ainda trabalhando: não fecha a velha', async () => {
+    const vps = fake();
+    vps.state.newScreen = () => BUSY_SCREEN;
+    await vps.renewal.tick();
+    expect(vps.events).not.toContain(KILL_OLD);
+  });
+
+  it('a resposta com texto, tela parada e transcript quieto: fecha a velha só 60 s depois da resposta', async () => {
+    const vps = fake();
+    let answeredAt = Number.POSITIVE_INFINITY;
+    let killedAt = 0;
+    vps.state.onOpen = () => {
+      answeredAt = vps.clock() + 20_000;
+    };
+    vps.state.newTailFn = () => (vps.clock() >= answeredAt ? ANSWERED : FIRST_USER);
+    const kill = vps.deps.kill;
+    (vps.deps as { kill: typeof kill }).kill = async (sid) => {
+      if (sid === OLD) killedAt = vps.clock();
+      return kill(sid);
+    };
+    await createLocalRenewal(vps.deps).tick();
+    expect(vps.events).toContain(KILL_OLD);
+    expect(killedAt - answeredAt).toBeGreaterThanOrEqual(60_000);
+  });
+});
+
+/** A user entry of the old transcript at `ms` (what the owner, the app or this queue typed). */
+const userAt = (ms: number, content: string, extra: Record<string, unknown> = {}): string =>
+  `${JSON.stringify({ type: 'user', uuid: `u-${ms}-${content.length}`, timestamp: new Date(ms).toISOString(), origin: { kind: 'human' }, message: { role: 'user', content }, ...extra })}\n`;
+const endedAt = (ms: number): string =>
+  `${JSON.stringify({ type: 'assistant', timestamp: new Date(ms).toISOString(), message: { role: 'assistant', model: 'claude-opus', stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 10, cache_read_input_tokens: 300_000, cache_creation_input_tokens: 0, output_tokens: 5 } } })}\n`;
+
+describe('renovar-local T1: antes de fechar a velha, o que chegou a ela depois da passagem vai à nova', () => {
+  it('reencaminha antes do kill, com a velha, a nova e o lugar', async () => {
+    const vps = fake({ placeId: 'place:dev-1', config: { somente: ['place:dev-1'] } });
+    await vps.renewal.tick();
+    const forwarded = vps.events.indexOf(`reencaminhou:${OLD.slice(0, 4)}`);
+    expect(forwarded).toBeGreaterThan(vps.events.indexOf(`abriu:${OLD.slice(0, 4)}`));
+    expect(forwarded).toBeLessThan(vps.events.indexOf(KILL_OLD));
+    expect(vps.state.forwardCalls[0]).toMatchObject({ de: OLD, para: NEW, lugar: 'place:dev-1' });
+    expect(vps.state.forwardCalls[0]!.desde).toBeLessThanOrEqual(T0 + MIN);
+  });
+
+  it('reencaminhar que falha: não fecha a velha, deixa as duas vivas e avisa o Líder', async () => {
+    const vps = fake();
+    vps.state.forwardAnswer = async () => ({ ok: false, motivo: 'recados.json não gravou' });
+    await vps.renewal.tick();
+    expect(vps.events).not.toContain(KILL_OLD);
+    expect(vps.events).not.toContain(KILL_NEW);
+    expect(vps.markOf()).toMatchObject({ passo: 'desistiu', permanente: true });
+    expect(vps.toLeader.some((message) => message.leaderText.includes('reencaminh'))).toBe(true);
+  });
+
+  it('reencaminhar que lança erro: não fecha a velha', async () => {
+    const vps = fake();
+    vps.state.forwardAnswer = async () => {
+      throw new Error('disco cheio');
+    };
+    await vps.renewal.tick();
+    expect(vps.events).not.toContain(KILL_OLD);
+  });
+});
+
+describe('renovar-local T1 com a fila de recados de verdade', () => {
+  const io = createSystemConfigIoDeps();
+  const PLACE = 'place:dev-1';
+
+  /** The renewal wired to a real recados queue (the entregador's way); the old transcript is `vps.state.oldTail`. */
+  function wired(options: { transcript?: 'ilegivel' } = {}) {
+    const vps = fake({ placeId: PLACE, config: { somente: [PLACE] } });
+    const file = join(vps.home, 'oraculo', 'recados.json');
+    mkdirSync(join(vps.home, 'oraculo'), { recursive: true });
+    const tmux: RecadosTmux = {
+      screen: async () => ({ inMode: false, text: QUIET_SCREEN }),
+      type: async () => true,
+      enter: async () => true,
+      clear: async () => true,
+    };
+    const gate = createGateRecados({
+      file,
+      io,
+      ledger: () => null,
+      picture: () => null,
+      localSessions: async () => new Set(vps.live),
+      tmux,
+      transcriptOf: async (sid) => (sid === OLD ? '/fake/old.jsonl' : sid === NEW ? '/fake/new.jsonl' : undefined),
+      readTranscript: async (path) => (path === '/fake/old.jsonl' && options.transcript !== 'ilegivel' ? vps.state.oldTail : null),
+      now: vps.clock,
+      log: () => undefined,
+    });
+    (vps.deps as { forward: LocalRenewalDeps['forward'] }).forward = (call) => gate.forwardAfterHandoff(call);
+    const items = (): Record<string, unknown>[] => (JSON.parse(readFileSync(file, 'utf8')) as { items: Record<string, unknown>[] }).items;
+    const item = (id: string, estado: string, entregueEm: number | undefined, words: string) => ({
+      id,
+      chave: `c-${id}`,
+      de: { lugar: 'place:lider', nome: 'Líder' },
+      para: { lugar: PLACE, sid: OLD },
+      texto: `◆ Recado ${id} de Líder (place:lider): ${words}`,
+      criado: (entregueEm ?? vps.clock()) - 1000,
+      estado,
+      tentativas: estado === 'fila' ? 0 : 1,
+      ...(entregueEm !== undefined ? { entregueEm, via: 'fim-de-turno' } : {}),
+    });
+    const toNew = (): Record<string, unknown>[] => items().filter((entry) => (entry.para as { sid: string }).sid === NEW);
+    return { vps, gate, file, items, item, toNew, renewal: createLocalRenewal(vps.deps) };
+  }
+
+  it('sonda do revisor: recado entregue à velha depois da passagem pronta chega à sucessora, uma vez, com o texto original', async () => {
+    const { vps, gate, file, item, toNew, renewal } = wired();
+    vps.state.onOpen = () => {
+      const at = vps.clock();
+      writeFileSync(file, JSON.stringify({ items: [item('r-0000aaaa', 'entregue', T0 - 10 * MIN, 'coisa antiga'), item('r-0badc0de', 'entregue', at, 'faça X agora')] }));
+      // The old one took it at its turn end (Stop hook) and answered it.
+      vps.state.oldTail = `${ENDED}${userAt(at, 'Stop hook feedback: ◆ Recado r-0badc0de de Líder (place:lider): faça X agora', { isMeta: true, origin: undefined })}${endedAt(at + 5_000)}`;
+      vps.state.oldMtime = at + 5_000;
+    };
+    await renewal.tick();
+    expect(vps.events).toContain(KILL_OLD);
+    const forwarded = toNew().filter((entry) => String(entry.texto).includes('faça X agora'));
+    expect(forwarded).toHaveLength(1);
+    expect(String(forwarded[0]!.texto)).toContain('sessão anterior');
+    expect(String(forwarded[0]!.texto)).toContain('◆ Recado r-0badc0de de Líder (place:lider): faça X agora');
+    expect(toNew().some((entry) => String(entry.texto).includes('coisa antiga'))).toBe(false);
+    // Asked again (the renewal's sweep after the kill, a restart): nothing twice.
+    await gate.forwardAfterHandoff({ de: OLD, para: NEW, lugar: PLACE, desde: T0 });
+    expect(toNew().filter((entry) => String(entry.texto).includes('faça X agora'))).toHaveLength(1);
+  });
+
+  it('o dono digita na velha depois da passagem: o texto vai à sucessora', async () => {
+    const { vps, toNew, renewal } = wired();
+    vps.state.onOpen = () => {
+      const at = vps.clock();
+      vps.state.oldTail = `${ENDED}${userAt(at, 'muda o plano: prioridade é o Y')}${endedAt(at + 5_000)}`;
+      vps.state.oldMtime = at + 5_000;
+    };
+    await renewal.tick();
+    expect(vps.events).toContain(KILL_OLD);
+    const forwarded = toNew().filter((entry) => String(entry.texto).includes('muda o plano: prioridade é o Y'));
+    expect(forwarded).toHaveLength(1);
+    expect(String(forwarded[0]!.texto)).toContain('dono');
+  });
+
+  it('recado digitado na velha (rótulo no transcript, fora da fila daqui): vai à sucessora', async () => {
+    const { vps, toNew, renewal } = wired();
+    vps.state.onOpen = () => {
+      const at = vps.clock();
+      vps.state.oldTail = `${ENDED}${userAt(at, '◆ De Líder (lider): [t-1] revise o PR 9')}${endedAt(at + 5_000)}`;
+      vps.state.oldMtime = at + 5_000;
+    };
+    await renewal.tick();
+    expect(toNew().filter((entry) => String(entry.texto).includes('revise o PR 9'))).toHaveLength(1);
+  });
+
+  it('recado ainda na fila da velha: passa à sucessora sem ser digitado na velha', async () => {
+    const { vps, file, item, items, renewal } = wired();
+    vps.state.onOpen = () => {
+      writeFileSync(file, JSON.stringify({ items: [item('r-0000f11a', 'fila', undefined, 'na fila')] }));
+    };
+    await renewal.tick();
+    expect(vps.events).toContain(KILL_OLD);
+    const queued = items().find((entry) => entry.id === 'r-0000f11a')!;
+    expect((queued.para as { sid: string }).sid).toBe(NEW);
+  });
+
+  it('conversa da velha ilegível: não reencaminha às cegas e não fecha a velha', async () => {
+    const { vps, renewal } = wired({ transcript: 'ilegivel' });
+    await renewal.tick();
+    expect(vps.events).not.toContain(KILL_OLD);
+    expect(vps.toLeader.some((message) => message.leaderText.includes('reencaminh'))).toBe(true);
   });
 });
 
