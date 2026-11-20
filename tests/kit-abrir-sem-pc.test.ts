@@ -136,3 +136,24 @@ describe('kit de abertura (abrir.json)', () => {
     expect(parseHandshakeUrl(out.stdout)).toBe('http://100.64.0.9:47816');
   });
 });
+
+describe('texto do cartão no papel do kit (t-8406f473)', () => {
+  it('troca a frase velha do andamento pela condicional, sem duplicar, e aplicar de novo não muda nada', async () => {
+    const { withCardGuidance } = await import('../src/oraculo/abrir-local');
+    const { CARD_PROGRESS_SENTENCE, LEGACY_PROGRESS_SENTENCE } = await import('../src/shared/roles');
+    const old = `Você faz a mudança.\n- Para falar com outra sessão, use sessao_enviar. ${LEGACY_PROGRESS_SENTENCE} Ao Líder único você só escreve com tarefa completa.\n\nOrientação do dono:\n- Rode o verify.`;
+    const once = withCardGuidance(old)!;
+    expect(once).not.toContain(LEGACY_PROGRESS_SENTENCE);
+    expect(once.split(CARD_PROGRESS_SENTENCE).length - 1).toBe(1);
+    expect(once).toContain('Orientação do dono:\n- Rode o verify.');
+    expect(withCardGuidance(once)).toBe(once);
+    // A role without the old sentence gets it appended once; no role text stays none.
+    const custom = withCardGuidance('Você confere a homologação.')!;
+    expect(custom.split(CARD_PROGRESS_SENTENCE).length - 1).toBe(1);
+    expect(withCardGuidance(custom)).toBe(custom);
+    expect(withCardGuidance(null)).toBeNull();
+    // The factory text of today already carries it.
+    const dev = FACTORY_ROLES.find((role) => role.id === 'dev')!.guidance;
+    expect(withCardGuidance(dev)).toBe(dev);
+  });
+});

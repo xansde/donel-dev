@@ -7,9 +7,10 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, nodeLedgerProofFs } from '../src/main/ledger-store';
-import { createGateHandler, type GateForward } from '../src/oraculo/portao';
+import { createGateHandler, withGateTools, type GateForward } from '../src/oraculo/portao';
 import { BoardError, createBoardClient, projectFolderOf, type BoardStore, type CardRow, type MoveCardArgs } from '../src/oraculo/board-client';
 import { emptyMindscapeDoc } from '../src/shared/mindscape/model';
+import { CARD_INSTRUCTIONS } from '../src/shared/browser/mcp';
 import { LEADER_ROLE_ID } from '../src/shared/roles';
 
 const io = createSystemConfigIoDeps();
@@ -153,6 +154,23 @@ describe('card_* no portão do daemon', () => {
     expect(withBoard.result.tools!.map((tool) => tool.name)).toEqual(['tarefa_ver', 'card_create', 'card_move', 'card_justify', 'card_list']);
     const without = await setup(null, PC_ON).rpc('tools/list', {});
     expect(without.result.tools!.map((tool) => tool.name)).toEqual(['tarefa_ver']);
+  });
+
+  it('o initialize que veio do PC ganha o parágrafo do cartão só com o quadro configurado, uma vez só', async () => {
+    const PC_INIT = '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","instructions":"Texto do PC. "}}';
+    const fromPc: GateForward = async () => ({ status: 200, headers: { 'content-type': 'application/json' }, body: PC_INIT });
+    const raw = async (store: BoardStore | null, forward: GateForward) => (await setup(store, forward).rpc('initialize', {})) as unknown as { result: { instructions: string } };
+    const withBoard = await raw(fakeStore().store, fromPc);
+    expect(withBoard.result.instructions.startsWith('Texto do PC. ')).toBe(true);
+    expect(withBoard.result.instructions.split(CARD_INSTRUCTIONS.trim()).length - 1).toBe(1);
+    // An app that already knows the paragraph: not served twice.
+    const already: GateForward = async () => ({ status: 200, headers: {}, body: JSON.stringify({ jsonrpc: '2.0', id: 1, result: { instructions: `Texto do PC. ${CARD_INSTRUCTIONS}` } }) });
+    expect((await raw(fakeStore().store, already)).result.instructions.split(CARD_INSTRUCTIONS.trim()).length - 1).toBe(1);
+    // No board (the Homologações): the PC's answer passes byte for byte.
+    const untouched = await setup(null, fromPc).rpc('initialize', {});
+    expect(JSON.stringify(untouched)).toBe(PC_INIT);
+    const answer = { status: 200, headers: {}, body: PC_INIT };
+    expect(withGateTools('{"jsonrpc":"2.0","id":1,"method":"initialize"}', answer, false)).toBe(answer);
   });
 });
 
