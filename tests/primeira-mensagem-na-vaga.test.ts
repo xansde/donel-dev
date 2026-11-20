@@ -242,6 +242,48 @@ describe('Sessão que espera vaga no limitador: o pedido de abertura entra quand
     expect(g.typed.at(-1)!.text).toContain('1. rode o verify');
   });
 
+  it('recado de outra sessão na fila de quem espera vaga: não começa a conversa antes do pedido, que entra uma vez e na frente', async () => {
+    const g = setup();
+    g.remember();
+    await g.recados.deliverLocal({ projectPath: PROJECT, placeId: PLACE, text: '◆ De Líder (lider): está viva? responda quando puder', leaderText: '' });
+    await g.run(10 * 60_000);
+    expect(g.typed).toEqual([]);
+    // The box shows up: the recado's 1 min rule would type it now and the conversation would start without the request.
+    g.screens.set(SID, boxScreen(''));
+    await g.run(90_000);
+    expect(g.typed).toEqual([]);
+    await g.run(5 * 60_000);
+    expect(g.typed).toHaveLength(1);
+    expect(g.typed[0]!.text.indexOf(PEDIDO)).toBeGreaterThanOrEqual(0);
+    expect(g.typed[0]!.text.indexOf(PEDIDO)).toBeLessThan(g.typed[0]!.text.indexOf('está viva?'));
+    g.cliTakes();
+    await g.run(60_000);
+    g.turnEnds();
+    await g.run(30 * 60_000);
+    expect(g.typed.filter((entry) => entry.text.includes(PEDIDO))).toHaveLength(1);
+    expect(g.items().filter((item) => item.para.sid === SID).map((item) => item.estado)).toEqual(['entregue', 'entregue']);
+  });
+
+  it('o dono digitou antes de o pedido entrar (a conversa começou por outro texto): o pedido entra depois, uma vez', async () => {
+    const g = setup();
+    g.remember();
+    g.screens.set(SID, boxScreen(''));
+    await g.run(60_000);
+    // The owner typed in the box (the 1st message is his), a turn ran and ended.
+    g.pcPastes('o que você está esperando?');
+    await g.run(60_000);
+    g.turnEnds();
+    // Typed at the end of that turn; the CLI takes it right away.
+    for (let spent = 0; spent < 10 * 60_000 && !g.typed.length; spent += 2_000) await g.run(2_000);
+    expect(g.typed.filter((entry) => entry.text.includes(PEDIDO))).toHaveLength(1);
+    g.cliTakes();
+    await g.run(60_000);
+    g.turnEnds();
+    await g.run(30 * 60_000);
+    expect(g.typed.filter((entry) => entry.text.includes(PEDIDO))).toHaveLength(1);
+    expect(JSON.parse(readFileSync(g.firstFile, 'utf8')).items).toEqual([]);
+  });
+
   it('abertura que o app pôs na fila (lançada horas depois da resposta): o portão espera a janela do app a partir da caixa', async () => {
     const g = setup();
     // The PC answered 3 h ago ("fila": no slot on its side); the tab was launched just now.

@@ -878,6 +878,12 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     return item;
   }
 
+  /** t-f66595b2 — the gate keeps an opening request for the place of `sid` (primeiras.json) not yet queued nor dropped. */
+  function openingKept(sid: string): boolean {
+    const placeId = deps.placeOf?.(sid);
+    return Boolean(deps.firstMessages && placeId && readFirstMessages(deps.firstMessages).some((entry) => entry.placeId === placeId));
+  }
+
   /**
    * t-f66595b2 — the opening requests the gate kept (primeiras.json): one whose session is up on this machine, never
    * had a turn, and sits on a still, empty box goes into the queue (the step below types it); one whose session already
@@ -901,9 +907,20 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       const entry = placeId ? waiting.find((candidate) => candidate.placeId === placeId) : undefined;
       if (!entry) continue;
       if (await transcriptSaysStarted(sid)) {
-        const pasted = await pastedAlready(sid, entry);
-        forgetFirstMessage(firstFile, entry.placeId, at);
-        log(`pedido de abertura de ${entry.placeId}: a sessão ${sid} já começou a conversa${pasted ? ' com ele (o PC colou)' : ''}; nada a digitar.`);
+        const path = await transcriptPath(sid);
+        const first = path ? await firstUserText(path) : null;
+        if (first === null) {
+          forgetFirstMessage(firstFile, entry.placeId, at);
+          log(`pedido de abertura de ${entry.placeId}: a sessão ${sid} já começou a conversa e não li a 1ª mensagem dela; não digito às cegas (o PC pode ter colado).`);
+        } else if (isSameRequest(entry, first)) {
+          forgetFirstMessage(firstFile, entry.placeId, at);
+          log(`pedido de abertura de ${entry.placeId}: a sessão ${sid} já começou a conversa com ele (o PC colou); nada a digitar.`);
+        } else {
+          // Started by another text (a recado, the owner typing): the request never went in. It joins the queue once.
+          const item = enqueueFirst(sid, entry);
+          forgetFirstMessage(firstFile, entry.placeId, at);
+          log(`pedido de abertura de ${entry.placeId}: a sessão ${sid} começou a conversa por outro texto; o pedido não tinha entrado: vai para a fila (${item.id}).`);
+        }
         continue;
       }
       const screen = await tmux.screen(sid);
@@ -1517,7 +1534,10 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
         // Only a first typing, or one whose text this tick cleared from the box: a typing the box took but no transcript
         // shows (none found) is never typed again on the screen's word alone.
         const firstTyping = clearedNow.has(sid) || queued.every((item) => item.para.sid !== sid || item.tentativas === 0);
-        if (mood?.mood !== 'parada' && !(await transcriptSaysStopped(sid, quiet)) && !(firstTyping && (await freshAndSettled(sid, screen.text, FRESH_SETTLE_MS)))) continue;
+        // Its opening request still kept (not queued nor dropped yet): another recado would start the conversation
+        // without it. They wait; once it is queued, it goes first.
+        const fresh = firstTyping && !openingKept(sid) && (await freshAndSettled(sid, screen.text, FRESH_SETTLE_MS));
+        if (mood?.mood !== 'parada' && !(await transcriptSaysStopped(sid, quiet)) && !fresh) continue;
         // The conversation decides: an item typed before whose label is in the transcript came in, never typed again.
         const ids = new Set<string>();
         let bytes = 0;
