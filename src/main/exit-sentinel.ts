@@ -35,35 +35,74 @@ export function classifyExitCode(code: number): ExitCause {
 
 /**
  * Masks for a command line, applied by the PowerShell (`-replace`, case-insensitive) and here (flag `gi`); written
- * so the .NET and the JS engines read them the same way. They mask more than needed (`-Path` loses its value): a
- * readable command line is worth less than a password left in a log.
+ * so the .NET and the JS engines read them the same way. They mask more than needed (`--password-file` loses its path):
+ * a readable command line is worth less than a password left in a log. But the line exists to say who ended the main,
+ * so what names the killer stays (3rd review of #461, t-c1b710c2): `node -p "process.kill(N)"`, `Stop-Process
+ * -PassThru`, `-Path` and the path of a script.
  */
 const SECRET_WORD = '(?:password|passwd|pass|pwd|pw|secret|token|apikey|api-key|key|auth|credential)';
+/** A value: in escaped quotes (`\"…\"`, how Node on Windows quotes inner quotes), in quotes, or one word. */
+const QUOTED = `\\\\"[^"]*\\\\"|"[^"]*"|'[^']*'`;
+/**
+ * Flags that start with `-p` and are not a password glued to `-p` (mysql `-pSenha`): the -P… of PowerShell, and the
+ * password flags the rule above already took the value of.
+ */
+const P_PARAMS = '(?:ath|assthru|roperty|arameter|rocess|rocessname|riority|ort|refix|attern|rotocol|rint|ublish|assword|asswd|ass|wd|w)';
+/** The characters of a token; a run of 24 or more of them is masked unless it is part of a path. */
+const TOKEN_CHAR = 'a-z0-9_+/=-';
+/** The extensions that end the path of a script or a program; a token before any other one (`.txt`) is masked. */
+const SCRIPT_EXTENSION = '(?:ps1|[mc]?js|py|exe|cmd|bat)';
 
 export const COMMAND_LINE_MASKS: ReadonlyArray<{ readonly source: string; readonly to: string }> = [
+  // ConvertTo-SecureString 'x' -AsPlainText, ConvertTo-SecureString -AsPlainText -Force -String 'x'
+  { source: `(ConvertTo-SecureString(?:\\s+-(?:AsPlainText|Force|String))*\\s+)(${QUOTED}|[^\\s)-][^\\s)]*)`, to: '$1***' },
+  // 'x' | ConvertTo-SecureString -AsPlainText
+  { source: `(${QUOTED})(\\s*\\|\\s*ConvertTo-SecureString)`, to: '***$2' },
+  // NetworkCredential('user', 'x'), PSCredential('user', 'x'), [PSCredential]::new('user', 'x')
+  { source: `((?:NetworkCredential|PSCredential)(?:\\]::new)?\\s*\\(\\s*(?:${QUOTED}|[^,)]*)\\s*,\\s*)(${QUOTED}|[^\\s,()]+)`, to: '$1***' },
   // scheme://user:password@host
   { source: `(://[^/\\s:@"']+:)[^@\\s"']+@`, to: '$1***@' },
   // Authorization: Bearer <token> / Basic <base64>
   { source: '((?:bearer|basic)\\s+)\\S+', to: '$1***' },
   // curl -u user:password, -u "user:password", -uuser:password, --user=user:password
   { source: `((?:^|\\s)(?:-u|--user)(?:=|\\s*)["']?[^\\s:"']+:)[^\\s"']+`, to: '$1***' },
-  // PGPASSWORD=x, set TOKEN=x, $env:TOKEN='x', --password=x, --db-password=x
-  { source: `((?:\\$env:)?[\\w.-]*${SECRET_WORD}[\\w.-]*\\s*=\\s*)("[^"]*"|'[^']*'|[^\\s&|;"']+)`, to: '$1***' },
-  // --password x, --db-password "x y", --client-secret x, --token x, --pw x
-  { source: `((?:^|\\s)--?[\\w-]*${SECRET_WORD}[\\w-]*\\s+)("[^"]*"|'[^']*'|\\S+)`, to: '$1***' },
-  // -pSenha, -p Senha (mysql, sshpass)
-  { source: `((?:^|\\s)-p\\s*)("[^"]*"|'[^']*'|[^\\s-]\\S*)`, to: '$1***' },
+  // PGPASSWORD=x, set TOKEN=x, $env:TOKEN='x', --password=x, -Password:x, X-API-Key: x, "password":"x", {password:'x'},
+  // Authorization: token x. The match starts at the secret word: what comes before it in the name stays as it is, and
+  // a run of name characters before it made the .NET engine backtrack for seconds on a 2 KB line.
+  {
+    source: `(${SECRET_WORD}[\\w.-]*["']?\\s*[=:]\\s*)((?:(?:bearer|basic|token)\\s+)?(?:${QUOTED}|[^\\s&|;"']+))`,
+    to: '$1***',
+  },
+  // --password x, --db-password "x y", --client-secret x, --token x, --pw x, --passphrase x; not the switch -PassThru
+  // (naming it alone: any other flag with a secret word in it still loses its value, as before)
+  { source: `((?:^|\\s)--?[\\w-]*${SECRET_WORD}(?!thru(?![a-z0-9]))[\\w-]*\\s+)(${QUOTED}|\\S+)`, to: '$1***' },
+  // -pSenha, -p Senha (mysql, sshpass); not node -p "<code>", nor -Path, -PassThru and the other -P… of PowerShell
+  { source: `(?<!node(?:\\.exe)?"?)((?:^|\\s)-p(?!${P_PARAMS}\\b)\\s*)(${QUOTED}|[^\\s-]\\S*)`, to: '$1***' },
   // /p:Senha, /password:Senha (Windows tools)
   { source: '((?:^|\\s)/(?:p|pw|pwd|pass|password)[:=])("[^"]*"|\\S+)', to: '$1***' },
   // AWS access key ids, 20 characters
   { source: '\\b(?:AKIA|ASIA)[A-Z0-9]{16}\\b', to: '***' },
-  // any long run of token-like characters (keys, tokens, base64)
-  { source: '[A-Za-z0-9_+/=-]{24,}', to: '***' },
+  // any long run of token-like characters (keys, tokens, base64), whole; not a piece of a path, and only the shapes of
+  // a path are spared, so a token after `://`, `:`, `~`, `@` or before `.txt` is still masked: after a drive and a
+  // slash (`C:/`, not `https://` nor `X:<token>`), after `\`, `./` or `~/`, or before a `\` (not `\"`) or the
+  // extension of a script or a program. Kept short: the script carrying it must fit a Windows command line.
+  {
+    source:
+      `(?<![\\\\${TOKEN_CHAR}])(?!(?<=[.~]|(?<![a-z0-9_])[a-z]:)/)` +
+      `[${TOKEN_CHAR}]{24,}(?![${TOKEN_CHAR}]|\\\\(?!")|\\.${SCRIPT_EXTENSION}\\b)`,
+    to: '***',
+  },
 ];
 
-/** What the PowerShell does to a command line before the disk: the command-line masks alone. */
+/**
+ * The command line is cut to this before the masks: the .NET engine backtracks for minutes on a long run of word
+ * characters (`'a' * 32000` did not end in 10 min). Here too, so the log is the disk's mirror.
+ */
+export const MASK_INPUT_MAX = 2048;
+
+/** What the PowerShell does to a command line before the disk: the cut, then the command-line masks alone. */
 export function maskForDisk(text: string): string {
-  let out = text;
+  let out = text.length > MASK_INPUT_MAX ? text.slice(0, MASK_INPUT_MAX) : text;
   for (const mask of COMMAND_LINE_MASKS) out = out.replace(new RegExp(mask.source, 'gi'), mask.to);
   return out;
 }
@@ -132,7 +171,8 @@ export function buildExitSentinelCommand(options: ExitSentinelOptions): { file: 
     '$record.aliveAfterExit = @(Get-CimInstance Win32_Process | Where-Object { $_.CreationDate -gt $since -and $_.CreationDate -le $end } | Sort-Object CreationDate |' +
       ` Select-Object -Last ${RECENT_MAX} | ForEach-Object {` +
       // only a candidate to killer (or a child of the main) keeps its command line, masked before the disk
-      ` $cl = ''; if ($_.Name -match ${psQuote(KILLER_CANDIDATES)} -or $_.ParentProcessId -eq ${pid}) { $cl = [string]$_.CommandLine${masks} };` +
+      ` $cl = ''; if ($_.Name -match ${psQuote(KILLER_CANDIDATES)} -or $_.ParentProcessId -eq ${pid}) {` +
+      ` $cl = [string]$_.CommandLine; if ($cl.Length -gt ${MASK_INPUT_MAX}) { $cl = $cl.Substring(0, ${MASK_INPUT_MAX}) }; $cl = $cl${masks} };` +
       " if ($cl.Length -gt 300) { $cl = $cl.Substring(0, 300) };" +
       " [ordered]@{ pid = [int]$_.ProcessId; ppid = [int]$_.ParentProcessId; name = [string]$_.Name;" +
       " startedAt = $_.CreationDate.ToUniversalTime().ToString('o'); commandLine = $cl } })",
