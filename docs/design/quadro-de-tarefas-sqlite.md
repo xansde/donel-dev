@@ -40,7 +40,8 @@ continuam sendo os que estão na `staging`; muda só o armazenamento.
 - `chooseBoard` (mesmo arquivo) decide no daemon (`entregador.ts`) e no `board-cron`: `sqlite.json` válido → SQLite;
   `sqlite.json` inválido → quadro desligado com aviso (nunca cai no Supabase sem o dono saber); sem ele,
   `supabase.json` como antes. `DONEL_BOARD_SQLITE_CONFIG` troca o caminho do `sqlite.json` (teste).
-- Semente = `board-cron.mjs semear [--seco] [--ledger <arquivo>] [--host <host>] [--pc-raiz <pasta>]`
+- Semente = `board-cron.mjs semear [--seco] [--ledger <arquivo>] [--host <host>] [--host-de <projeto>=<host>]...
+  [--pc-raiz <pasta>]`
   (`src/board-cron/semente.ts`). Lê o `ledger.sqlite` do Oráculo com conexão `readOnly` (ou um `ledger.json`
   exportado). Projeto = nome da pasta em slug (`Donel Dev` → `donel-dev`); aliases = a pasta como o Oráculo a tem, a
   mesma `seazone/<Pasta>` no home da VPS e na raiz do PC (tirada dos próprios caminhos Windows do ledger, ou
@@ -134,6 +135,28 @@ Líder place:e8e2842d-… da raia está fechada)".
 5. `quadro-lider` no crontab (passo 7 de cima), um comando só para ele.
 6. Volta: o bundle `.antes-…` de volta e as duas chaves novas fora do `cron.json`. As raias e as sessões gravadas
    ficam (são só quem acordar); para limpar, `DELETE FROM lanes` no `board.sqlite`.
+
+## Sobras antes de tirar a sombra do vigia (20/11)
+
+O que o Revisor e a prova da reentrega deixaram, resolvido antes de o vigia agir de verdade:
+
+- **Lugar → sessão pela mais nova.** O resolvedor (`sessionResolver`) compara quem segura o lugar no retrato e o card
+  do lugar no quadro retratado pela hora de cada retrato (o `at` da sessão, senão o do retrato) e fica com o mais novo;
+  empate fica com quem segura o lugar. O detentor antigo que fechou sem `renovadaPara` (ex.: o 757511b0 do Líder do
+  BizOps) não volta a vencer se for retomado no tmux, e entre dois quadros retratados do mesmo projeto vale o mais
+  novo, não o primeiro lido. Sem quem segure o lugar, `session:<uuid>` continua antes do card.
+- **O cartão segue a sessão do lugar.** A `ronda` resolve o lugar de cada cartão em Fazendo/Travado para a sessão viva
+  aqui que o segura agora (`followCardSession`, o mesmo resolvedor das raias) e acorda essa; o log diz "cartão …:
+  sessão …, a que segura o lugar … aqui agora (o cartão diz …)". Nada é gravado no cartão (quem acordar não é passo
+  dele; sem versão nem movimento). Ninguém vivo no lugar = o cartão fica com a sessão dele, e o Líder ouve que ela
+  está fechada, como antes.
+- **Host por projeto na semente.** `--host-de <projeto>=<host>` (repetível) dá o host do projeto no primeiro cadastro
+  (ex.: `--host-de homologacao=homologacoes`); o resto leva `--host`. Projeto que já existe guarda o host dele
+  (`upsertProject` só junta aliases). Formato errado = sai com 2 sem semear nada.
+- **Saída inteira em pipe.** O `board-cron` sai só depois de stdout e stderr esvaziarem (`exitAfterFlush`):
+  `semear --seco | tee` e o log do crontab não perdem o fim.
+- **Bot não é resposta.** No GitHub, conta com login terminado em `[bot]` ou `type: "Bot"` (CI, preview, dependabot,
+  app de review) não conta como resposta de outra pessoa.
 
 ## Fica igual
 

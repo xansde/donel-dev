@@ -13,9 +13,10 @@
 // Session (devolução do Revisor, 20/11): the vigia wakes `session_id`, which no import filled (only a `card_move` of the
 // session itself does). The seed takes it from the place: the live session that holds the place in this machine's
 // picture (`retrato.json` and the satellites' pictures: the folder sid, which is the tmux `donel-<sid>`; a renewed place
-// is held by its successor), else the uuid of a `session:<uuid>` place, else the conversation of the place's card on the
-// pictured board (`picturedBoards`, the same reading as the gate). No picture: only `session:<uuid>` resolves. A second
-// run fills the cards still without one (`fillSession`: no version, no move, only where the place is still the same).
+// is held by its successor) or the conversation of the place's card on the pictured board (the gate's reading), the
+// newer of the two; with no holder, the uuid of a `session:<uuid>` place first. No picture: only `session:<uuid>`
+// resolves. A second run fills the cards still without one (`fillSession`: no version, no move, only where the place is
+// still the same); a card whose session was renewed is followed by the round (`followCardSession`), not rewritten here.
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -24,7 +25,8 @@ import { progressOf, type LedgerProgress } from '../shared/ledger/andamento';
 import { awaitsSend, frenteOf, isClosed, requestedByOf, type LedgerTask } from '../shared/ledger/contract';
 import { projectFolderOf } from '../oraculo/board-client';
 import type { BoardSqliteStore, ProjectInput } from '../oraculo/board-sqlite';
-import { picturedBoards, type BoardPicture } from '../oraculo/portao';
+import type { BoardPicture } from '../oraculo/portao';
+import type { MindscapeBoard } from '../shared/mindscape/model';
 
 const { DatabaseSync } = process.getBuiltinModule('node:sqlite') as typeof import('node:sqlite');
 type DatabaseSync = DatabaseSyncType;
@@ -82,6 +84,8 @@ export interface SeedPlan {
 export interface SeedOptions {
   /** `projects.host` of new projects. */
   readonly host: string;
+  /** `projects.host` of a new project by its id (`--host-de <projeto>=<host>`), over `host`; an existing project keeps its own. */
+  readonly hostOf?: Readonly<Record<string, string>>;
   /** This machine's home: its `<home>/seazone/<Pasta>` becomes an alias. */
   readonly vpsHome: string;
   /** The PC's `...\seazone` folder; missing = taken from the Windows paths of the ledger itself. */
@@ -97,43 +101,68 @@ const SESSION_ID = /^[0-9a-f-]{8,64}$/i;
 const SESSION_PLACE = 'session:';
 
 /**
- * The session of a place, from the pictures this machine has (`retrato.json`, the satellites'): the live holder of the
- * place (a picture entry whose `quemSou.lugar` is the place on that project's board, not handed over to a successor;
- * the newest), else `session:<uuid>`'s own uuid, else the conversation of the place's card on the pictured board.
+ * The session of a place, from the pictures this machine has (`retrato.json`, the satellites'): the newest of the live
+ * holder of the place (a picture entry whose `quemSou.lugar` is the place on that project's board, not handed over to a
+ * successor) and the conversation of the place's card on the pictured boards, each dated by its picture (the session's
+ * `at`, else the picture's); a tie goes to the holder. With no holder, `session:<uuid>`'s own uuid comes before the
+ * board's card.
+ *
+ * Newest, not first (sobras do Revisor, 20/11): a holder that closed without renewing (the Líder reopened, or `/clear`)
+ * stays in the picture with its old `at`, and resumed in tmux it would win again over the session the fresher board
+ * names; and two boards of the same project (the PC's folder and this VPS's, or a satellite's) must not be decided by
+ * the order the pictures were read.
  *
  * `here` (the lanes' Líder, devolução de 20/11): only a session it says is alive in this machine counts, at every step.
- * A picture keeps a closed holder that never renewed (the Líder reopened, or `/clear`) and the satellites' sessions
- * live on another machine (`maquina`): without it the newest closed holder wins over the live Líder, whom the freshest
- * board names. The seed reads without it (a card may name a session closed now, for the Líder to reopen).
+ * The satellites' sessions live on another machine (`maquina`). The seed reads without it (a card may name a session
+ * closed now, for the Líder to reopen).
  */
 export function sessionResolver(pictures: readonly BoardPicture[], here?: (sid: string) => boolean): SessionOf {
   const counts = (sid: string): boolean => SESSION_ID.test(sid) && (!here || here(sid));
-  const holders = new Map<string, { sid: string; at: number }>();
-  const cards = new Map<string, string>();
+  const holders = new Map<string, Dated>();
+  const cards = new Map<string, Dated>();
+  const keep = (map: Map<string, Dated>, key: string, sid: string, at: number): void => {
+    const known = map.get(key);
+    if (!known || at > known.at) map.set(key, { sid, at });
+  };
   for (const picture of pictures) {
     for (const [sid, session] of Object.entries(picture.sessoes ?? {})) {
       const { lugar, pasta } = session.quemSou ?? {};
       if (typeof lugar !== 'string' || typeof pasta !== 'string' || session.renovadaPara || !counts(sid)) continue;
-      const key = `${projectSlug(projectFolderOf(pasta))}|${lugar}`;
-      const at = session.at ?? picture.at ?? 0;
-      const known = holders.get(key);
-      if (!known || at > known.at) holders.set(key, { sid, at });
+      keep(holders, `${projectSlug(projectFolderOf(pasta))}|${lugar}`, sid, session.at ?? picture.at ?? 0);
     }
-    for (const [pasta, { board }] of picturedBoards(picture)) {
+    for (const [pasta, { board, at }] of datedBoards(picture)) {
       const project = projectSlug(projectFolderOf(pasta));
       for (const [placeId, card] of Object.entries(board?.cards ?? {})) {
-        const key = `${project}|${placeId}`;
-        if (card.kind === 'session' && card.sessionId && counts(card.sessionId) && !cards.has(key)) cards.set(key, card.sessionId);
+        if (card.kind === 'session' && card.sessionId && counts(card.sessionId)) keep(cards, `${project}|${placeId}`, card.sessionId, at);
       }
     }
   }
   return (projectId, placeId) => {
     const key = `${projectId}|${placeId}`;
-    const held = holders.get(key)?.sid;
-    if (held) return held;
-    if (placeId.startsWith(SESSION_PLACE) && counts(placeId.slice(SESSION_PLACE.length))) return placeId.slice(SESSION_PLACE.length);
-    return cards.get(key);
+    const held = holders.get(key);
+    const carded = cards.get(key);
+    if (held && (!carded || held.at >= carded.at)) return held.sid;
+    if (!held && placeId.startsWith(SESSION_PLACE) && counts(placeId.slice(SESSION_PLACE.length))) return placeId.slice(SESSION_PLACE.length);
+    return carded?.sid;
   };
+}
+
+interface Dated {
+  readonly sid: string;
+  readonly at: number;
+}
+
+/** `picturedBoards` (the gate's reading: the freshest board of each folder in a picture) with the time of each one. */
+function datedBoards(picture: BoardPicture): Map<string, { readonly board?: MindscapeBoard; readonly at: number }> {
+  const fresh = new Map<string, { board?: MindscapeBoard; at: number }>();
+  for (const session of Object.values(picture.sessoes ?? {})) {
+    const pasta = session.quemSou?.pasta;
+    if (session.quemSou?.liderUnico === true || typeof pasta !== 'string' || !pasta) continue;
+    const at = session.at ?? picture.at ?? 0;
+    const known = fresh.get(pasta);
+    if (!known || at > known.at || (!known.board && session.board)) fresh.set(pasta, { at, ...(session.board ? { board: session.board } : {}) });
+  }
+  return fresh;
 }
 
 /** `retrato.json` and the satellites' pictures (`portoes-retrato/*.json`) in the Oráculo's folder; an unreadable one is left out. */
@@ -183,6 +212,22 @@ export function readDeskStates(file: string, ids: readonly string[]): Map<string
     }
   } finally {
     db.close();
+  }
+  return out;
+}
+
+const HOST_OF = /^([a-z0-9][a-z0-9-]{0,62})=([A-Za-z0-9._-]{1,64})$/;
+
+/**
+ * `--host-de <projeto>=<host>` (repeatable): the host of a project on its first seed, so a project of another machine
+ * (the Homologações' `homologacao`) is not born as this one's. A malformed one throws (nothing seeded by a typo).
+ */
+export function parseHostOf(values: readonly string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const value of values) {
+    const m = HOST_OF.exec(value.trim());
+    if (!m) throw new Error(`--host-de espera <projeto>=<host> (projeto em minúsculas, dígitos e hífen): "${value}"`);
+    out[m[1]!] = m[2]!;
   }
   return out;
 }
@@ -286,7 +331,7 @@ export function planSeed(ledger: SeedLedger, options: SeedOptions): SeedPlan {
     };
   });
   return {
-    projects: [...projects].sort(([a], [b]) => a.localeCompare(b)).map(([id, project]) => ({ id, name: project.name, host: options.host, aliases: [...project.aliases] })),
+    projects: [...projects].sort(([a], [b]) => a.localeCompare(b)).map(([id, project]) => ({ id, name: project.name, host: options.hostOf?.[id] ?? options.host, aliases: [...project.aliases] })),
     cards,
     skipped: Object.keys(ledger.tasks).length - live.length,
   };
