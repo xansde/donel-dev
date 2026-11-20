@@ -218,6 +218,63 @@ function openDb(file: string): DatabaseSync {
   return db;
 }
 
+const PROJECT_CARDS_ORDER = `ORDER BY c.project_id, c.front IS NULL, c.front, CASE c.stage ${STAGES.map((stage, index) => `WHEN '${stage}' THEN ${index + 1}`).join(' ')} END, c.position, c.created_at`;
+
+/** board.overview */
+function overviewRows(db: DatabaseSync, at: number): OverviewRow[] {
+  const today = iso(at).slice(0, 10);
+  return db
+    .prepare(
+      `SELECT p.id AS project_id, p.name, p.host,
+              ${STAGES.map((stage) => `COUNT(CASE WHEN c.stage = '${stage}' THEN 1 END) AS ${stage}`).join(', ')},
+              COUNT(CASE WHEN c.stage <> 'done' AND c.due < ? THEN 1 END) AS overdue,
+              MIN(CASE WHEN c.stage IN ('doing', 'blocked') THEN c.stage_since END) AS oldest_parked_since,
+              MAX(c.updated_at) AS last_change
+         FROM projects p LEFT JOIN cards c ON c.project_id = p.id
+        GROUP BY p.id, p.name, p.host
+        ORDER BY p.id`,
+    )
+    .all(today)
+    .map((row) => plain<OverviewRow>(row));
+}
+
+/** board.project_cards: every card not done, plus the ones done in the last 3 days. */
+function pageCardRows(db: DatabaseSync, at: number): PageCard[] {
+  return db
+    .prepare(`SELECT c.* FROM cards c WHERE c.stage <> 'done' OR c.updated_at > ? ${PROJECT_CARDS_ORDER} LIMIT 2000`)
+    .all(iso(at - PAGE_DONE_MS))
+    .map((row) => plain<PageCard>(row));
+}
+
+/** The two views of a board, read without writing (the phone's `/api/v2/quadro`). */
+export interface BoardReadView {
+  overview(): Promise<readonly OverviewRow[]>;
+  /** The rows are the whole card (`c.*`); `PageCard` names what the page uses. */
+  pageCards(): Promise<readonly PageCard[]>;
+  close?: () => void;
+}
+
+/**
+ * t-f091595a — the board opened read-only: no schema, no seed project, no chmod, never created when missing (that is
+ * `createBoardSqlite`, the writers'). A missing file throws.
+ */
+export function openBoardSqliteReadOnly(file: string, options: { readonly now?: () => number } = {}): BoardReadView & { close(): void } {
+  const now = options.now ?? Date.now;
+  if (!existsSync(file)) throw new BoardError('o quadro de tarefas não existe nesta máquina');
+  const db = new DatabaseSync(file, { readOnly: true });
+  try {
+    db.exec('PRAGMA busy_timeout = 5000;');
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+  return {
+    overview: async () => overviewRows(db, now()),
+    pageCards: async () => pageCardRows(db, now()),
+    close: () => db.close(),
+  };
+}
+
 export function createBoardSqlite(file: string, options: { readonly now?: () => number } = {}): BoardSqliteStore {
   const now = options.now ?? Date.now;
   const db = openDb(file);
@@ -278,8 +335,6 @@ export function createBoardSqlite(file: string, options: { readonly now?: () => 
     const row = db.prepare('SELECT id, name, host, aliases FROM projects WHERE id = ?').get(id) as { id: string; name: string; host: string; aliases: string };
     return { id: row.id, name: row.name, host: row.host, aliases: JSON.parse(row.aliases) as string[] };
   };
-  const PROJECT_CARDS_ORDER = `ORDER BY c.project_id, c.front IS NULL, c.front, CASE c.stage ${STAGES.map((stage, index) => `WHEN '${stage}' THEN ${index + 1}`).join(' ')} END, c.position, c.created_at`;
-
   return {
     close() {
       if (closed) return;
@@ -549,32 +604,8 @@ export function createBoardSqlite(file: string, options: { readonly now?: () => 
           .map((row) => plain<LeaderRequestRow>(row)),
       ),
 
-    // board.overview
-    overview: () =>
-      read(() => {
-        const today = iso(now()).slice(0, 10);
-        return db
-          .prepare(
-            `SELECT p.id AS project_id, p.name, p.host,
-                    ${STAGES.map((stage) => `COUNT(CASE WHEN c.stage = '${stage}' THEN 1 END) AS ${stage}`).join(', ')},
-                    COUNT(CASE WHEN c.stage <> 'done' AND c.due < ? THEN 1 END) AS overdue,
-                    MIN(CASE WHEN c.stage IN ('doing', 'blocked') THEN c.stage_since END) AS oldest_parked_since,
-                    MAX(c.updated_at) AS last_change
-               FROM projects p LEFT JOIN cards c ON c.project_id = p.id
-              GROUP BY p.id, p.name, p.host
-              ORDER BY p.id`,
-          )
-          .all(today)
-          .map((row) => plain<OverviewRow>(row));
-      }),
-    // board.project_cards: every card not done, plus the ones done in the last 3 days
-    pageCards: () =>
-      read(() =>
-        db
-          .prepare(`SELECT c.* FROM cards c WHERE c.stage <> 'done' OR c.updated_at > ? ${PROJECT_CARDS_ORDER} LIMIT 2000`)
-          .all(iso(now() - PAGE_DONE_MS))
-          .map((row) => plain<PageCard>(row)),
-      ),
+    overview: () => read(() => overviewRows(db, now())),
+    pageCards: () => read(() => pageCardRows(db, now())),
     // board.owner_feed
     ownerFeed: (afterId) =>
       read(() =>
