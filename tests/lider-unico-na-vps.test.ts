@@ -11,7 +11,7 @@ import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, nodeLedgerProofFs, runLedgerTool, type LedgerCaller } from '../src/main/ledger-store';
 import { createCelularLiderChat, desktopTakesPhoneQueue } from '../src/main/lider/celular-chat';
 import type { MindscapeBoard, MindscapeCard } from '../src/shared/mindscape/model';
-import { chatCelularQueueOver, chatKey, createChatCelularConsumer, DELIVERED_NOTE, PARKED } from '../src/oraculo/chat-celular';
+import { chatCelularQueueOver, chatKey, createChatCelularConsumer, DELIVERED_NOTE, PARKED, type ChatCelularReplies } from '../src/oraculo/chat-celular';
 import { pickLocalLeader, PICTURE_FRESH_MS } from '../src/oraculo/lider-local';
 import { createGateHandler, mergePicture, type BoardPicture, type GateForward, type PictureSession } from '../src/oraculo/portao';
 import { createGateRecados, createTmuxLocalSessions, type RecadosTmux } from '../src/oraculo/recados';
@@ -96,7 +96,7 @@ function fakeSupabase(clock: { now: number }) {
 }
 
 /** This VPS: the recados queue, the relay (only the PC drains it), the Líder único alive in tmux (or not). */
-function vps(options: { leaderAlive?: boolean } = {}) {
+function vps(options: { leaderAlive?: boolean; respondida?: (id: string) => boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'lider-vps-'));
   dirs.push(dir);
   const clock = { now: Date.parse('2026-11-18T12:25:05Z') };
@@ -112,7 +112,7 @@ function vps(options: { leaderAlive?: boolean } = {}) {
   };
   const ledger = createLedgerService({ filePath: join(dir, 'ledger.json'), io, proofFs: nodeLedgerProofFs, now: () => clock.now });
   const relay = createRelay({ filePath: join(dir, 'fila.json'), io, now: () => clock.now });
-  const recados = createGateRecados({
+  const newRecados = () => createGateRecados({
     file: join(dir, 'recados.json'),
     io,
     ledger: () => ledger,
@@ -128,13 +128,29 @@ function vps(options: { leaderAlive?: boolean } = {}) {
     log: () => undefined,
   });
   const db = fakeSupabase(clock);
-  const chat = createChatCelularConsumer({
-    queue: () => chatCelularQueueOver(db.rpc),
-    relay,
-    waitMs: 5,
-    local: { deliver: recados.deliverLocal, state: recados.stateOf, tail: async (sid) => tails.get(sid) ?? null },
-    log: () => undefined,
-  });
+  // `chat-celular-respostas.json`: what waits for the Líder's answer survives a restart of the daemon.
+  const repliesFile = join(dir, 'chat-celular-respostas.json');
+  const store = {
+    load: (): ChatCelularReplies | null => {
+      try {
+        return JSON.parse(readFileSync(repliesFile, 'utf8')) as ChatCelularReplies;
+      } catch {
+        return null;
+      }
+    },
+    save: (state: ChatCelularReplies): void => writeFileSync(repliesFile, JSON.stringify(state)),
+  };
+  const newChat = (gate: ReturnType<typeof newRecados>) =>
+    createChatCelularConsumer({
+      queue: () => ({ ...chatCelularQueueOver(db.rpc), ...(options.respondida ? { respondida: options.respondida } : {}) }),
+      relay,
+      waitMs: 5,
+      local: { deliver: gate.deliverLocal, state: gate.stateOf, tail: async (sid) => tails.get(sid) ?? null },
+      store,
+      log: () => undefined,
+    });
+  let recados = newRecados();
+  let chat = newChat(recados);
   /** The PC (any app): delivers what the relay holds to the Líder único and acks. */
   const toLiderByPc: string[] = [];
   const pcDrains = (): void => {
@@ -145,7 +161,18 @@ function vps(options: { leaderAlive?: boolean } = {}) {
   };
   const endTurn = async (sid: string): Promise<{ decision?: string; reason?: string }> =>
     JSON.parse((await recados.hook('fim-de-turno', { 'x-donel-tmux': `donel-${sid}` }, JSON.stringify({ session_id: sid }))).body) as { decision?: string; reason?: string };
-  return { dir, clock, live, picture, tails, ledger, relay, recados, db, chat, pcDrains, toLiderByPc, endTurn, row: db.rows[0]! };
+  const w = {
+    dir, clock, live, picture, tails, ledger, relay, recados, db, chat, pcDrains, toLiderByPc, endTurn, row: db.rows[0]!,
+    /** `systemctl restart donel-oraculo`: the queue and the wait come back from their files. */
+    restart(): void {
+      recados.stop();
+      recados = newRecados();
+      chat = newChat(recados);
+      w.recados = recados;
+      w.chat = chat;
+    },
+  };
+  return w;
 }
 
 describe('Líder único local: quem é', () => {
@@ -187,6 +214,45 @@ describe('chat do celular com o Líder único vivo nesta VPS', () => {
     await w.chat.round();
     expect(w.db.replies).toEqual([expect.objectContaining({ p_em_resposta_a: ROW_ID, p_texto: 'Pronto: a Raiza já entra na VPS.' })]);
     expect(w.toLiderByPc).toHaveLength(0);
+  });
+
+  it('daemon reinicia entre a entrega e o fim do turno, e o Stop hook já entrega outro recado: a resposta sai uma vez', async () => {
+    // 19/11 (t-d461e003): restarts at 10h27 and 10h33; the #9c320674 reached the Líder working, by the Stop hook, and the
+    // next recado came in the same second his answer ended, so no round ever saw the turn ended.
+    const w = vps();
+    await w.chat.round();
+    const stop = await w.endTurn(SID_LIDER);
+    expect(stop.reason).toContain('[celular #9c4a90af]');
+    await w.chat.round();
+    expect(w.row.resultado).toBe(DELIVERED_NOTE);
+    w.restart();
+    const blocking = JSON.stringify({ type: 'attachment', attachment: { type: 'hook_blocking_error', hookName: 'Stop', hookEvent: 'Stop', blockingError: { blockingError: stop.reason, command: '~/.donel/bin/recados-hook.sh fim-de-turno' } } });
+    const summary = JSON.stringify({ type: 'system', subtype: 'stop_hook_summary', hookCount: 2 });
+    const turn = [said('fim do turno anterior'), stopFeedback(stop.reason!), blocking, summary, said('Vou ver.', 'tool_use'), said('Pronto: a Raiza já entra na VPS.')];
+    w.tails.set(SID_LIDER, [...turn, stopFeedback('◆ Recado r-4791d39e do Oráculo: outro assunto')].join('\n'));
+    await w.chat.round();
+    expect(w.db.replies).toEqual([expect.objectContaining({ p_em_resposta_a: ROW_ID, p_texto: 'Pronto: a Raiza já entra na VPS.' })]);
+    // Another restart, and the turn that went on ends: nothing goes a second time.
+    w.restart();
+    await w.chat.round();
+    w.tails.set(SID_LIDER, [...turn, stopFeedback('◆ Recado r-4791d39e do Oráculo: outro assunto'), said('Feito o outro.')].join('\n'));
+    await w.chat.round();
+    expect(w.db.replies).toEqual([expect.objectContaining({ p_em_resposta_a: ROW_ID, p_texto: 'Pronto: a Raiza já entra na VPS.' })]);
+  });
+
+  it('mensagem já respondida à mão (chat_lider.py) não recebe uma segunda resposta e sai da espera', async () => {
+    const byHand = new Set<string>();
+    const w = vps({ respondida: (id) => byHand.has(id) });
+    await w.chat.round();
+    const stop = await w.endTurn(SID_LIDER);
+    await w.chat.round();
+    byHand.add(ROW_ID);
+    w.tails.set(SID_LIDER, [stopFeedback(stop.reason!), said('Pronto: a Raiza já entra na VPS.')].join('\n'));
+    await w.chat.round();
+    w.restart();
+    await w.chat.round();
+    expect(w.db.replies).toHaveLength(0);
+    expect(JSON.parse(readFileSync(join(w.dir, 'chat-celular-respostas.json'), 'utf8'))).toEqual({ waiting: [], outbox: [] });
   });
 
   it('o desktop de hoje (#470, tomando a cada 5 s) e a VPS juntos: a mensagem chega uma vez só', async () => {
@@ -265,14 +331,19 @@ describe('chat do celular com o Líder único vivo nesta VPS', () => {
 describe('recados e avisos que caem no Líder único vivo nesta VPS', () => {
   it('"para":"lider" vai à fila local (PC ligado ou não); sem Líder local, com o PC ligado, segue ao PC', async () => {
     const w = vps();
-    const sent = await w.recados.enviar(SID_DEV, DEV_SESSION, { tool: 'sessao_enviar', para: 'lider', texto: 'terminei o PR' }, 'ligado');
+    // A Dev the Líder único opened: it reaches him by the PC's rule (t-d461e003).
+    const opened: PictureSession = { ...DEV_SESSION, listar: [{ ...LISTAR[0]!, abertaPor: 'lider' }] };
+    const sent = await w.recados.enviar(SID_DEV, opened, { tool: 'sessao_enviar', para: 'lider', texto: 'terminei o PR' }, 'ligado');
     expect(sent).not.toBe('repassar');
     expect(JSON.parse((sent as { text: string }).text)).toMatchObject({ entregue: 'na-fila', para: 'lider' });
     expect((await w.endTurn(SID_LIDER)).reason).toContain('terminei o PR');
     expect(w.relay.pending()).toHaveLength(0);
 
     const away = vps({ leaderAlive: false });
-    expect(await away.recados.enviar(SID_DEV, DEV_SESSION, { tool: 'sessao_enviar', para: 'lider', texto: 'terminei o PR' }, 'ligado')).toBe('repassar');
+    expect(await away.recados.enviar(SID_DEV, opened, { tool: 'sessao_enviar', para: 'lider', texto: 'terminei o PR' }, 'ligado')).toBe('repassar');
+    // One the owner opened by hand, with no one above: with the PC off it is refused here as the PC would.
+    const refused = await w.recados.enviar(SID_DEV, DEV_SESSION, { tool: 'sessao_enviar', para: 'lider', texto: 'oi' }, 'desligado');
+    expect(refused).toMatchObject({ kind: 'error', text: expect.stringContaining('Sem ligação com o Líder único') });
   });
 
   it('"travada" de quem não tem ninguém acima chega ao Líder único pela fila local, uma vez', async () => {

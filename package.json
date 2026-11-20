@@ -20,6 +20,7 @@
     "preview": "electron-vite preview",
     "test": "vitest run",
     "verify": "node scripts/verify.mjs",
+    "verify:rapido": "node scripts/verify-rapido.mjs",
     "esteira:check": "node scripts/esteira-check.mjs",
     "test:smoke": "npm run build && playwright test -c tests/smoke/playwright.config.ts",
     "tutorial": "npm run build && playwright test -c .claude/skills/tutorial-e2e/lib/playwright.config.ts && node .claude/skills/tutorial-e2e/lib/relatorio.mjs",

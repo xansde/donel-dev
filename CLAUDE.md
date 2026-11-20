@@ -140,6 +140,36 @@ esteira (`default-risco-esteira`, que pediria 2 revisores no sensível), como
 o contrato de Concluir prevê para repos com política própria. Se o repo um
 dia ganhar um segundo mantenedor, revisar esta seção antes de concluir card
 sensível.
+Desde 08/10 (o Claude mescla na `staging`) e 18/11 (skill `merge-direto`), o
+revisor antes do merge é um subagente cético de fora; a validação do dono
+acontece no alfa, **depois** do merge. Ninguém espera o dono para mesclar na
+`staging`.
+
+## Cadeira Dev rápido (pedido do dono, 19/11, t-7c942870)
+
+"Precisa de staging mesmo? Se a gente tem PostHog que consegue usar Feature
+Flag [...] 2 minutos de teste pra todo seu código já é mais do que o
+suficiente. [...] a gente tem as regras do coletor. [...] só isso é o nosso
+limitante." O papel de fábrica `dev-rapido` (`src/shared/roles.ts`) e a skill
+`dev-rapido` levam a mudança do pedido à produção sem esperar ninguém:
+
+- **Flag no lugar de staging.** Recurso novo nasce desligado: PostHog quando o
+  app tiver; no Donel Dev e no Oráculo, flag local (`~/.donel/flags/<nome>`,
+  existe = ligada, lida na hora). Sobe desligado, confere, liga; a volta é
+  desligar. Aqui a `staging` (alfa) segue sendo a branch de integração e o
+  canal que o dono usa; `main` e o repo público continuam só com ele.
+- **Verify de até 2 min**: `npm run verify:rapido` (tipos, testes ligados ao
+  diff, build como smoke; imprime o tempo), direto, **sem** a fila do
+  `verify.lock` e sem `limitador.py pesado`. Medido em 19/11: o verify inteiro
+  leva ~1 min numa VPS parada; o que demorava era a fila e a espera de revisão.
+  O verify completo fica para o build do alfa e para quando o cético pedir.
+- **Revisão** pelo subagente cético da `merge-direto` e merge pela própria
+  sessão; o papel não passa pelo Revisor de cadeira.
+- **Fica**: a regra do coletor (worktree, merge e clone principal em dia no
+  mesmo dia), migração de banco e mudança de dado com backup e volta (flag não
+  desfaz schema), o que é do dono (credencial nova, pagamento, apagar dado
+  dele, `main`, repo público) e a trava de segredos.
+- Inventário do que mudou e do que ficou: [`docs/dev-rapido.md`](docs/dev-rapido.md).
 
 ## Regras do projeto
 
@@ -182,12 +212,26 @@ sensível.
   do node/ssh, num arquivo 600 que o `apiKeyHelper` lê. Nunca volta à tela, a
   log ou a erro. Desenho no [ADR 0008](docs/adr/0008-proxy-da-vez.md). Fora
   de `accounts/` e `proxies/`, segue proibido.
+  **Credencial pelo celular — emenda do dono (19/11, carta t-6b5092f6,
+  "Autorizar com os limites"; pedido: "Precisamos de uma caixa de colocar
+  credenciais aqui sem passar direto pro chat")**: `src/oraculo/credencial/` é
+  o único código do Oráculo que toca a senha que o celular manda
+  (`POST /api/v2/credencial`). A rota só confere a assinatura e passa o corpo
+  cru ao módulo (nunca o `parseBody` genérico, nunca log; 16 KB no socket). A
+  senha vai ao cofre da Homologações só pelo stdin do `ssh`, em modo **só
+  criar** (nome exato já existente = `409 ja-existe`, cofre intocado); nunca em
+  argv, log, journal, fila, ledger, arquivo, erro ou resposta. Guarda-se 24 h só
+  `id → {item_id, hash_curto, hash salgado}`; o aviso ao Líder e à conversa diz
+  só nome e `item_id`. Cofre fora = 503, sem fila nem retentativa. O teste de
+  vazamento (`tests/oraculo-credencial.test.ts`) é gate. Desenho no
+  [ADR 0010](docs/adr/0010-credencial-pelo-celular.md). Fora de `accounts/`,
+  `proxies/` e `credencial/`, segue proibido.
   **Navegador interno não é exceção** (30/10): login no painel é o dono
   digitando; o Chromium guarda os cookies da partição `persist:donel-browser`
   e o código do app não os lê nem grava (`docs/design/navegador-interno.md`).
 - **Testes enxutos (decisão do dono, 03/11 — substitui o "TDD com escopo" e
   as camadas de teste de 08/10)**: "o mais próximo de zero, focando no que
-  realmente é importante". A suíte tem ~17 arquivos vitest e **um** smoke.
+  realmente é importante". A suíte tem ~160 arquivos vitest (19/11) e **um** smoke.
   Teste só entra para guardar o que quebraria **sem o dono perceber usando o
   app**: credencial (`src/main/accounts/`), argv de lançamento, dado
   persistido que um canal pode apagar (config, `mindscape.json`, registro de
@@ -198,6 +242,7 @@ sensível.
   - Verificação padrão: `npm run verify` (typecheck + `npm test` + `electron-vite
     build`). O build entrou em 05/11: um merge deixou uma chave aberta no CSS,
     typecheck e testes passaram e o instalador quebrou.
+  - Verificação da cadeira Dev rápido: `npm run verify:rapido` (seção acima).
   - **Conflito com `staging` é do Dev, nunca do Revisor**: o Dev mescla a base,
     resolve e roda `npm run verify` de novo; PR com conflito volta ao Dev, e o
     Revisor só aprova e mergeia PR limpo.
@@ -365,19 +410,19 @@ aprovado, e tudo atrás de `chat.enabled` até a virada (Fase 7).
 - **Alcance / hierarquia entre sessões** (dono, 04/11): dirigir outra sessão com poder de matar (hoje `sessao_fechar`) só com hierarquia — no quadro, abaixo pelas setas (direta ou em cadeia); entre quadros, só o Líder de um quadro com `reach: 'all'` (botão "Alcance" no Mindscape; ausente = só o próprio). O Líder que o dono pôs num quadro alcança **toda** sessão do próprio quadro, com ou sem seta (08/11), e qualquer sessão fala com ele por `"para": "lider-quadro"`. Duas setas opostas entre os mesmos dois lugares são duas ligações (ida e volta); o `schemaVersion` subiu para 7 por isso, porque o canal v6 apagava a seta de volta ao religar ligações (um `/clear` com post-it). A regra mora **só** em `src/shared/mindscape/reach.ts`; quem precisar de alcance reusa, não recria. O Líder único (aba marcada pelo Jobu, [ADR 0007](docs/adr/0007-lider-unico.md)) é um ramo dela: fica acima do topo de todo quadro, sem a marca "Alcance".
 - `mindscape.json`: campo novo no documento **sobe o `schemaVersion`**. O `parseMindscapeDoc` descarta o que não conhece e o `userData` é compartilhado entre canais, então um canal mais antigo gravaria por cima e apagaria o campo; com a versão maior ele fica read-only ([design do desenho](docs/design/mindscape-desenho.md)).
 
-## Memória (Hindsight) e vault
+## Memória (wiki do BizOps) e vault
 
-- Desde 12/11/2026 a memória do Líder e das sessões é o **Hindsight**, banco
-  `donel-lider`, na VPS pessoal (pedido do dono, 11/11): skill `memoria`
-  (`memoria buscar`, `memoria responder`, `memoria gravar`). Ao concluir um marco,
-  grave-o com `memoria gravar` (frase com data); não use `wiki-*-exec` nem
-  `/wiki synthesize`, e não atualize mais o `context.md`/`todo.md` do vault.
+- Desde 19/11/2026 a memória do Líder e das sessões é `.md` na wiki do BizOps,
+  em `wiki/memoria/donel-lider/` da `staging` do `xansde-seazone/bizops`; saiu
+  do Hindsight. Skill `memoria`, que roda
+  `~/bin/rotinas/memoria-md/memoria_md.py buscar|gravar|perene|passagem`. Ao
+  concluir um marco, grave-o com `memoria gravar` (frase com data); não use
+  `wiki-*-exec` nem `/wiki synthesize`, e não atualize o `context.md`/`todo.md`
+  do vault.
+- O Hindsight segue ligado só pelo banco da Homologação, até o sim do Dalton.
 - O vault `Claude Seazone/` segue intacto no PC, só como arquivo; `Privado/` nunca
-  vai para o Hindsight. As filas `PROXIMO.md` e os `prompt.md` dos gatilhos acima
-  ainda moram nele, só no PC (não estão no Hindsight nem na cópia da VPS).
-- As notas do vault importadas em 12/11 (`context.md`, `todo.md`, `log.md`,
-  `wiki-como-funciona.md`) seguem no Hindsight e a busca ainda devolve fatos
-  delas que mandam usar a wiki: são de antes de 12/11; vale o fato mais recente.
+  vai para a memória. As filas `PROXIMO.md` e os `prompt.md` dos gatilhos acima
+  ainda moram nele, só no PC (não estão na memória nem na cópia da VPS).
 
 ## Active Technologies
 - TypeScript 5.7 (main, preload e renderer), React 18.3.1, Node do Electron 43.2 + Electron 43.2, node-pty 1.1.0 (patch), @xterm/xterm 6.0.0; novas: react-markdown 10, remark-gfm 4, shiki 4 (núcleo + Oniguruma WASM) (014-chat)

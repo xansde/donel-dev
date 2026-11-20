@@ -13,6 +13,7 @@ import { pickTailscaleAddress } from '../src/main/celular/tailscale';
 import { callerOf, createOracleApiHandler, type OracleRequest } from '../src/oraculo/api';
 import { startOracleServer } from '../src/oraculo/server';
 import { readServiceHashes, SERVICE_PATH } from '../src/oraculo/servicos';
+import { progressOf } from '../src/shared/ledger/andamento';
 
 const PC = 'p'.repeat(64);
 const SVC = 's'.repeat(64);
@@ -141,5 +142,99 @@ describe('carta de serviço no Oráculo da VPS', () => {
     const alerta = JSON.parse((await as(REC, { ...criar, request: 'alerta SRE: disco cheio', ownerPlaceId: 'lider', requestedBy: 'SRE' })).body as string);
     expect(alerta).toMatchObject({ ok: true, estado: 'aberta' });
     expect(JSON.parse(readFileSync(file, 'utf8')).tasks[alerta.id].ownerPlaceId).toBe('lider');
+  });
+
+  // t-e1e992ab — a real refusal of the VPS's limiter (a session waiting for a slot, a Workflow, a heavy run, a cron
+  // routine) is a progress line of the task it belongs to, never a notice to the Líder. What breaks unseen: the line
+  // on someone else's task, a "travada" that reaches the Líder at once, or a second line for the same series.
+  describe('andamento do limitador', () => {
+    const LIM = 'l'.repeat(64);
+    const A = 'place:8be0d000-1111-4111-8111-111111111111';
+    const B = 'place:ddb23b03-2222-4222-8222-222222222222';
+    const esperando = { estado: 'esperando', precisa: 'vaga na VPS pessoal (limitador): teto de sessões', prova: 'eventos.jsonl, série desde 10:00', proximo: 'entra sozinho quando a vaga abrir' };
+
+    async function limiter() {
+      const t = setup();
+      writeFileSync(join(t.dir, 'servicos', 'limitador.sha256'), `${hash(LIM)}\n`);
+      const make = async (owner: string, take: boolean): Promise<string> => {
+        const created = await t.ledger.apply({ kind: 'dono' }, { op: 'criar', projectPath: '/p', request: `trabalho de ${owner}`, doneWhen: 'y', due: '2026-11-20', ownerPlaceId: owner, risk: 'baixo' });
+        if (!created.ok) throw new Error(created.reason);
+        if (take) await t.ledger.apply({ kind: 'lugar', placeId: owner }, { op: 'assumir', id: created.task.id });
+        return created.task.id;
+      };
+      const reserva = await make('place:dca45050-3333-4333-8333-333333333333', true);
+      const as = (token: string, op: unknown) => t.handle(req({ method: 'POST', url: SERVICE_PATH, body: JSON.stringify({ op }), authorization: `Bearer ${token}` }));
+      const lines = (id: string) => (JSON.parse(readFileSync(t.file, 'utf8')).tasks[id].events as { by: unknown; text?: string }[]).flatMap((e) => (progressOf(e as never) ? [{ by: e.by, progress: progressOf(e as never) }] : []));
+      return { ...t, make, reserva, as, lines };
+    }
+
+    it('grava "esperando" na tarefa viva do lugar, assinado pelo serviço; outro estado ou outro serviço não grava', async () => {
+      const t = await limiter();
+      const id = await t.make(A, true);
+      const op = { op: 'andamento', lugar: A, reserva: t.reserva, progress: esperando, requestId: 'lim-0123456789abcdef' };
+      for (const estado of ['travada', 'precisa-do-dono']) expect((await t.as(LIM, { ...op, progress: { ...esperando, estado } })).status).toBe(400);
+      expect((await t.as(SVC, op)).status).toBe(400);
+      expect(t.lines(id)).toEqual([]);
+      const done = await t.as(LIM, op);
+      expect(JSON.parse(done.body as string)).toMatchObject({ ok: true, id, estado: 'em-execucao' });
+      expect(t.lines(id)).toEqual([{ by: { kind: 'lugar', placeId: 'servico:limitador', roleId: 'servico' }, progress: esperando }]);
+      // The same series sent again (the retry after 5 min) is the same line.
+      expect(JSON.parse((await t.as(LIM, op)).body as string)).toMatchObject({ ok: true, id });
+      expect(t.lines(id)).toHaveLength(1);
+      expect(t.lines(t.reserva)).toEqual([]);
+    });
+
+    it('o prefixo do lugar acha o dono único e a tarefa em execução mais recente; ambíguo, sem tarefa ou sem lugar vai à reserva', async () => {
+      const t = await limiter();
+      const open = await t.make(A, false);
+      const running = await t.make(A, true);
+      const op = (lugar?: string) => ({ op: 'andamento', ...(lugar ? { lugar } : {}), reserva: t.reserva, progress: esperando });
+      expect(JSON.parse((await t.as(LIM, op('place:8be0d000'))).body as string)).toMatchObject({ ok: true, id: running });
+      expect(t.lines(open)).toEqual([]);
+      // A place with no live task, and a routine of the cron (no place): the reserve.
+      expect(JSON.parse((await t.as(LIM, op(B))).body as string)).toMatchObject({ ok: true, id: t.reserva });
+      expect(JSON.parse((await t.as(LIM, { ...op(), progress: { ...esperando, precisa: 'rotina' } })).body as string)).toMatchObject({ ok: true, id: t.reserva });
+      // Two owners under the same prefix: guessing would put the line on someone else's task.
+      await t.make('place:8be0d000-9999-4999-8999-999999999999', true);
+      expect(JSON.parse((await t.as(LIM, { ...op('place:8be0d000'), progress: { ...esperando, precisa: 'ambíguo' } })).body as string)).toMatchObject({ ok: true, id: t.reserva });
+      expect(t.lines(t.reserva)).toHaveLength(3);
+    });
+
+    it('a mesma série repetida não grava 2a linha, nem depois de outra série na mesma tarefa, nem depois de o lugar assumir outra', async () => {
+      const t = await limiter();
+      const x = { op: 'andamento', reserva: t.reserva, progress: { ...esperando, precisa: 'rotina' }, requestId: 'lim-xxxxxxxxxxxxxxxx' };
+      const y = { op: 'andamento', reserva: t.reserva, progress: { ...esperando, precisa: 'lider unico' }, requestId: 'lim-yyyyyyyyyyyyyyyy' };
+      for (const op of [x, y, x]) expect(JSON.parse((await t.as(LIM, op)).body as string)).toMatchObject({ ok: true, id: t.reserva });
+      expect(t.lines(t.reserva)).toHaveLength(2);
+      // The place took another task between the two tries: the retry answers where the series was written.
+      const first = await t.make(A, false);
+      const z = { op: 'andamento', lugar: A, reserva: t.reserva, progress: esperando, requestId: 'lim-zzzzzzzzzzzzzzzz' };
+      expect(JSON.parse((await t.as(LIM, z)).body as string)).toMatchObject({ ok: true, id: first });
+      const second = await t.make(A, true);
+      expect(JSON.parse((await t.as(LIM, z)).body as string)).toMatchObject({ ok: true, id: first });
+      expect(t.lines(first)).toHaveLength(1);
+      expect(t.lines(second)).toEqual([]);
+    });
+
+    it('reserva fechada, tarefa nomeada, lugar malformado ou campo estranho: 400 e nada gravado', async () => {
+      const t = await limiter();
+      const id = await t.make(A, true);
+      await t.ledger.apply({ kind: 'dono' }, { op: 'cancelar', id: t.reserva, reason: 'fechou' });
+      const op = { op: 'andamento', reserva: t.reserva, progress: esperando };
+      for (const bad of [
+        op,
+        { ...op, id },
+        { ...op, lugar: A, id },
+        { ...op, lugar: 'lider' },
+        { ...op, lugar: 'place:8be0' },
+        { ...op, lugar: A, extra: 1 },
+        { ...op, lugar: A, reserva: undefined },
+        { ...op, lugar: A, progress: { ...esperando, resumo: 'x' } },
+      ])
+        expect((await t.as(LIM, bad)).status).toBe(400);
+      expect([...t.lines(id), ...t.lines(t.reserva)]).toEqual([]);
+      // The limiter's credential still has the rest of the API closed.
+      expect((await t.handle(req({ url: '/v1/ledger', authorization: `Bearer ${LIM}` }))).status).toBe(403);
+    });
   });
 });

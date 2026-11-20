@@ -455,6 +455,51 @@ describe('sonda do retrato', () => {
     await probe.round();
     expect(asked).toHaveLength(8);
   });
+
+  it('o Líder único (sem quadro) entra no retrato com o aviso do PC no listar e no quadro; sessão comum com o aviso, não', async () => {
+    // 19/11: the PC answers the Líder único's sessao_listar and quadro_ler with an object that tells him to name a board.
+    // The probe refused it, he never entered the picture, and a picture made here (local) answered PC_OFF to ver_tela.
+    const home = tempDir('sonda-lider-');
+    const LIDER_SID = '77777777-2222-4333-8444-555555555555';
+    const DEV_SID = '88888888-2222-4333-8444-555555555555';
+    mkdirSync(join(home, LIDER_SID), { recursive: true });
+    writeFileSync(join(home, LIDER_SID, 'meta.json'), JSON.stringify({ sid: LIDER_SID, mcpPort: 41000, mcpToken: 't'.repeat(43), leaderOfAll: true }));
+    mkdirSync(join(home, DEV_SID), { recursive: true });
+    writeFileSync(join(home, DEV_SID, 'meta.json'), JSON.stringify({ sid: DEV_SID, mcpPort: 41001, mcpToken: 't'.repeat(43) }));
+    const aviso = { aviso: 'Você é o Líder único e não tem quadro: diga qual em "quadro".' };
+    const kept: Record<string, PictureSession> = {};
+    let now = 9_000_000;
+    let leaderUp = true;
+    const probe = createProbe({
+      sessionsDir: home,
+      liveSessions: async () => new Set([LIDER_SID, DEV_SID]),
+      picture: () => ({ at: 0, sessoes: kept }),
+      setSession: (folder, session) => void (kept[folder] = session),
+      call: async (port, _token, tool) => {
+        if (port === 41000) {
+          if (!leaderUp) return null;
+          return tool === 'sessao_quem_sou' ? { nome: 'Líder', papel: 'lider', liderUnico: true, lugar: null } : aviso;
+        }
+        return tool === 'sessao_quem_sou' ? { pasta: PROJECT, lugar: ME, papel: 'dev' } : aviso;
+      },
+      now: () => now,
+      gapMs: 0,
+      log: () => undefined,
+    });
+    await probe.round();
+    expect(kept[LIDER_SID]).toEqual({ quemSou: { nome: 'Líder', papel: 'lider', liderUnico: true, lugar: null }, listar: [], at: now });
+    // A common session must list its board: the aviso there is not an answer.
+    expect(kept[DEV_SID]).toBeUndefined();
+    await probe.round();
+    expect(kept[DEV_SID]).toBeUndefined();
+
+    // The Líder's tunnel not answering is still a failure: the last picture stays.
+    now += 121_000;
+    leaderUp = false;
+    const before = kept[LIDER_SID];
+    await probe.round();
+    expect(kept[LIDER_SID]).toBe(before);
+  });
 });
 
 describe('claude embrulhado na VPS', () => {

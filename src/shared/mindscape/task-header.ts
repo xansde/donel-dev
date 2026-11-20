@@ -54,6 +54,14 @@ export function withTaskHeader(text: string, source: TaskHeaderSource | null | u
   return `${taskHeaderLine(source)}\n\n${text}`;
 }
 
+/** The line `withTaskHeader` puts in front ("[t-…] …" on one line, then a blank line). */
+const TASK_HEADER_IN_FRONT = /^\s*\[t-[^\]\n]*\][^\n]*\r?\n\r?\n/;
+
+/** The inverse of `withTaskHeader`: the text without a task line and its blank line in front; any other text as it came. */
+export function withoutTaskHeader(text: string): string {
+  return text.replace(TASK_HEADER_IN_FRONT, '');
+}
+
 /** Title, criterion and request of the task `id`, straight from the ledger; null when it is not there. */
 export function taskHeaderSourceOfDoc(doc: LedgerDoc, id: string): TaskHeaderSource | null {
   const task = doc.tasks[id];

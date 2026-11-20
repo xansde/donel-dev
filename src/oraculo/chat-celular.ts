@@ -22,8 +22,10 @@
 // Etapa 2 (t-c3fbe852) — with the Líder único alive in this machine's tmux (`local`), the parked row's message goes to
 // its recados queue instead of the relay (the same key), and the row is closed only once the queue says the Líder got
 // it (end of turn, or typed and confirmed). His answer comes from his transcript here: when a turn that read the
-// marker has ended, what he wrote after it goes back (`celular_lider_responder`, the attribution of the desktop
-// router, `answersIn`), once per row (the reply id is kept, and the RPC never writes the same id twice). A key that went
+// marker has ended, or a message he read later closed what he wrote (the Stop hook hands him the next recado in the
+// same second his turn ends), what he wrote after it goes back (`celular_lider_responder`, the attribution of the
+// desktop router, `answersIn`), once per row (the reply id is kept, the RPC never writes the same id twice, and a row
+// the conversation already holds an answer to, given by hand with `chat_lider.py`, gets none). A key that went
 // to the relay (the Líder left before reading it, or it was there before he came) stays the relay's: never both ways.
 // No Líder here: the relay, as before.
 
@@ -41,7 +43,8 @@ const ROUND_MS = 15_000;
 const TAKE_LIMIT = 10;
 const PARKED_LIMIT = 50;
 /** The owner's words given whole up to this; the SQL keeps up to 4000. */
-const MAX_TEXT = 3500;
+export const CHAT_MAX_TEXT = 3500;
+const MAX_TEXT = CHAT_MAX_TEXT;
 /** `celular.lider_mensagens.texto` holds up to 4000 characters. */
 const MAX_REPLY = 4000;
 /** A row delivered here and never answered in this long leaves the wait (the transcript lost it). */
@@ -59,6 +62,8 @@ export interface ChatCelularRow {
   readonly id: string;
   readonly texto: string;
   readonly criada_em: string;
+  /** `texto` is already the whole line for the Líder, with the phone's marker (a file, contract v1.4). */
+  readonly inteiro?: boolean;
 }
 
 export interface ChatCelularQueue {
@@ -72,6 +77,11 @@ export interface ChatCelularQueue {
   estacionadas(resultado: string, limit: number): Promise<readonly ChatCelularRow[]>;
   /** The Líder's answer to `emRespostaA`, under the id `id` (the same id is never written twice). */
   responder(id: string, emRespostaA: string, texto: string): Promise<void>;
+  /**
+   * Whether the conversation already holds an answer of the Líder to `id` (his own, or one given by hand with
+   * `chat_lider.py responder`). Absent = not known (the Supabase queue): nothing is skipped.
+   */
+  respondida?(id: string): boolean;
 }
 
 function parseRow(value: unknown): ChatCelularRow | null {
@@ -116,6 +126,7 @@ export function chatText(row: ChatCelularRow, replyHint?: (shortId: string) => s
   const words = row.texto.trim();
   const fitted = words.length <= MAX_TEXT ? words : `${words.slice(0, MAX_TEXT - 1).replace(/[\uD800-\uDBFF]$/, '')}…`;
   const hint = replyHint?.(row.id.slice(0, 8));
+  if (row.inteiro) return `${words}${hint ? `\n${hint}` : ''}`;
   return `◆ Do dono, pelo chat do celular ${phoneMarker(row.id)}: «${fitted}»${hint ? `\n${hint}` : ''}`;
 }
 
@@ -154,24 +165,6 @@ export function parseChatReplies(text: string | null): ChatCelularReplies | null
   } catch {
     return null;
   }
-}
-
-/** A "Stop hook feedback" prompt (how an end-of-turn delivery is recorded) as the plain prompt the Líder read. */
-export function withStopFeedbackRead(tail: string): string {
-  return tail
-    .split('\n')
-    .map((line) => {
-      if (!line.includes('Stop hook feedback')) return line;
-      try {
-        const entry = JSON.parse(line) as { type?: unknown; isMeta?: unknown; message?: { content?: unknown } };
-        const content = entry.message?.content;
-        if (entry.type !== 'user' || entry.isMeta !== true || typeof content !== 'string' || !content.startsWith('Stop hook feedback:')) return line;
-        return JSON.stringify({ ...entry, isMeta: false, message: { ...entry.message, content: content.slice('Stop hook feedback:'.length).trim() } });
-      } catch {
-        return line;
-      }
-    })
-    .join('\n');
 }
 
 /** The last main user/assistant entry of the tail is an assistant's end of turn: nothing he writes now is half done. */
@@ -255,6 +248,15 @@ export function createChatCelularConsumer(deps: ChatCelularConsumerDeps): ChatCe
     }
   };
 
+  /** Whether the conversation already holds an answer of the Líder to `id`; unreadable = not known (nothing skipped). */
+  const answeredThere = (queue: ChatCelularQueue, id: string): boolean => {
+    try {
+      return queue.respondida?.(id) === true;
+    } catch {
+      return false;
+    }
+  };
+
   /** To the Líder único alive here (his queue, same key): true = queued (or already there). */
   async function toLocal(row: ChatCelularRow): Promise<boolean> {
     if (!deps.local) return false;
@@ -297,11 +299,19 @@ export function createChatCelularConsumer(deps: ChatCelularConsumerDeps): ChatCe
       } catch {
         tail = null;
       }
-      if (!tail || !turnEndedIn(tail)) continue;
-      const found = answersIn(withStopFeedbackRead(tail), ids);
+      if (!tail) continue;
+      // An answer is whole once the turn ended, or once he read something after it: with recados arriving, the Stop
+      // hook hands him the next one in the same second his turn ends, and a round every 15 s would never see the end.
+      const found = answersIn(tail, ids, { closedOnly: !turnEndedIn(tail) });
       if (!found.size) continue;
+      // Already answered in the conversation (by hand, or a reply of ours a restart kept): out of the wait, never twice.
+      const already = ids.filter((id) => found.has(id) && answeredThere(queue, id));
+      for (const id of already) {
+        found.delete(id);
+        log(`${phoneMarker(id)} já tinha resposta do Líder na conversa; não mandei outra`);
+      }
       const answered = ids.filter((id) => found.has(id));
-      waiting = waiting.filter((entry) => !found.has(entry.id));
+      waiting = waiting.filter((entry) => !found.has(entry.id) && !already.includes(entry.id));
       // Read together (nothing written between them): the whole answer on the newest, the others point to it.
       answered.forEach((id, index) => {
         const text = found.get(id)!.trim();
@@ -312,6 +322,12 @@ export function createChatCelularConsumer(deps: ChatCelularConsumerDeps): ChatCe
     }
     while (outbox.length) {
       const reply = outbox[0]!;
+      if (answeredThere(queue, reply.emRespostaA)) {
+        // Answered by hand while this one waited to go (or it went and the restart kept it): not a second time.
+        outbox.shift();
+        persist();
+        continue;
+      }
       try {
         await queue.responder(reply.id, reply.emRespostaA, reply.texto);
       } catch (error) {

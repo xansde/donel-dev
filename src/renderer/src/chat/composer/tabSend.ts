@@ -80,6 +80,8 @@ function rewire(tabId: string, store: ChatStore): void {
   const ptyId = handle?.ptyId ?? null;
   if (ptyId !== w.ptyId) {
     w.offSignal?.();
+    // A new process in the same tab (renewal, respawn): its next send is the first of a CLI that is booting.
+    if (ptyId !== null) w.driver.processStarted();
     w.ptyId = ptyId;
     w.offSignal =
       ptyId === null

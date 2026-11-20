@@ -23,33 +23,50 @@ export function isWav(bytes: Uint8Array): boolean {
   return ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WAVE' && ascii(12, 16) === 'fmt ';
 }
 
-export type Transcribe = (wav: Uint8Array) => Promise<string>;
+/** `meta` names the upload (the VPS transcriber converts any format; whisper.cpp only reads WAV). */
+export type Transcribe = (audio: Uint8Array, meta?: { readonly fileName?: string; readonly type?: string }) => Promise<string>;
+
+/** Why a transcription failed: the daemon retries `conexao` (the transcriber restarting) and nothing else. */
+export class TranscribeError extends Error {
+  constructor(
+    readonly kind: 'conexao' | 'tempo' | 'recusou' | 'sem-texto',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'TranscribeError';
+  }
+}
 
 /** Pede a transcrição ao servidor whisper.cpp (`POST /inference`, multipart). Só endereço local. */
 export function whisperServerTranscriber(options: {
   readonly url?: string;
   readonly fetchFn?: typeof fetch;
   readonly language?: string;
+  /** Default 6 min (the PC, short of RAM); the VPS daemon passes 60 s. */
+  readonly timeoutMs?: number;
 }): Transcribe {
   const url = options.url ?? DEFAULT_WHISPER_URL;
   const host = new URL(url).hostname;
   if (host !== '127.0.0.1' && host !== 'localhost' && host !== '[::1]') throw new Error('O servidor de transcrição tem de ser deste PC.');
   const fetchFn = options.fetchFn ?? fetch;
-  return async (wav) => {
+  const timeoutMs = options.timeoutMs ?? TRANSCRIBE_TIMEOUT_MS;
+  return async (audio, meta) => {
     const form = new FormData();
-    form.append('file', new Blob([wav], { type: 'audio/wav' }), 'pedido.wav');
+    form.append('file', new Blob([audio], { type: meta?.type ?? 'audio/wav' }), meta?.fileName ?? 'pedido.wav');
     form.append('response_format', 'json');
     form.append('language', options.language ?? 'pt');
     let response: Response;
     try {
-      response = await fetchFn(`${url.replace(/\/$/, '')}/inference`, { method: 'POST', body: form, signal: AbortSignal.timeout(TRANSCRIBE_TIMEOUT_MS) });
+      response = await fetchFn(`${url.replace(/\/$/, '')}/inference`, { method: 'POST', body: form, signal: AbortSignal.timeout(timeoutMs) });
     } catch (error) {
       const timedOut = error instanceof Error && error.name === 'TimeoutError';
-      throw new Error(timedOut ? 'A transcrição demorou demais. O áudio ficou guardado; escreva o pedido.' : 'O OpenWhispr não está aberto neste PC. Abra o OpenWhispr ou escreva o pedido.');
+      throw timedOut
+        ? new TranscribeError('tempo', 'A transcrição demorou demais. O áudio ficou guardado; escreva o pedido.')
+        : new TranscribeError('conexao', 'O OpenWhispr não está aberto neste PC. Abra o OpenWhispr ou escreva o pedido.');
     }
-    if (!response.ok) throw new Error(`O transcritor recusou o áudio (${response.status}).`);
+    if (!response.ok) throw new TranscribeError('recusou', `O transcritor recusou o áudio (${response.status}).`);
     const body = (await response.json().catch(() => null)) as { text?: unknown; error?: unknown } | null;
-    if (!body || typeof body.text !== 'string') throw new Error('O transcritor não devolveu texto.');
+    if (!body || typeof body.text !== 'string') throw new TranscribeError('sem-texto', 'O transcritor não devolveu texto.');
     return body.text.replace(/\s+/g, ' ').trim();
   };
 }

@@ -40,6 +40,21 @@ export interface MobileRequest {
 
 /** O único caminho que recebe corpo binário (e maior que 64 KB). */
 export const AUDIO_PATH = '/api/pedidos/audio';
+/** t-268ed62a — o áudio do chat do app (base64 em JSON, assinado como texto): o único caminho v2 com até 6 MB. */
+export const CHAT_AUDIO_V2_PATH = '/api/v2/chat/audio';
+export const MAX_CHAT_AUDIO_BYTES = 6 * 1024 * 1024;
+/** t-b03fdec8 — a part of a long voice message (contract v1.6): the same 6 MB as the whole short one. */
+export const CHAT_AUDIO_PARTE_V2_PATH = '/api/v2/chat/audio/parte';
+/** t-a1ad1ca2 — o arquivo do chat (até 15 MB, base64 em JSON): só este caminho v2 recebe ~20 MB (o mesmo teto de `MAX_ARQUIVO_BODY`, src/oraculo/chat-arquivo.ts). */
+export const CHAT_ARQUIVO_V2_PATH = '/api/v2/chat/arquivo';
+export const MAX_CHAT_ARQUIVO_BYTES = Math.ceil((15 * 1024 * 1024) / 3) * 4 + 64 * 1024;
+/**
+ * t-c441e144 (docs/adr/0010) — the phone's credential box: a password in JSON, at most 16 KB, and the 413 says why. The
+ * body is handed on as it came (src/oraculo/credencial/); nothing in this socket logs a body.
+ */
+export const CREDENCIAL_V2_PATH = '/api/v2/credencial';
+export const MAX_CREDENCIAL_BYTES = 16 * 1024;
+const TOO_BIG_BODY = JSON.stringify({ erro: 'grande-demais' });
 
 export type MobileBody = string | Uint8Array | { readonly filePath: string };
 
@@ -308,19 +323,9 @@ export function fromTailnet(remoteAddress: string | undefined, headers: Readonly
   return typeof forwarded === 'string' && isTailscaleAddress(forwarded.split(',')[0]) && typeof login === 'string' && login !== '';
 }
 
-/**
- * Sobe o servidor em `host:port` e, na mesma porta, em 127.0.0.1 para o `tailscale serve` (o endereço https).
- * Lança se `host` não for um endereço Tailscale.
- */
-export function startMobileServer(options: {
-  readonly host: string;
-  readonly port: number;
-  readonly handler: MobileHandler;
-}): Promise<MobileServer> {
-  const { host, port, handler } = options;
-  if (!isTailscaleAddress(host)) return Promise.reject(new Error(`recusado: ${host} não é um endereço da Tailscale`));
-
-  const onRequest = (req: IncomingMessage, res: ServerResponse): void => {
+/** The socket around a handler: only the tailnet, the body read within its route's ceiling, the answer written. */
+export function mobileRequestListener(handler: MobileHandler): (req: IncomingMessage, res: ServerResponse) => void {
+  return (req, res) => {
     if (!fromTailnet(req.socket.remoteAddress, req.headers)) {
       res.writeHead(403).end();
       req.socket.destroy();
@@ -328,14 +333,34 @@ export function startMobileServer(options: {
     }
     const chunks: Buffer[] = [];
     let size = 0;
-    const isAudio = req.method === 'POST' && (req.url ?? '').split('?')[0] === AUDIO_PATH;
-    const maxBytes = isAudio ? MAX_AUDIO_BYTES : MAX_BODY_BYTES;
+    const routePath = (req.url ?? '').split('?')[0];
+    const isAudio = req.method === 'POST' && routePath === AUDIO_PATH;
+    const isChatAudio = req.method === 'POST' && (routePath === CHAT_AUDIO_V2_PATH || routePath === CHAT_AUDIO_PARTE_V2_PATH);
+    const isChatArquivo = req.method === 'POST' && routePath === CHAT_ARQUIVO_V2_PATH;
+    const isCredencial = req.method === 'POST' && routePath === CREDENCIAL_V2_PATH;
+    const maxBytes = isAudio ? MAX_AUDIO_BYTES : isChatAudio ? MAX_CHAT_AUDIO_BYTES : isChatArquivo ? MAX_CHAT_ARQUIVO_BYTES : isCredencial ? MAX_CREDENCIAL_BYTES : MAX_BODY_BYTES;
     let tooBig = false;
+    /** The chat's audio and file and the credential hear why (413, contracts v1.2, v1.4, v1.5), without the rest read into memory; the others are cut. */
+    const refuse = (): void => {
+      tooBig = true;
+      chunks.length = 0;
+      if (!isChatAudio && !isChatArquivo && !isCredencial) {
+        req.destroy();
+        return;
+      }
+      req.pause();
+      res.writeHead(413, { ...BASE_HEADERS, 'Content-Type': 'application/json; charset=utf-8', Connection: 'close' });
+      res.end(TOO_BIG_BODY, () => req.destroy());
+    };
+    if (Number(req.headers['content-length']) > maxBytes) {
+      refuse();
+      return;
+    }
     req.on('data', (chunk: Buffer) => {
+      if (tooBig) return;
       size += chunk.length;
       if (size > maxBytes) {
-        tooBig = true;
-        req.destroy();
+        refuse();
         return;
       }
       chunks.push(chunk);
@@ -374,6 +399,22 @@ export function startMobileServer(options: {
       });
     });
   };
+}
+
+/**
+ * Sobe o servidor em `host:port` e, na mesma porta, em 127.0.0.1 para o `tailscale serve` (o endereço https).
+ * Lança se `host` não for um endereço Tailscale. `listener` (passo 9, o entregador do Oráculo): o socket inteiro, no
+ * lugar do de `handler`.
+ */
+export function startMobileServer(options: {
+  readonly host: string;
+  readonly port: number;
+  readonly handler?: MobileHandler;
+  readonly listener?: (req: IncomingMessage, res: ServerResponse) => void;
+}): Promise<MobileServer> {
+  const { host, port } = options;
+  if (!isTailscaleAddress(host)) return Promise.reject(new Error(`recusado: ${host} não é um endereço da Tailscale`));
+  const onRequest = options.listener ?? mobileRequestListener(options.handler!);
 
   const listen = (address: string): Promise<Server> =>
     new Promise((resolveListen, reject) => {

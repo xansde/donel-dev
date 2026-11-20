@@ -15,24 +15,47 @@
 //   of this board waiting for a verdict, between who delivered it and a live Revisor of outside the chain)? `{ligado}`.
 // - `aviso` `{aviso: OwnerMessage}`: a notice the satellite's recados could not deliver there (the target runs on
 //   another machine, or it is the Líder único) goes to this daemon's relay, which the PC delivers when it answers.
+// - `retrato` `{retrato}` (t-d461e003): the picture of that machine's sessions, made there (retrato-satelite.ts); an
+//   older one than the one kept is ignored (`{ok, guardado}`).
+// - `recados` `{entregues?: [id]}` (t-d461e003): the satellite took those; answers what still waits for that machine
+//   (`{recados: [{id, message}]}`): the messages for its sessions (the Líder único's to the Dalton, with the PC off).
+// - `abrir` `{call}` (t-d461e003, only this machine's own gate): the Líder único's `sessao_abrir` on a board another
+//   machine pictures, queued for it (`{ok, text}`; `{conhecido: false}` = no machine has that board).
+// - `aberturas` `{respostas?, kit?}` (t-d461e003): the satellite's answers to the openings it made; what still waits for
+//   it, and the kit of roles when its hash changed (`{aberturas, kit?}`, abrir-satelite.ts).
+// - `fila` `{aviso: OwnerMessage}` (passo 9, only this machine's own entregador, `isLocalGate`): a message of its
+//   sessions for a place of another machine goes into that machine's queue here (the registro alone writes them);
+//   `{maquina}`, or `{maquina: null}` when no fresh picture has that place (the entregador then takes its old way).
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { maxProofBytes, PROOF_FILE_TYPES } from '../shared/ledger/contract';
 import { reviewLink } from '../shared/ledger/revisao';
 import { listedPlaces } from '../shared/mindscape/address';
-import { isLedgerToolName, parseLedgerToolCall } from '../shared/ledger/tools';
-import { runLedgerTool, type LedgerService, type RemoteProofFetch } from '../main/ledger-store';
+import { isLedgerToolName, parseLedgerToolCall, type LedgerToolCall } from '../shared/ledger/tools';
+import { runLedgerTool, type LedgerCaller, type LedgerService, type RemoteProofFetch } from '../main/ledger-store';
 import type { OwnerMessage } from '../main/ledger-card-writer';
 import type { OracleRequest, OracleResponse } from './api';
 import type { GateRecados } from './gate-recados';
-import { callerFromPicture, ledgerCallRefusal, type PictureSession } from './portao';
+import { callerFromPicture, leaderTaskContext, ledgerCallRefusal, withLiveOwner, type BoardPicture, type LiveOwnerSource, type PictureSession } from './portao';
+import { parseRemotePicture, type RemotePictures } from './retrato-satelite';
+import { openCallOf, openingsBodyOf, type RemoteOpenings } from './abrir-satelite';
 
 export const GATES_DIR = 'portoes';
 export const GATE_PATH_PREFIX = '/v1/portao/';
 export const GATE_TOOL_PATH = '/v1/portao/ferramenta';
 export const GATE_NOTICE_PATH = '/v1/portao/aviso';
 export const GATE_LINK_PATH = '/v1/portao/ligacao';
+export const GATE_PICTURE_PATH = '/v1/portao/retrato';
+export const GATE_INBOX_PATH = '/v1/portao/recados';
+/** t-d461e003 — the Líder único's opening on another machine's board (only the local gate: the entregador apart). */
+export const GATE_OPEN_PATH = '/v1/portao/abrir';
+/** t-d461e003 — a satellite's openings: its answers in, the orders waiting for it out (abrir-satelite.ts). */
+export const GATE_OPENINGS_PATH = '/v1/portao/aberturas';
+export const GATE_QUEUE_PATH = '/v1/portao/fila';
+/** A machine's picture (each board once, with its arrows): up to this. */
+export const MAX_GATE_PICTURE_BYTES = 16 * 1024 * 1024;
+const GATE_PATHS: ReadonlySet<string> = new Set([GATE_TOOL_PATH, GATE_NOTICE_PATH, GATE_LINK_PATH, GATE_PICTURE_PATH, GATE_INBOX_PATH, GATE_OPEN_PATH, GATE_OPENINGS_PATH, GATE_QUEUE_PATH]);
 /** The tool route's body may carry the delivery's proof files (base64): up to this. */
 export const MAX_GATE_BODY_BYTES = 64 * 1024 * 1024;
 const GATE_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/;
@@ -66,6 +89,15 @@ export function readGateHashes(dir: string): ReadonlyMap<string, string> {
   return hashes;
 }
 
+/**
+ * Passo 9 (t-5358d400) — the gate of this machine's own entregador (its unit apart from the registro): the mark
+ * `<dir>/portoes/<name>.local` beside its hash (read at each call; deleting it takes the Líder único off that gate).
+ * Only that gate may carry the Líder único, who lives on this machine; a satellite's never does.
+ */
+export function isLocalGate(dir: string, name: string): boolean {
+  return GATE_NAME.test(name) && existsSync(join(dir, GATES_DIR, `${name}.local`));
+}
+
 /** A session's picture as the satellite sent it: the shape `callerFromPicture` reads, or `null`. */
 function pictureOf(value: unknown): PictureSession | null {
   if (!isRecord(value) || !isRecord(value.quemSou) || !Array.isArray(value.listar)) return null;
@@ -87,14 +119,16 @@ function proofFetchOf(files: Record<string, unknown>): RemoteProofFetch {
   };
 }
 
-/** An `OwnerMessage` as the satellite sent it, or `null`. */
-function noticeOf(value: unknown): OwnerMessage | null {
+/** An `OwnerMessage` as the satellite (or the registro, to the entregador) sent it, or `null`. */
+export function noticeOf(value: unknown): OwnerMessage | null {
   if (!isRecord(value)) return null;
   const { projectPath, placeId, text, leaderText, key } = value;
   if (typeof projectPath !== 'string' || typeof placeId !== 'string' || typeof text !== 'string' || typeof leaderText !== 'string') return null;
   if (key !== undefined && typeof key !== 'string') return null;
   if (text.length > 20_000 || leaderText.length > 20_000) return null;
-  return { projectPath, placeId, text, leaderText, ...(typeof key === 'string' ? { key } : {}) };
+  // Recado vencido: when it was first queued, so its age goes on counting in the next queue.
+  const sentAt = typeof value.sentAt === 'number' && Number.isFinite(value.sentAt) && value.sentAt > 0 ? value.sentAt : undefined;
+  return { projectPath, placeId, text, leaderText, ...(typeof key === 'string' ? { key } : {}), ...(sentAt !== undefined ? { sentAt } : {}) };
 }
 
 export interface GateToolRoutesDeps {
@@ -106,6 +140,25 @@ export interface GateToolRoutesDeps {
   readonly linkPedido?: (pedidoId: string, tarefa: { readonly id: string; readonly titulo: string }) => void;
   /** A notice for the PC to deliver (this daemon's relay). Absent = the `aviso` route answers 404. */
   readonly notice?: (message: OwnerMessage) => Promise<unknown>;
+  /** t-d461e003 — the other machines' pictures and queues (retrato-satelite.ts). Absent = `retrato`/`recados` answer 404. */
+  readonly pictures?: Pick<RemotePictures, 'accept' | 'inbox'>;
+  /**
+   * Passo 9 — the Líder único's `tarefa_*` from the entregador of this machine (`isLocal`, never a satellite's gate), on
+   * the boards of this registro's own picture. Absent = the Líder único is refused, as on every gate before the split.
+   */
+  readonly leader?: { readonly isLocal: (name: string) => boolean; readonly picture: () => BoardPicture | null };
+  /**
+   * t-d461e003 — the openings on other machines' boards (abrir-satelite.ts): `abrir` only from this machine's own gate
+   * (`isLocal`, the entregador apart), `aberturas` from a satellite. Absent = both answer 404.
+   */
+  readonly openings?: { readonly queue: RemoteOpenings; readonly isLocal: (name: string) => boolean };
+  /**
+   * Passo 9 — the entregador apart queues here a message for a place of another machine (`fila`), only from the gate
+   * marked local. Absent = the route answers 404 (no entregador apart: it queues itself).
+   */
+  readonly remoteQueue?: { readonly isLocal: (name: string) => boolean; readonly queue: (message: OwnerMessage) => Promise<string | null> };
+  /** t-d461e003 — an owner session alive in this machine's tmux or another's fresh picture is never orphan (`withLiveOwner`). */
+  readonly liveOwner?: LiveOwnerSource;
   readonly log?: (line: string) => void;
 }
 
@@ -123,14 +176,25 @@ export function createGateToolRoutes(deps: GateToolRoutesDeps): GateRoutes {
     if (typeof body.chave === 'string' && args.chave === undefined) args.chave = body.chave;
     const parsed = parseLedgerToolCall(raw.name, args);
     if (!parsed.ok) return json(200, { ok: false, text: parsed.reason });
+    if (sessao.quemSou.liderUnico === true && deps.leader?.isLocal(name)) {
+      const resolved = leaderTaskContext(deps.leader.picture(), sessao, parsed.call, (id) => deps.ledger().load().doc.tasks[id]?.projectPath);
+      if (typeof resolved === 'string') return json(200, { ok: false, text: resolved });
+      return run(name, body, withLiveOwner(resolved.caller, deps.liveOwner), resolved.call, resolved.onBoard, resolved.aroundCaller);
+    }
     const call = parsed.call;
-    const caller = callerFromPicture(sessao);
-    if (typeof caller === 'string') return json(200, { ok: false, text: caller });
+    const pictured = callerFromPicture(sessao);
+    if (typeof pictured === 'string') return json(200, { ok: false, text: pictured });
+    const caller = withLiveOwner(pictured, deps.liveOwner);
     const refused = ledgerCallRefusal(call);
     if (refused) return json(200, { ok: false, text: refused });
+    return run(name, body, caller, call, sessao, caller);
+  }
+
+  /** The renewal step (`around`: who and which board it sees), the call on the ledger, the owner's request linked. */
+  async function run(name: string, body: Record<string, unknown>, caller: LedgerCaller, call: LedgerToolCall, aroundMine: PictureSession, around: LedgerCaller): Promise<OracleResponse> {
     if (deps.recados) {
       try {
-        await deps.recados.antesDaTarefa(caller, sessao, call);
+        await deps.recados.antesDaTarefa(around, aroundMine, call);
       } catch (error) {
         log(`[oraculo] portão ${name}: antes de ${call.tool} falhou: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -167,7 +231,7 @@ export function createGateToolRoutes(deps: GateToolRoutesDeps): GateRoutes {
   }
 
   return async (name, request, path) => {
-    if (request.method !== 'POST' || (path !== GATE_TOOL_PATH && path !== GATE_NOTICE_PATH && path !== GATE_LINK_PATH)) return null;
+    if (request.method !== 'POST' || !GATE_PATHS.has(path)) return null;
     let body: unknown;
     try {
       body = JSON.parse(request.body);
@@ -190,6 +254,37 @@ export function createGateToolRoutes(deps: GateToolRoutesDeps): GateRoutes {
         log(`[oraculo] portão ${name}: erro na ferramenta: ${error instanceof Error ? error.message : String(error)}`);
         return json(500, { error: 'erro no Oráculo' });
       }
+    }
+    if (path === GATE_OPEN_PATH || path === GATE_OPENINGS_PATH) {
+      if (!deps.openings) return null;
+      if (path === GATE_OPEN_PATH) {
+        if (!deps.openings.isLocal(name)) return json(403, { error: 'só o portão desta máquina pede abertura' });
+        const call = openCallOf(body.call);
+        if (!call) return json(400, { error: 'call inválido' });
+        const outcome = deps.openings.queue.request(call);
+        return json(200, outcome ? { ok: outcome.kind !== 'error', text: outcome.text ?? '' } : { conhecido: false });
+      }
+      const input = openingsBodyOf(body);
+      if (!input) return json(400, { error: 'respostas inválidas' });
+      return json(200, deps.openings.queue.exchange(name, input.respostas, input.kitHash));
+    }
+    if (path === GATE_PICTURE_PATH || path === GATE_INBOX_PATH) {
+      if (!deps.pictures) return null;
+      if (path === GATE_PICTURE_PATH) {
+        const picture = parseRemotePicture(body.retrato);
+        if (!picture) return json(400, { error: 'retrato inválido' });
+        return json(200, { ok: true, guardado: deps.pictures.accept(name, picture) });
+      }
+      const taken = body.entregues;
+      if (taken !== undefined && (!Array.isArray(taken) || taken.length > 500 || !taken.every((id) => typeof id === 'string'))) return json(400, { error: 'entregues inválido' });
+      return json(200, { recados: deps.pictures.inbox(name, (taken as string[] | undefined) ?? []) });
+    }
+    if (path === GATE_QUEUE_PATH) {
+      if (!deps.remoteQueue) return null;
+      if (!deps.remoteQueue.isLocal(name)) return json(403, { error: 'só o portão local põe recado na fila de outra máquina' });
+      const message = noticeOf(body.aviso);
+      if (!message || !message.key) return json(400, { error: 'aviso inválido' });
+      return json(200, { maquina: await deps.remoteQueue.queue(message) });
     }
     if (!deps.notice) return null;
     const message = noticeOf(body.aviso);

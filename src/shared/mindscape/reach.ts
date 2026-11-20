@@ -211,17 +211,20 @@ export function canReach(doc: MindscapeDoc, from: ReachFrom, to: ReachEnd): Reac
 
 /**
  * May the session at `from` reach the Líder único: it was opened by the Líder único, or is below one that was (by
- * hierarchy arrows). `openedByLeader` says which places of the board the Líder único opened (the board does not
- * keep it: the tabs and the bridge do).
+ * hierarchy arrows), or (t-d461e003, with `isLive`) its chain is gone: it has someone above by the arrows, none of them
+ * is alive and its board has no live Líder, so the Líder único is who hears it (`whoHears`; its tasks went to him). A
+ * place with no one above (the owner opened it by hand) still talks to its board, as before. `openedByLeader` says
+ * which places of the board the Líder único opened (the board does not keep it: the tabs and the bridge do).
  */
-export function canReachLeader(doc: MindscapeDoc, from: ReachEnd, openedByLeader: (placeId: string) => boolean): ReachVerdict {
+export function canReachLeader(doc: MindscapeDoc, from: ReachEnd, openedByLeader: (placeId: string) => boolean, isLive?: (placeId: string) => boolean): ReachVerdict {
   const board = doc.boards[from.projectPath];
   if (board?.cards[from.placeId]?.kind !== 'session') return { ok: false, reason: `"${from.placeId}" não é um lugar do quadro.` };
   if (openedByLeader(from.placeId)) return { ok: true };
   const above = Object.keys(board.cards).some((id) => board.cards[id]?.kind === 'session' && openedByLeader(id) && isBelow(board, id, from.placeId));
-  return above
-    ? { ok: true }
-    : { ok: false, reason: 'você não foi aberta pelo Líder único nem está abaixo, pelas setas, de uma sessão que ele abriu. Fale com quem está acima de você no quadro.' };
+  if (above) return { ok: true };
+  const hasAbove = board.links.some((link) => link.to === from.placeId && isHierarchyArrow(link) && board.cards[link.from]?.kind === 'session');
+  if (isLive && hasAbove && whoHears(board, from.placeId, isLive) === LEADER_OF_ALL) return { ok: true };
+  return { ok: false, reason: 'você não foi aberta pelo Líder único nem está abaixo, pelas setas, de uma sessão que ele abriu. Fale com quem está acima de você no quadro.' };
 }
 
 /**

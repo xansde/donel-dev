@@ -29,12 +29,26 @@
 //   is answered here when the PC is silent for `LOCAL_ANSWER_MS`. Any other tool waits for the PC as before; a 502
 //   stays a 502.
 // - `POST /recados/<evento>`: the VPS's user-level hooks, loopback only, no MCP token.
+// - `POST /s/<sid>/h/<Evento>` (t-d461e003): the app's hooks of a session (its `settings.json`, pointed here by the
+//   setup). With the session's hook token (`X-Donel-Token`, `hookToken` of its meta), passed on as it came to the PC's
+//   hook bridge on the session's tunnel (`hookPort`); with the PC off (the tunnel refused, or `pcAway`) answered `{}`
+//   (the StatusLine empty), which no hook reads as "block": the CLI goes on with no "hook error". A tunnel that took the
+//   call and then broke is a 502, as for the MCP.
 // - Etapa 2 (t-c3fbe852): the Líder único's `tarefa_*` still go to the PC (it sees every board, the PC's too); with the
 //   PC off (nothing listens on the tunnel) they are answered here as the Líder único (`lider`), on the boards the
 //   picture has (`leaderCallerFromPicture`, the same rules as the PC's `leaderLedgerCallerOf`). With the PC silent only
 //   the reads (`tarefa_listar`, `tarefa_ver`) are answered here: a write may still run there.
 // - t-1a3f7150 (docs/adr/0009): a `sessao_abrir` that reached nothing (the tunnel refused: the PC is off) opens the
 //   session on this machine (`GateAbrir`, abrir-local.ts). Never with the PC silent or on: it may be running there.
+// - O Oráculo sem o PC (19/11, o dono: "O Oráculo é o básico"): with the PC away (`pcAway`, no push nor probe answer
+//   for over 5 min), or for a session the PC does not know (its picture made here, `local`, retrato-local.ts), nothing
+//   goes to the tunnel: an ssh tunnel whose PC is gone connects and never answers, and every write hung 10 min. The
+//   call is answered here as with the PC off: the `tarefa_*` (the Líder único's too), `sessao_quem_sou`,
+//   `sessao_listar`, `sessao_enviar` by the arrows, `sessao_abrir` by abrir-local; the other tools say the PC is off.
+//   A tunnel that refused (`desligado`) answers from the picture with this session made here (`pictureWithoutPc`).
+// - t-d461e003: with the PC off, the Líder único's `sessao_ver_tela` and `sessao_fechar` of a place running in this
+//   machine's tmux are answered here (`GateRecados.verTela`/`fechar`); the close only when the PC is off for sure
+//   (`pcAway`, or its tunnel refused), never for a Líder the PC merely has not pictured.
 
 import { timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -56,6 +70,7 @@ import type { BoardStore } from './board-client';
 import { runCardTool } from './board-tools';
 import type { GateRecados } from './gate-recados';
 import type { GateAbrir } from './gate-abrir';
+import { openedPlaceOf } from './primeiras';
 
 export const GATE_PORT = 47817;
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -66,6 +81,16 @@ export const CONNECT_MS = 2_000;
 /** How long a call that can be answered here without harm waits for the PC before it is. */
 export const LOCAL_ANSWER_MS = 3_000;
 const HOOK_PATH = /^\/recados\/([a-z-]{1,40})$/;
+/** The app's hooks of a session; the event is checked apart (`HOOK_EVENT`), like the sid. */
+const SESSION_HOOK_PATH = /^\/s\/([^/]+)\/h\/([^/]*)$/;
+/** The hook bridge's own rule for an event name (`/h/([A-Za-z]+)`, hook-bridge.ts), bounded. */
+const HOOK_EVENT = /^[A-Za-z]{1,40}$/;
+/** A hook's payload (a big tool answer in `PostToolUse`) may be far over the MCP limit; the bridge takes 32 MiB. */
+const MAX_HOOK_BODY_BYTES = 32 * 1024 * 1024;
+/** The statusline route: its answer is what the CLI prints, so with the PC off it is empty (hook-bridge.ts). */
+const STATUS_LINE_EVENT = 'StatusLine';
+/** No hook of the app holds the CLI longer than 30 s (`PERMISSION_HOOK_TIMEOUT_S`): a silent tunnel is let go after this. */
+const HOOK_FORWARD_TIMEOUT_MS = 60_000;
 
 /** One VPS session as the PC last saw it on its board. */
 export interface PictureSession {
@@ -82,6 +107,16 @@ export interface PictureSession {
    * stopped sending keeps its old entry, and this tells it apart from one the PC still shows.
    */
   readonly pcAt?: number;
+  /**
+   * O Oráculo sem o PC (19/11) — made on this VPS, not by the PC (retrato-local.ts, or a `sessao_abrir` here with the
+   * PC off): the PC does not know this session, so its calls are answered here and never wait on its tunnel.
+   */
+  readonly local?: boolean;
+  /**
+   * t-d461e003 — a session of another machine (its gate's name), from the picture its satellite sent
+   * (retrato-satelite.ts): it lives there, so a message to it waits in that machine's queue, never in this tmux.
+   */
+  readonly maquina?: string;
 }
 
 /** What the PC pushes (`POST /v1/retrato`): every VPS session it has open. */
@@ -124,6 +159,9 @@ export interface GateResponse {
  */
 export type GateForward = (port: number, request: GateRequest, signal?: AbortSignal) => Promise<GateResponse | 'desligado'>;
 
+/** Passes a hook to the PC's hook bridge on the session's tunnel (`127.0.0.1:<hookPort>/h/<event>`); `'desligado'` as above. */
+export type GateHookForward = (port: number, event: string, token: string, body: string) => Promise<GateResponse | 'desligado'>;
+
 /** What a `tarefa_*` answered by the gate came with: the session's picture and its raw arguments. */
 export interface GateLedgerContext {
   readonly mine: PictureSession;
@@ -141,6 +179,8 @@ export interface GateDeps {
   readonly ledger: () => LedgerService;
   readonly picture: () => BoardPicture | null;
   readonly forward: GateForward;
+  /** The app's hooks of a session to the PC (t-d461e003); default: the real tunnel (`tunnelHookForward`). */
+  readonly hookForward?: GateHookForward;
   readonly serverVersion: string;
   /** The task board's client; absent or null = no `card_*` tools (the board is off). */
   readonly cards?: () => BoardStore | null;
@@ -149,6 +189,10 @@ export interface GateDeps {
   readonly recados?: GateRecados;
   /** t-1a3f7150 — `sessao_abrir` with the PC off (nothing listens on the tunnel) opens here; absent = the PC is off. */
   readonly abrir?: GateAbrir;
+  /** O Oráculo sem o PC — the PC has not answered for long (retrato-local.ts `pcAway`): nothing goes to the tunnels. */
+  readonly pcAway?: () => boolean;
+  /** The picture with session `sid` made here when the PC's has none (its tunnel refused); absent = `picture()`. */
+  readonly pictureWithoutPc?: (sid: string) => BoardPicture | null;
   /** Pedir pelo Oráculo: the task born of an owner's request (`pedidoDoDono`) shows on his phone as "virou tarefa". */
   readonly linkPedido?: (pedidoId: string, tarefa: { readonly id: string; readonly titulo: string }) => void;
   /**
@@ -161,7 +205,14 @@ export interface GateDeps {
    * and the call's arguments as the session sent them (the satellite passes them on to the ledger's machine).
    */
   readonly runLedger?: (caller: LedgerCaller, call: LedgerToolCall, context: GateLedgerContext) => Promise<LedgerToolAnswer>;
+  /** t-d461e003 — where an owner place's session may live off the board's list (`withLiveOwner`); absent = the list alone. */
+  readonly liveOwner?: LiveOwnerSource;
   readonly timeouts?: { readonly localAnswerMs?: number };
+  /**
+   * t-f66595b2 — a `sessao_abrir` the PC answered ok: the place it opened and its request, kept on this machine
+   * (primeiras.ts) for when that session comes up after the PC gave up typing it (the limitador held it). Absent = not kept.
+   */
+  readonly firstMessage?: (placeId: string, pedido: string) => void;
   readonly log?: (line: string) => void;
 }
 
@@ -189,6 +240,21 @@ function readMeta(sessionsDir: string, sid: string): { mcpToken: string; mcpPort
   } catch {
     return null;
   }
+}
+
+function readHookMeta(sessionsDir: string, sid: string): { hookToken: string; hookPort: number } | null {
+  try {
+    const raw = JSON.parse(readFileSync(join(sessionsDir, sid, 'meta.json'), 'utf8')) as unknown;
+    if (!isRecord(raw) || typeof raw.hookToken !== 'string' || !raw.hookToken || typeof raw.hookPort !== 'number') return null;
+    return { hookToken: raw.hookToken, hookPort: raw.hookPort };
+  } catch {
+    return null;
+  }
+}
+
+/** What the gate answers for a hook with the PC off: nothing to do, nothing blocked (the StatusLine prints nothing). */
+function hookWithoutPc(event: string): GateResponse {
+  return event === STATUS_LINE_EVENT ? { status: 200, headers: {}, body: '' } : { status: 200, headers: JSON_HEADERS, body: '{}' };
 }
 
 function placeStatesOf(places: readonly unknown[]): Map<string, string> {
@@ -279,6 +345,37 @@ export function callerFromPicture(mine: PictureSession): LedgerCaller | string {
   };
 }
 
+/** t-d461e003 — where an owner session may live that the board's list (the PC's) does not see. */
+export interface LiveOwnerSource {
+  /** This machine's live Donel sessions (sids) as last read; `null` = never read (a `tmux ls` that failed). */
+  readonly tmux: () => ReadonlySet<string> | null;
+  /** The other machine whose fresh picture has `placeId` on `projectPath` (retrato-satelite.ts); absent = none. */
+  readonly machineOf?: (projectPath: string, placeId: string) => string | undefined;
+}
+
+/**
+ * t-d461e003 (19/11) — `caller` with the Oráculo's word on an owner place its list calls gone (`OwnerLive`): its session
+ * (`session:<sid>`, or the board card's of a `place:`) lives in this machine's tmux, or another machine's fresh picture
+ * has the place. The reconciliador handed the Líder único three times the task of session:5c1a55e7, alive in the VPS's
+ * tmux: the PC's picture lists it "fechada" (it was resumed on the VPS). The tmux is read only when the list says gone.
+ */
+export function withLiveOwner(caller: LedgerCaller, source: LiveOwnerSource | undefined): LedgerCaller {
+  if (!source) return caller;
+  let live: ReadonlySet<string> | null | undefined;
+  return {
+    ...caller,
+    ownerLive: (projectPath, placeId) => {
+      if (source.machineOf?.(projectPath, placeId) !== undefined) return true;
+      if (live === undefined) live = source.tmux();
+      if (live === null) return null;
+      const sid = placeId.startsWith(SESSION_PLACE_PREFIX) ? placeId.slice(SESSION_PLACE_PREFIX.length) : caller.sessionOf?.(projectPath, placeId);
+      return sid !== undefined && live.has(sid);
+    },
+  };
+}
+
+const SESSION_PLACE_PREFIX = 'session:';
+
 /** The boards the picture has (each from its freshest session): folder → its places and its saved board. */
 export function picturedBoards(picture: BoardPicture | null): Map<string, { readonly listar: readonly unknown[]; readonly board?: MindscapeBoard }> {
   const fresh = new Map<string, { at: number; listar: readonly unknown[]; board?: MindscapeBoard }>();
@@ -341,6 +438,62 @@ export function leaderCallerFromPicture(
   return { caller: { ...base, projectPath: pasta, boardPlaceIds: reached, placeStates, ...(board ? { board } : {}) }, call };
 }
 
+/**
+ * The Líder único's `tarefa_*` from the picture: his caller and call (`leaderCallerFromPicture`), and what the steps
+ * around it see, the task's board (its places and arrows), as a session of that board does: the Líder's own picture has
+ * none, and his caller has no board for a step on a task id (the PC's rule). `taskBoard` may throw (= not known).
+ * A string = why not. Passo 9: the registro runs the same for the entregador of its machine (portoes.ts).
+ */
+export function leaderTaskContext(
+  picture: BoardPicture | null,
+  mine: PictureSession,
+  asked: LedgerToolCall,
+  taskBoard: (id: string) => string | undefined,
+): { readonly caller: LedgerCaller; readonly call: LedgerToolCall; readonly onBoard: PictureSession; readonly aroundCaller: LedgerCaller } | string {
+  const boardOf = (id: string): string | undefined => {
+    try {
+      return taskBoard(id);
+    } catch {
+      return undefined;
+    }
+  };
+  const resolved = leaderCallerFromPicture(picture, asked, boardOf);
+  if (typeof resolved === 'string') return resolved;
+  const { caller, call } = resolved;
+  if (call.tool === 'tarefa_criar' && call.quemPediu) {
+    const refused = askedByRefusal(call.quemPediu);
+    if (refused) return refused;
+  }
+  const pasta = caller.projectPath || ('id' in call && typeof call.id === 'string' ? boardOf(call.id) : undefined);
+  const pictured = pasta ? picturedBoards(picture).get(pasta) : undefined;
+  const onBoard: PictureSession = { quemSou: mine.quemSou, listar: pictured?.listar ?? [], ...(pictured?.board ? { board: pictured.board } : {}) };
+  const aroundCaller: LedgerCaller = pasta ? { ...caller, projectPath: pasta, ...(pictured?.board ? { board: pictured.board } : {}) } : caller;
+  return { caller, call, onBoard, aroundCaller };
+}
+
+/** The board `quadro` names (its folder or its last segment) among the boards the picture has. */
+function pictureBoard(picture: BoardPicture | null, quadro: string): [string, { readonly listar: readonly unknown[]; readonly board?: MindscapeBoard }] | undefined {
+  return [...picturedBoards(picture)].find(([pasta]) => pasta === quadro || lastSegment(pasta) === quadro);
+}
+
+/** The places without the caller's own marks (`voce`, `podeMandar`: they were another session's). */
+function placesAsListed(listar: readonly unknown[]): unknown[] {
+  return listar.map((place) => {
+    if (!isRecord(place)) return place;
+    const { voce: _voce, podeMandar: _podeMandar, ...rest } = place;
+    return rest;
+  });
+}
+
+/** O Oráculo sem o PC — the Líder único's `sessao_listar`: the places of the board he names, from the picture. */
+function leaderList(picture: BoardPicture | null, quadro: string | undefined): BrowserToolOutcome {
+  const names = [...picturedBoards(picture).keys()].map(lastSegment).join(', ') || 'nenhum';
+  if (!quadro) return { kind: 'error', text: `Você é o Líder único: diga o quadro em "quadro" (com o PC fora, conheço: ${names}).` };
+  const found = pictureBoard(picture, quadro);
+  if (!found) return { kind: 'error', text: `Com o PC fora, conheço só os quadros do último retrato (${names}); "${quadro}" não está entre eles.` };
+  return { kind: 'text', text: JSON.stringify(placesAsListed(found[1].listar), null, 1) };
+}
+
 /** This session's `tarefa_*` are answered by this gate: it has a picture that says its place (not the Líder único). */
 function tasksAnsweredHere(mine: PictureSession | null): mine is PictureSession {
   return mine !== null && typeof callerFromPicture(mine) !== 'string';
@@ -386,6 +539,12 @@ export function relayedTaskNotice(mine: PictureSession, caller: LedgerCaller, ca
   };
 }
 
+/** O Oráculo sem o PC — the tools answered here with the PC away (the ledger's and the session tools of the arrows). */
+const ANSWERED_WITHOUT_PC: ReadonlySet<string> = new Set([...LEDGER_TOOLS.map((tool) => tool.name), 'sessao_quem_sou', 'sessao_listar', 'sessao_enviar', 'sessao_abrir', 'sessao_ver_tela', 'sessao_fechar']);
+
+/** Answered here only with the PC off (this machine's tmux): with the PC not away, the Líder único tries his tunnel first. */
+const PC_FIRST_WHEN_UP: ReadonlySet<string> = new Set(['sessao_ver_tela', 'sessao_fechar']);
+
 /** A call that may be answered here when the PC is silent: it only reads, or it is the handshake. */
 function answersWithoutPc(message: Record<string, unknown>, mine: PictureSession | null): boolean {
   const method = message.method;
@@ -413,11 +572,21 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
   const runLedger = deps.runLedger ?? ((caller: LedgerCaller, call: LedgerToolCall) => runLedgerTool(deps.ledger(), caller, call));
   const localAnswerMs = deps.timeouts?.localAnswerMs ?? LOCAL_ANSWER_MS;
 
-  /** Answers the call here. `passOn`: the recados queue said the target is not on this machine (`useRecados`). */
-  async function local(sid: string, body: string, cards: BoardStore | null, pc: PcState, useRecados = false): Promise<{ readonly response: GateResponse; readonly passOn: boolean }> {
+  /**
+   * Answers the call here. `passOn`: the recados queue said the target is not on this machine (`useRecados`).
+   * `pcOff`: the PC is off for sure (away, or its tunnel refused), not only a session it has not pictured.
+   */
+  async function local(
+    sid: string,
+    body: string,
+    cards: BoardStore | null,
+    pc: PcState,
+    useRecados = false,
+    picture: BoardPicture | null = deps.picture(),
+    pcOff = false,
+  ): Promise<{ readonly response: GateResponse; readonly passOn: boolean }> {
     const parsed = parseMcpBody(body);
     if (!parsed.ok) return { response: { status: 400, headers: JSON_HEADERS, body: JSON.stringify(parsed.response) }, passOn: false };
-    const picture = deps.picture();
     const mine = picture?.sessoes[sid] ?? null;
     const label = pc === 'sem-resposta' ? `não respondeu em ${Math.round(localAnswerMs / 1000)} s` : pc;
     const pcNow = picture ? `${label}; quadro de ${hhmm(mine?.at ?? picture.at)}` : label;
@@ -434,6 +603,14 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
         return { kind: 'error', text: PC_OFF };
       }
       if (call.tool === 'sessao_quem_sou') return { kind: 'text', text: JSON.stringify({ ...mine.quemSou, pc: pcNow }, null, 1) };
+      // t-d461e003 — the Líder único sees and closes the sessions of this machine's tmux with the PC off.
+      if (call.tool === 'sessao_ver_tela' && mine.quemSou.liderUnico === true && pc === 'desligado' && deps.recados?.verTela) return deps.recados.verTela(sid, call);
+      if (call.tool === 'sessao_fechar' && mine.quemSou.liderUnico === true && pc === 'desligado' && deps.recados?.fechar) {
+        if (!pcOff) return { kind: 'error', text: 'Não fechei: o PC respondeu há pouco e o app dele pode ter essa aba aberta. Feche por lá, ou de novo quando o PC estiver fora há mais de 5 min.' };
+        return deps.recados.fechar(sid, call);
+      }
+      // The Líder único has no board of his own: he names it, and the picture has its places.
+      if (call.tool === 'sessao_listar' && mine.quemSou.liderUnico === true && pc !== 'ligado') return leaderList(picture, call.quadro);
       if (call.tool === 'sessao_listar' && !call.quadro) return { kind: 'text', text: JSON.stringify(mine.listar, null, 1) };
       return { kind: 'error', text: PC_OFF };
     };
@@ -467,8 +644,9 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     const ledger = async (call: LedgerToolCall): Promise<BrowserToolOutcome> => {
       if (!mine) return { kind: 'error', text: NO_PICTURE };
       if (mine.quemSou.liderUnico === true && pc !== 'ligado') return leaderLedger(mine, call);
-      const caller = callerFromPicture(mine);
-      if (typeof caller === 'string') return { kind: 'error', text: caller };
+      const pictured = callerFromPicture(mine);
+      if (typeof pictured === 'string') return { kind: 'error', text: pictured };
+      const caller = withLiveOwner(pictured, deps.liveOwner);
       const refused = ledgerCallRefusal(call);
       if (refused) return { kind: 'error', text: refused };
       await beforeTask(mine, caller, call);
@@ -491,26 +669,10 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
 
     /** t-c3fbe852 — the Líder único's `tarefa_*` with the PC off, on the boards the picture has. */
     const leaderLedger = async (mine: PictureSession, asked: LedgerToolCall): Promise<BrowserToolOutcome> => {
-      const taskBoard = (id: string): string | undefined => {
-        try {
-          return deps.ledger().load().doc.tasks[id]?.projectPath;
-        } catch {
-          return undefined;
-        }
-      };
-      const resolved = leaderCallerFromPicture(picture, asked, taskBoard);
+      const resolved = leaderTaskContext(picture, mine, asked, (id) => deps.ledger().load().doc.tasks[id]?.projectPath);
       if (typeof resolved === 'string') return { kind: 'error', text: resolved };
-      const { caller, call } = resolved;
-      if (call.tool === 'tarefa_criar' && call.quemPediu) {
-        const refused = askedByRefusal(call.quemPediu);
-        if (refused) return { kind: 'error', text: refused };
-      }
-      // The steps around it see the task's board (its places and arrows), as a session of that board does: the Líder's
-      // own picture has none, and his caller has no board for a step on a task id (the PC's rule).
-      const pasta = caller.projectPath || ('id' in call && typeof call.id === 'string' ? taskBoard(call.id) : undefined);
-      const pictured = pasta ? picturedBoards(picture).get(pasta) : undefined;
-      const onBoard: PictureSession = { quemSou: mine.quemSou, listar: pictured?.listar ?? [], ...(pictured?.board ? { board: pictured.board } : {}) };
-      const aroundCaller: LedgerCaller = pasta ? { ...caller, projectPath: pasta, ...(pictured?.board ? { board: pictured.board } : {}) } : caller;
+      const { call, onBoard, aroundCaller } = resolved;
+      const caller = withLiveOwner(resolved.caller, deps.liveOwner);
       await beforeTask(onBoard, aroundCaller, call);
       const raw = toolCallOf(singleMessage(body));
       const result = await runLedger(caller, call, { mine, args: raw?.name === call.tool ? raw.args : {} });
@@ -573,6 +735,20 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
       if (!deps.recados || request.method !== 'POST') return { status: 404, headers: {}, body: '' };
       return deps.recados.hook(hook[1]!, request.headers, request.body);
     }
+    const sessionHook = SESSION_HOOK_PATH.exec(request.path);
+    if (sessionHook) {
+      const [, hookSid, event] = sessionHook;
+      if (!SID_PATTERN.test(hookSid!) || !HOOK_EVENT.test(event!)) return { status: 404, headers: {}, body: '' };
+      if (request.method !== 'POST') return { status: 405, headers: { Allow: 'POST' }, body: '' };
+      const hookMeta = readHookMeta(deps.sessionsDir, hookSid!);
+      const token = request.headers['x-donel-token'] ?? '';
+      if (!hookMeta || !token || !sameToken(token, hookMeta.hookToken)) return { status: 401, headers: {}, body: '' };
+      // The PC gone for long: its ssh tunnel may still take the connection and never answer (the CLI would show a hook
+      // error on its own deadline). Nothing goes there.
+      if (deps.pcAway?.() === true) return hookWithoutPc(event!);
+      const passed = await (deps.hookForward ?? tunnelHookForward)(hookMeta.hookPort, event!, hookMeta.hookToken, request.body).catch((): GateResponse => BAD_GATEWAY);
+      return passed === 'desligado' ? hookWithoutPc(event!) : passed;
+    }
     if (request.path.startsWith('/local/') && deps.local) {
       // A page in a browser of this machine could reach the loopback: only a script's JSON POST to 127.0.0.1 passes
       // (a cross-site form cannot send application/json; a rebound name never says 127.0.0.1).
@@ -590,9 +766,19 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     const cards = deps.cards?.() ?? null;
     const message = request.method === 'POST' ? singleMessage(request.body) : null;
     const call = toolCallOf(message);
-    const mine = deps.picture()?.sessoes[sid] ?? null;
+    const picture = deps.picture();
+    const mine = picture?.sessoes[sid] ?? null;
     // The board answers here even with the PC on: it is not the PC's.
-    if (cards && call && isCardToolName(call.name)) return (await local(sid, request.body, cards, 'ligado')).response;
+    if (cards && call && isCardToolName(call.name)) return (await local(sid, request.body, cards, 'ligado', false, picture)).response;
+    // O Oráculo sem o PC: a session the PC does not know is answered here, whatever it calls; with the PC away, what can
+    // be answered here is (any other tool still tries the PC, as before). The tunnel is never waited on for these.
+    // 19/11 — the Líder único pictured here only because the probe failed him: with the PC not away, a tool only the PC
+    // does (ver_tela, fechar...) still tries his tunnel; a refused tunnel falls back here below. Not for other sessions.
+    const leaderTriesPc = mine?.local === true && mine.quemSou.liderUnico === true && call !== null && (!ANSWERED_WITHOUT_PC.has(call.name) || PC_FIRST_WHEN_UP.has(call.name)) && deps.pcAway?.() !== true;
+    if ((mine?.local === true && !leaderTriesPc) || (call && ANSWERED_WITHOUT_PC.has(call.name) && deps.pcAway?.() === true)) {
+      if (request.method !== 'POST') return { status: 405, headers: { Allow: 'POST' }, body: '' };
+      return (await local(sid, request.body, cards, 'desligado', true, picture, deps.pcAway?.() === true)).response;
+    }
     // The ledger is this daemon's: with the session's picture its tasks never wait on the PC (the Líder único's, and a
     // picture that does not say the place, still go to the PC, which knows them). The notices the PC gave after a task
     // go to the recados queue or, without it, to the PC's relay (revisão do #483).
@@ -620,10 +806,23 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     } else {
       forwarded = await forwarding;
     }
-    if (forwarded !== 'desligado') return withGateTools(request.body, forwarded, cards !== null, tasksAnsweredHere(mine));
+    if (forwarded !== 'desligado') {
+      if (call?.name === 'sessao_abrir' && deps.firstMessage && typeof call.args.pedido === 'string' && call.args.pedido.trim()) {
+        const opened = openedPlaceOf(forwarded);
+        if (opened) {
+          try {
+            deps.firstMessage(opened, call.args.pedido);
+          } catch (error) {
+            log(`[oraculo] portão: não guardei o pedido de abertura de ${opened}: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+      }
+      return withGateTools(request.body, forwarded, cards !== null, tasksAnsweredHere(mine));
+    }
     if (request.method !== 'POST') return { status: 405, headers: { Allow: 'POST' }, body: '' };
-    // Nothing reached the PC: a `sessao_enviar` the recados passed on is theirs again, now with the PC off.
-    return (await local(sid, request.body, cards, 'desligado', true)).response;
+    // Nothing reached the PC: a `sessao_enviar` the recados passed on is theirs again, now with the PC off. A session the
+    // PC has no picture of is made here (nothing of the PC serves it).
+    return (await local(sid, request.body, cards, 'desligado', true, mine ? picture : (deps.pictureWithoutPc?.(sid) ?? picture), true)).response;
   };
 }
 
@@ -636,17 +835,25 @@ export interface TunnelForwardOptions {
   readonly connect?: (port: number) => Socket;
 }
 
+/** One call through a session's tunnel on this machine: where it goes and what it carries. */
+interface TunnelCall {
+  readonly path: string;
+  readonly method: string;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly body: string;
+}
+
 /**
- * The real forward: the session's reverse tunnel on this machine (`127.0.0.1:<mcpPort>/mcp`), as its CLI would call.
+ * A call through a session's reverse tunnel on this machine (`127.0.0.1:<port><path>`), as its CLI would make it.
  * Only "the connection never completed" (refused, unreachable, or not within `connectMs`: nothing was sent) is the PC
  * off. Any failure after it connected (a reset after the call went out, a timeout, a pipe broken mid-answer) is a
  * 502: the call may have run on the PC, and running it again here would make a task or a delivery twice (revisão do #302).
  */
-export function createTunnelForward(options: TunnelForwardOptions = {}): GateForward {
+function createTunnelCall(options: TunnelForwardOptions): (port: number, call: TunnelCall, signal?: AbortSignal) => Promise<GateResponse | 'desligado'> {
   const connectMs = options.connectMs ?? CONNECT_MS;
   const timeoutMs = options.timeoutMs ?? FORWARD_TIMEOUT_MS;
   const open = options.connect ?? ((port: number) => netConnect({ host: '127.0.0.1', port }));
-  return (port, request, signal) =>
+  return (port, call, signal) =>
     new Promise((resolve) => {
       let settled = false;
       const socket = open(port);
@@ -679,11 +886,9 @@ export function createTunnelForward(options: TunnelForwardOptions = {}): GateFor
         // the PC off: the call may have run there.
         socket.setTimeout(timeoutMs, () => socket.destroy(new Error('timeout')));
         socket.once('error', () => finish(BAD_GATEWAY));
-        const headers: Record<string, string> = { Host: `127.0.0.1:${port}` };
-        for (const [name, value] of Object.entries(request.headers)) if (!name.startsWith('x-donel-')) headers[name] = value;
-        if (request.authorization) headers.Authorization = request.authorization;
-        if (request.body) headers['Content-Length'] = String(Buffer.byteLength(request.body));
-        const outgoing = httpRequest({ host: '127.0.0.1', port, path: '/mcp', method: request.method, headers, createConnection: () => socket }, (res) => {
+        const headers: Record<string, string> = { Host: `127.0.0.1:${port}`, ...call.headers };
+        if (call.body) headers['Content-Length'] = String(Buffer.byteLength(call.body));
+        const outgoing = httpRequest({ host: '127.0.0.1', port, path: call.path, method: call.method, headers, createConnection: () => socket }, (res) => {
           const chunks: Buffer[] = [];
           res.on('data', (chunk: Buffer) => chunks.push(chunk));
           res.on('end', () => {
@@ -697,12 +902,33 @@ export function createTunnelForward(options: TunnelForwardOptions = {}): GateFor
           res.on('error', () => finish(BAD_GATEWAY));
         });
         outgoing.on('error', () => finish(BAD_GATEWAY));
-        outgoing.end(request.body);
+        outgoing.end(call.body);
       });
     });
 }
 
+/** The real forward: the session's MCP tunnel (`127.0.0.1:<mcpPort>/mcp`), as its CLI would call (`createTunnelCall`). */
+export function createTunnelForward(options: TunnelForwardOptions = {}): GateForward {
+  const call = createTunnelCall(options);
+  return (port, request, signal) => {
+    const headers: Record<string, string> = {};
+    for (const [name, value] of Object.entries(request.headers)) if (!name.startsWith('x-donel-')) headers[name] = value;
+    if (request.authorization) headers.Authorization = request.authorization;
+    return call(port, { path: '/mcp', method: request.method, headers, body: request.body }, signal);
+  };
+}
+
+/**
+ * t-d461e003 — the real hook forward: the PC's hook bridge on the session's tunnel (`127.0.0.1:<hookPort>/h/<event>`),
+ * with the session's token in the header the bridge checks, as the CLI sends it. The token never goes to a log.
+ */
+export function createTunnelHookForward(options: TunnelForwardOptions = {}): GateHookForward {
+  const call = createTunnelCall({ timeoutMs: HOOK_FORWARD_TIMEOUT_MS, ...options });
+  return (port, event, token, body) => call(port, { path: `/h/${event}`, method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Donel-Token': token }, body });
+}
+
 export const tunnelForward: GateForward = createTunnelForward();
+export const tunnelHookForward: GateHookForward = createTunnelHookForward();
 
 const PASS_HEADERS = ['content-type', 'accept', 'mcp-protocol-version', 'mcp-session-id', 'last-event-id'];
 
@@ -716,9 +942,10 @@ export function startGateServer(options: { readonly port: number; readonly handl
     const chunks: Buffer[] = [];
     let size = 0;
     let tooBig = false;
+    const limit = SESSION_HOOK_PATH.test((req.url ?? '/').split('?')[0] ?? '/') ? MAX_HOOK_BODY_BYTES : MAX_BODY_BYTES;
     req.on('data', (chunk: Buffer) => {
       size += chunk.length;
-      if (size > MAX_BODY_BYTES) {
+      if (size > limit) {
         tooBig = true;
         res.writeHead(413).end();
         req.destroy();
@@ -758,7 +985,8 @@ export function startGateServer(options: { readonly port: number; readonly handl
     server.listen(options.port, '127.0.0.1', () => {
       server.off('error', reject);
       resolve({
-        port: options.port,
+        // The port it listens on (port 0 = one the system picked): `<dir>/portao` tells it to who delivers here.
+        port: (server.address() as { port: number }).port,
         close: () =>
           new Promise<void>((done) => {
             server.closeAllConnections?.();

@@ -39,27 +39,40 @@ export const NOT_STARTED_GRACE_MS = 30 * 60 * 1000;
  * Why the owner place of `task` can no longer do the work (closed, out of the board, never started); `null` = alive or
  * unknown (its board is not in `places`). The one rule of `tarefa_listar`'s orphans (`ledger-store.ts`) and of the box.
  */
-export function ownerGoneIn(places: PlaceStates | undefined, task: LedgerTask, now: number): string | null {
+export function ownerGoneIn(places: PlaceStates | undefined, task: LedgerTask, now: number, ownerLive?: OwnerLive): string | null {
   // The Líder único has no place on any board (t-52b31719): a task it owns is alive, never orphan.
   // Nor does a headless service (t-a1ea2798): no board has its place.
   if (task.ownerPlaceId === LEADER_OF_ALL || isServicePlace(task.ownerPlaceId)) return null;
   const states = places?.get(task.projectPath);
   if (!states) return null;
   const state = states.get(task.ownerPlaceId);
-  if (state === undefined) return 'o lugar dono saiu do quadro';
-  if (state === 'fechada') return 'o lugar dono está fechado';
   // A front mark is no work: naming the front of a task never starts the grace of its owner place again.
-  const since = lastWorkAt(task);
-  if (state === 'nao-comecou' && now - since >= NOT_STARTED_GRACE_MS) return 'o lugar dono não começou';
-  return null;
+  const reason =
+    state === undefined
+      ? 'o lugar dono saiu do quadro'
+      : state === 'fechada'
+        ? 'o lugar dono está fechado'
+        : state === 'nao-comecou' && now - lastWorkAt(task) >= NOT_STARTED_GRACE_MS
+          ? 'o lugar dono não começou'
+          : null;
+  // t-d461e003 — the list says gone, but the owner's session may live where the list does not look (this machine's tmux).
+  return reason && ownerLive && ownerLive(task.projectPath, task.ownerPlaceId) !== false ? null : reason;
 }
+
+/**
+ * t-d461e003 (19/11) — whether the owner place's session lives where the board's list does not look: `true` it is
+ * alive (this machine's tmux, another machine's fresh picture), `null` it could not be read (a `tmux ls` that failed),
+ * `false` the list decides. Only `false` lets a task be orphan: a session alive in the VPS's tmux that the PC lists
+ * "fechada" (it was opened or resumed there) kept its task, and a tmux that failed decides nothing.
+ */
+export type OwnerLive = (projectPath: string, placeId: string) => boolean | null;
 
 /**
  * Why a task is orphan (not closed, its owner place gone); `null` = alive, closed or unknown. A delivered task waits
  * for whoever decides, and an accepted letter never sent waits for its send: neither waits for its owner place.
  */
-export function orphanReasonIn(places: PlaceStates | undefined, task: LedgerTask, now: number): string | null {
-  return isClosed(task) || task.state === 'entregue' || awaitsSend(task) ? null : ownerGoneIn(places, task, now);
+export function orphanReasonIn(places: PlaceStates | undefined, task: LedgerTask, now: number, ownerLive?: OwnerLive): string | null {
+  return isClosed(task) || task.state === 'entregue' || awaitsSend(task) ? null : ownerGoneIn(places, task, now, ownerLive);
 }
 
 export type OwnerInboxKind = 'decidir-entrega' | 'aprovar-carta' | 'entrega-parada' | 'para-repassar' | 'carta-parada' | 'conferir-envio' | 'amostra-revisor';

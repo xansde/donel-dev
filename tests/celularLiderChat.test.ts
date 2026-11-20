@@ -152,6 +152,20 @@ describe('chat do Líder pelo celular', () => {
     expect(answeredIds(tail(user(`${phoneMarker(A)} oi`), tool(), user('outro'), said('y')), [A])).toEqual([]);
   });
 
+  it('turno que leu a mensagem e só escreveu espaço: nada volta ao celular', () => {
+    // t-d461e003: resposta vazia nunca vai ao dono; sem texto final, espera o próximo turno ou não manda nada.
+    expect(answersIn(tail(user(`${phoneMarker(A)} oi`), said('  \n '), tool(), user('outro'), said('y')), [A])).toEqual(new Map());
+    expect(answersIn(tail(user(`${phoneMarker(A)} oi`), said(' '), tool()), [A])).toEqual(new Map());
+    expect(answersIn(tail(user(`${phoneMarker(A)} oi`), said('oi, dono'), said('   ')), [A]).get(A)).toBe('oi, dono');
+  });
+
+  it('fala final que é só "-": não vai ao celular nem troca a resposta boa de antes', () => {
+    // t-d461e003: "-" é o marcador do stdin do script, nunca mensagem; na dúvida, não manda.
+    expect(answersIn(tail(user(`${phoneMarker(A)} oi`), said('-')), [A])).toEqual(new Map());
+    expect(answersIn(tail(user(`${phoneMarker(A)} oi`), said(' - '), tool(), user('outro')), [A])).toEqual(new Map());
+    expect(answersIn(tail(user(`${phoneMarker(A)} oi`), said('oi, dono'), said('-')), [A]).get(A)).toBe('oi, dono');
+  });
+
   it('resultado de ferramenta e aviso entre a leitura e a resposta não cortam a resposta', () => {
     const toolResult = JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } });
     const notice = JSON.stringify({ type: 'user', message: { role: 'user', content: '<task-notification>feito</task-notification>' } });
@@ -202,6 +216,29 @@ describe('chat do Líder pelo celular', () => {
     // A refused once and dropped; B sent once, not by both senders; the next poll took the queue again.
     expect(sent).toEqual([A, B]);
     expect(calls.filter((call) => call.fn === 'celular_lider_tomar').length).toBe(2);
+  });
+
+  it('recado entregue pelo Stop hook no fim do turno conta como lido uma vez, e a fala depois dele é a resposta', () => {
+    // 19/11: the #9c320674 reached the Líder working, by `recados-hook.sh fim-de-turno`; the CLI records it as these lines.
+    const recado = `◆ Recado r-6d950d73 do Oráculo: Do dono, pelo chat do celular ${phoneMarker(A)}: «Não tô recebendo respostas»`;
+    const feedback = JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: `Stop hook feedback:\n${recado}\n\n◆ Recado r-4791d39e do Oráculo: outro` } });
+    const blocking = JSON.stringify({ type: 'attachment', attachment: { type: 'hook_blocking_error', hookName: 'Stop', hookEvent: 'Stop', blockingError: { blockingError: recado, command: '~/.donel/bin/recados-hook.sh fim-de-turno' } } });
+    const summary = JSON.stringify({ type: 'system', subtype: 'stop_hook_summary', hookCount: 1 });
+    expect(answersIn(tail(said('fim do turno anterior'), feedback, blocking, summary, said('Estão saindo de novo, dono.')), [A])).toEqual(new Map([[A, 'Estão saindo de novo, dono.']]));
+    // The attachment alone repeats the text: not a second read (the answer is not cut by it).
+    expect(answersIn(tail(feedback, said('parte 1'), blocking, said('parte 2')), [A]).get(A)).toBe('parte 2');
+  });
+
+  it('outra linha meta (lembrete, comando) não conta como lida', () => {
+    const meta = (content: string): string => JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content } });
+    expect(answeredIds(tail(meta(`<system-reminder>${phoneMarker(A)}</system-reminder>`), said('x')), [A])).toEqual([]);
+    expect(answeredIds(tail(meta(`Caveat: ${phoneMarker(A)}`), said('x')), [A])).toEqual([]);
+  });
+
+  it('aviso de tarefa em segundo plano posto pelo CLI no meio do turno não corta a resposta', () => {
+    // 19/11: the #dcd0176a lost its answer to a `<task-notification>` queued into the turn before he wrote.
+    const notice = queued('<task-notification>\n<task-id>wj9r35o09</task-id>\n</task-notification>');
+    expect(answersIn(tail(user(`${phoneMarker(A)} feche o Dev`), tool(), notice, tool(), said('Fechei a sessão do Dev.')), [A]).get(A)).toBe('Fechei a sessão do Dev.');
   });
 
   it('linha cortada no começo da cauda e conversa de subagente não contam', () => {
