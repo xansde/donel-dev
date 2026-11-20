@@ -4,26 +4,34 @@
 //   node board-cron.mjs ronda   every 15 min: justification cron, vigia, lanes alive, page
 //   node board-cron.mjs lider   every minute: the PC's requests for a lane's Líder (board.leader_requests)
 //   node board-cron.mjs semear [--seco] [--ledger <arquivo>] [--host <host>] [--pc-raiz <C:\...\seazone>]
-//                               once, by hand: projects and one card per live task of the Oráculo (semente.ts); the
-//                               Oráculo's ledger read-only; --seco prints the plan and opens nothing else
+//                               once, by hand: projects and one card per live task of the Oráculo (semente.ts), with
+//                               the session of its place from the Oráculo's pictures; the Oráculo's ledger read-only;
+//                               --seco prints the plan and only reads (the board too, to count the sessions it would fill)
+//   node board-cron.mjs raia <projeto> <lugar> [<sessão>]
+//                               by hand: the lane's Líder (touch_lane with force), for a Líder with no card_* tools
 //
 // Config (nothing hardcoded: the repo goes public):
 //   ~/.donel/board/sqlite.json    {file}                            the board in a SQLite of this machine (20/11)
 //   ~/.donel/board/supabase.json  {url, serviceKeyFile}             only without sqlite.json; neither = the board is
 //                                                                   off, the cron exits 0
-//   ~/.donel/board/cron.json      {host?, vigiaSombra?, slackReader?, pagina?}
+//   ~/.donel/board/cron.json      {host?, vigiaSombra?, slackReader?, slackSelf?, pagina?}
 //     host (default "vps-pessoal"): only the projects that run here (projects.host); another machine's sessions are
 //       not in this tmux, and reading them as closed would tell the Líder something false.
 //     vigiaSombra (default true): the vigia only LOGS what it would do. It runs one day beside the despertador's
 //       `ronda` with the same output or better before it acts (Líder do quadro, 16/11); turning it on is a separate step.
-//     slackReader: a script that prints a Slack thread with "(ts <epoch>)" per message (ler_fio.py); missing = Slack
-//       links count only by their deadline.
+//     slackReader: a script that prints a Slack thread with "--- <hora> <autor> (ts <epoch>)" per message (ler_fio.py);
+//       missing = Slack links count only by their deadline.
+//     slackSelf: the names and ids the reader shows for the account the sessions write with (a message of it is never
+//       a response); missing = Slack links count only by their deadline, as without a reader.
 //     pagina: folder of the page (index.html); missing = no page.
 // State ~/.donel/board/estado.json (the vigia's wakes per card, busy fields in a row, and the shadow's own wakes, busy
 // fields and Líder notices, so its log shows the cap, the pause and the Líder as acting would); log ~/.donel/board/cron.log.
 //
-// Waking a session = typing into its tmux (`tmux -L donel`, session `donel-<conversation>`) only when its input field
-// is empty, and confirming it in the transcript — the despertador's way (~/bin/rotinas/despertador_sessoes.py).
+// Waking a session = typing into its tmux (`tmux -L donel`, session `donel-<sid>`) only when its input field is empty,
+// and confirming it in the transcript — the despertador's way (~/bin/rotinas/despertador_sessoes.py). The transcript is
+// the conversation the tmux carries now (`current` in the session's folder, lider-local.ts: a resume or `/clear` moves
+// it), else `<sid>.jsonl`. A notice for a lane's Líder goes to the lane's Líder alive here, else to the Líder único
+// alive here (the daemon's own pick, lider-local.ts).
 
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, rmdirSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, closeSync, renameSync, statSync, writeFileSync, fstatSync } from 'node:fs';
@@ -31,8 +39,10 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { BoardCronStore, BoardStore, CardRow, LaneRow } from '../oraculo/board-client';
 import { BOARD_SQLITE_CONFIG, chooseBoard, createBoardSqlite, openBoard } from '../oraculo/board-sqlite';
-import { planSeed, readLedgerReadOnly, runSeed } from './semente';
-import { afterBusyField, fieldHoldsOnlyNotice, fieldIsFree, fieldTextOf, LABEL, linkKind, planJustify, planVigia, responseSince, withShadowNotice, type CronAction, type CronCard, type SessionState, type ShadowNotice } from '../shared/board/cron';
+import { countSessionFills, planSeed, readDeskStates, readLedgerReadOnly, readPictures, runSeed, sessionResolver, type DeskState } from './semente';
+import { afterBusyField, fieldHoldsOnlyNotice, fieldIsFree, fieldTextOf, LABEL, linkKind, othersOnGithub, othersOnSlack, pickLeader, planJustify, planVigia, responseSince, withShadowNotice, type CronAction, type CronCard, type GithubReading, type SessionState, type ShadowNotice } from '../shared/board/cron';
+import { currentConversation, pickLocalLeader, readLeaderMeta } from '../oraculo/lider-local';
+import type { BoardPicture } from '../oraculo/portao';
 import { renderBoardPage } from '../shared/board/page';
 
 const HOME = homedir();
@@ -42,12 +52,16 @@ const STATE = join(DIR, 'estado.json');
 /** The tmux socket of the Donel's sessions; another one only in the end-to-end test. */
 const SOCKET = process.env.DONEL_TMUX_SOCKET || 'donel';
 const LEADER_ALIVE_MS = 30 * 60 * 1000;
+const ORACULO_DIR = process.env.DONEL_ORACULO_DIR || join(HOME, '.donel', 'oraculo');
+const SESSIONS_DIR = process.env.DONEL_SESSIONS_DIR || join(HOME, '.donel', 's');
+const LEDGER_FILE = join(ORACULO_DIR, 'ledger.sqlite');
 const LABEL_ASCII = LABEL.slice(0, LABEL.indexOf(' ·'));
 
 interface CronConfig {
   readonly host: string;
   readonly vigiaSombra: boolean;
   readonly slackReader?: string;
+  readonly slackSelf?: readonly string[];
   readonly pagina?: string;
 }
 
@@ -58,6 +72,7 @@ function readCronConfig(): CronConfig {
       host: typeof raw.host === 'string' && raw.host ? raw.host : 'vps-pessoal',
       vigiaSombra: raw.vigiaSombra !== false,
       ...(typeof raw.slackReader === 'string' && raw.slackReader ? { slackReader: raw.slackReader } : {}),
+      ...(Array.isArray(raw.slackSelf) && raw.slackSelf.some((name) => typeof name === 'string' && name.trim()) ? { slackSelf: raw.slackSelf.filter((name): name is string => typeof name === 'string') } : {}),
       ...(typeof raw.pagina === 'string' && raw.pagina ? { pagina: raw.pagina } : {}),
     };
   } catch {
@@ -151,10 +166,11 @@ function tmux(args: readonly string[]): { ok: boolean; out: string } {
 
 function transcriptOf(uuid: string): string | null {
   const root = join(HOME, '.claude', 'projects');
+  const conversation = currentConversation(SESSIONS_DIR, uuid) ?? uuid;
   let best: { path: string; at: number } | null = null;
   try {
     for (const dir of readdirSync(root)) {
-      const path = join(root, dir, `${uuid}.jsonl`);
+      const path = join(root, dir, `${conversation}.jsonl`);
       if (!existsSync(path)) continue;
       const at = statSync(path).mtimeMs;
       if (!best || at > best.at) best = { path, at };
@@ -316,34 +332,44 @@ function ghJson(path: string): unknown {
   return JSON.parse(r.stdout || 'null');
 }
 
-const after = (iso: unknown, since: number): boolean => typeof iso === 'string' && Date.parse(iso) > since;
+/** The gh account of this machine (the one the sessions comment with), read once per run; null = gh not logged in. */
+let ghSelf: string | null | undefined;
+function ghLogin(): string | null {
+  if (ghSelf !== undefined) return ghSelf;
+  const r = spawnSync('gh', ['api', 'user', '-q', '.login'], { encoding: 'utf8', timeout: 30_000 });
+  const login = r.status === 0 ? (r.stdout ?? '').trim() : '';
+  ghSelf = /^[A-Za-z0-9-]{1,39}$/.test(login) ? login : null;
+  if (!ghSelf) log('gh sem conta: link do GitHub conta só pelo prazo nesta ronda');
+  return ghSelf;
+}
 
-/** Something new on the link after `since`: true/false; null when the link cannot be read (only the deadline counts). */
+/**
+ * Something new on the link after `since` that someone other than this machine's own account did (design §5): true or
+ * false; null when the link cannot be read (only the deadline counts).
+ */
 function responded(link: string, since: number, config: CronConfig): boolean | null {
   const kind = linkKind(link);
   try {
     if (kind.kind === 'github') {
+      const self = ghLogin();
+      if (!self) return null;
       const base = `repos/${kind.owner}/${kind.repo}`;
       const sinceIso = new Date(since).toISOString();
-      const comments = ghJson(`${base}/issues/${kind.number}/comments?since=${encodeURIComponent(sinceIso)}&per_page=100`) as { created_at?: string }[];
-      if (comments.some((c) => after(c.created_at, since))) return true;
-      if (kind.type === 'pull') {
-        const pr = ghJson(`${base}/pulls/${kind.number}`) as { merged_at?: string; closed_at?: string };
-        if (after(pr.merged_at, since) || after(pr.closed_at, since)) return true;
-        const reviews = ghJson(`${base}/pulls/${kind.number}/reviews?per_page=100`) as { submitted_at?: string }[];
-        if (reviews.some((r) => after(r.submitted_at, since))) return true;
-      } else {
-        const issue = ghJson(`${base}/issues/${kind.number}`) as { closed_at?: string };
-        if (after(issue.closed_at, since)) return true;
-      }
-      return false;
+      const reading: GithubReading = {
+        comments: ghJson(`${base}/issues/${kind.number}/comments?since=${encodeURIComponent(sinceIso)}&per_page=100`) as GithubReading['comments'],
+        issue: ghJson(`${base}/issues/${kind.number}`) as GithubReading['issue'],
+        ...(kind.type === 'pull'
+          ? { pull: ghJson(`${base}/pulls/${kind.number}`) as GithubReading['pull'], reviews: ghJson(`${base}/pulls/${kind.number}/reviews?per_page=100`) as GithubReading['reviews'] }
+          : {}),
+      };
+      return othersOnGithub(reading, self, since);
     }
-    if (kind.kind === 'slack' && config.slackReader) {
-      const r = spawnSync('python3', ['-I', config.slackReader, link], { encoding: 'utf8', timeout: 120_000 });
+    if (kind.kind === 'slack' && config.slackReader && config.slackSelf) {
+      const r = spawnSync('python3', ['-I', config.slackReader, link], { encoding: 'utf8', timeout: 300_000 });
       if (r.status !== 0) return null;
       // not a thread: the reader shows the channel around the message, and any of it would read as a response
       if ((r.stderr ?? '').includes('não um fio')) return null;
-      return [...(r.stdout ?? '').matchAll(/\(ts (\d+(?:\.\d+)?)\)/g)].some((m) => Number(m[1]) * 1000 > since);
+      return othersOnSlack(r.stdout ?? '', config.slackSelf, since);
     }
   } catch (error) {
     log(`link sem leitura (${link}): ${error instanceof Error ? error.message : String(error)}`);
@@ -356,7 +382,7 @@ function responded(link: string, since: number, config: CronConfig): boolean | n
 
 const ms = (iso: string | null | undefined): number | null => (iso ? Date.parse(iso) : null);
 
-function cronCard(row: CardRow): CronCard {
+function cronCard(row: CardRow, desk?: DeskState): CronCard {
   return {
     id: row.id,
     projectId: row.project_id,
@@ -374,6 +400,7 @@ function cronCard(row: CardRow): CronCard {
     chargeCount: row.charge_count ?? 0,
     leaderNoticedAt: ms(row.leader_noticed_at),
     justifiedAt: ms(row.justified_at),
+    ...(desk ? { desk } : {}),
   };
 }
 
@@ -386,8 +413,34 @@ function wouldWake(uuid: string): 'campo livre' | `campo: ${string}` {
   return field.free ? 'campo livre' : `campo: ${field.why}`;
 }
 
+/** The live Donel sessions of this machine's tmux (`donel-<sid>`); null when tmux did not answer. */
+function liveSessions(): Set<string> | null {
+  const r = tmux(['ls', '-F', '#{session_name}']);
+  if (!r.ok) return null;
+  return new Set(r.out.split('\n').flatMap((name) => (name.startsWith('donel-') ? [name.slice('donel-'.length)] : [])));
+}
+
+/** The Líder único alive in this machine's tmux (the daemon's own pick, lider-local.ts); null = none. */
+function leaderOfAllHere(now: number): string | null {
+  const live = liveSessions();
+  if (!live) return null;
+  let picture: BoardPicture | null = null;
+  try {
+    picture = JSON.parse(readFileSync(join(ORACULO_DIR, 'retrato.json'), 'utf8')) as BoardPicture;
+  } catch {
+    // no picture: the folder's mark alone counts
+  }
+  return pickLocalLeader(live, picture, (sid) => readLeaderMeta(SESSIONS_DIR, sid), now)?.sid ?? null;
+}
+
+/** What a round knows once: the lanes, and the Líder único here (read only when a notice needs him). */
+interface RoundLeaders {
+  readonly lanes: readonly LaneRow[];
+  leaderOfAll(): string | null;
+}
+
 /** Does the action; true when its notice reached someone (in shadow: would have). */
-async function act(client: Client, lanes: readonly LaneRow[], card: CronCard, action: CronAction, who: string, shadow: boolean, state: State, now: number): Promise<boolean> {
+async function act(client: Client, leaders: RoundLeaders, card: CronCard, action: CronAction, who: string, shadow: boolean, state: State, now: number): Promise<boolean> {
   if (action.do === 'skip') return false;
   // The shadow goes through the same steps (it reads the field, the typing lock and the Líder's tmux, which changes
   // nothing) and keeps its own marks, so its log shows the cap, the pause and the Líder exactly where acting would.
@@ -406,7 +459,7 @@ async function act(client: Client, lanes: readonly LaneRow[], card: CronCard, ac
         log(`${tag}${who}: cartão ${card.id}: ${next.why}`);
         return false;
       }
-      if (await act(client, lanes, card, next, who, shadow, state, now)) {
+      if (await act(client, leaders, card, next, who, shadow, state, now)) {
         delete memory.busy[card.id];
         memory.busyHeard[card.id] = now;
       }
@@ -419,23 +472,28 @@ async function act(client: Client, lanes: readonly LaneRow[], card: CronCard, ac
     if (!shadow) await client.markCron(card.id, action.mark);
     return true;
   }
-  const lane = lanes.find((l) => l.project_id === card.projectId);
-  const leader = lane?.leader_session && UUID.test(lane.leader_session) ? lane.leader_session : null;
-  if (!leader || !tmux(['has-session', '-t', `donel-${leader}`]).ok) {
+  const lane = leaders.lanes.find((l) => l.project_id === card.projectId);
+  const alive = (sid: string): boolean => UUID.test(sid) && tmux(['has-session', '-t', `donel-${sid}`]).ok;
+  const pick = pickLeader(lane, alive, leaders.leaderOfAll());
+  // "sessão <uuid> fechada; …": the vigia does not reopen a session itself (cron.ts), the Líder does.
+  const closed = action.closed ? `sessão ${action.closed} fechada; ` : '';
+  if (pick.kind === 'none') {
     // Not marked: nobody was told, and the next round tries again (a Líder back in 5 min hears it then).
-    log(`${tag}${who}: cartão ${card.id} precisa do Líder, mas a raia ${card.projectId} está sem Líder aberto aqui (${lane?.leader_place ?? 'nenhum'})`);
+    log(`${tag}${who}: ${closed}cartão ${card.id} precisa do Líder, mas a raia ${card.projectId} está sem Líder aberto aqui (${pick.why}) e o Líder único não está aberto aqui`);
     return false;
   }
+  const leader = pick.session;
+  const leaderName = pick.kind === 'lane' ? `o Líder ${pick.place} da raia ${card.projectId}` : `o Líder único (${pick.why})`;
   const busyField = action.via === 'busy';
   if (shadow) {
     const result = wouldWake(leader);
-    log(`${tag}${who}: avisaria o Líder ${lane?.leader_place} (cartão ${card.id}${busyField ? ', campo ocupado' : ''})${who === 'vigia' ? ' e gravaria a nota no cartão' : ''}: ${result}`);
+    log(`${tag}${who}: ${closed}avisaria ${leaderName}, sessão ${leader} (cartão ${card.id}${busyField ? ', campo ocupado' : ''}${action.why ? `: ${action.why}` : ''})${who === 'vigia' ? ' e gravaria a nota no cartão' : ''}: ${result}`);
     if (result.startsWith('campo:')) return false;
     if (!busyField) state.sombra.leader[card.id] = { at: now, stageSince: card.stageSince };
     return true;
   }
   const result = wakeSession(leader, action.text);
-  log(`${who}: avisar o Líder ${lane?.leader_place} (cartão ${card.id}${busyField ? ', campo ocupado' : ''}): ${result}`);
+  log(`${who}: ${closed}avisar ${leaderName}, sessão ${leader} (cartão ${card.id}${busyField ? ', campo ocupado' : ''}${action.why ? `: ${action.why}` : ''}): ${result}`);
   if (result.startsWith('campo:')) return false;
   // A busy field keeps its own mark (the caller's busyHeard): leader_noticed_at would silence the once-per-stage notices.
   if (!busyField) await client.markCron(card.id, 'leader');
@@ -459,13 +517,27 @@ async function touchLiveLeaders(client: Client, lanes: readonly LaneRow[], now: 
   }
 }
 
+/** The Oráculo's state of the cards' tasks, read-only; unreadable = none (the vigia then judges by the card alone). */
+function deskStates(rows: readonly CardRow[]): Map<string, DeskState> {
+  const ids = rows.flatMap((row) => (row.stage === 'doing' && row.oraculo_id ? [row.oraculo_id] : []));
+  try {
+    return readDeskStates(LEDGER_FILE, ids);
+  } catch (error) {
+    log(`Oráculo sem leitura (${error instanceof Error ? error.message : String(error)}): o vigia não sabe o que espera aceite`);
+    return new Map();
+  }
+}
+
 async function ronda(client: Client, config: CronConfig): Promise<void> {
   const now = Date.now();
   const state = readState();
   const [rows, lanes] = await Promise.all([client.parkedOrDoing(config.host), client.lanes(config.host)]);
+  const desk = deskStates(rows);
+  let leaderOfAll: string | null | undefined;
+  const leaders: RoundLeaders = { lanes, leaderOfAll: () => (leaderOfAll === undefined ? (leaderOfAll = leaderOfAllHere(now)) : leaderOfAll) };
   let woke = 0;
   for (const row of rows) {
-    const card = cronCard(row);
+    const card = cronCard(row, row.oraculo_id ? desk.get(row.oraculo_id) : undefined);
     try {
       if (card.justification) {
         const session = sessionState(card.sessionId);
@@ -474,7 +546,7 @@ async function ronda(client: Client, config: CronConfig): Promise<void> {
         // "rounds in a row": a round with nothing to type (working, waiting, pause) breaks the busy streak
         if (action.do === 'skip') delete state.busy[card.id];
         else woke++;
-        await act(client, lanes, card, action, 'justificativa', false, state, now);
+        await act(client, leaders, card, action, 'justificativa', false, state, now);
       } else {
         const shadow = config.vigiaSombra;
         const view = shadow ? withShadowNotice(card, state.sombra.leader[card.id]) : card;
@@ -482,7 +554,8 @@ async function ronda(client: Client, config: CronConfig): Promise<void> {
         const action = planVigia(view, sessionState(card.sessionId), memory.wakes[card.id] ?? [], now);
         if (action.do === 'skip') delete memory.busy[card.id];
         else woke++;
-        await act(client, lanes, view, action, 'vigia', shadow, state, now);
+        if (action.do === 'skip' && action.why.startsWith('entregue')) log(`${shadow ? '[sombra] ' : ''}vigia: cartão ${card.id} ${action.why}; não é parado`);
+        await act(client, leaders, view, action, 'vigia', shadow, state, now);
       }
     } catch (error) {
       log(`cartão ${card.id}: ${error instanceof Error ? error.message : String(error)}`);
@@ -542,12 +615,32 @@ const argOf = (flag: string): string | undefined => {
 async function semear(boardFile: string | null): Promise<number> {
   const ledgerFile = argOf('--ledger') ?? join(process.env.DONEL_ORACULO_DIR || join(HOME, '.donel', 'oraculo'), 'ledger.sqlite');
   const pcRoot = argOf('--pc-raiz');
-  const plan = planSeed(readLedgerReadOnly(ledgerFile), { host: argOf('--host') ?? readCronConfig().host, vpsHome: HOME, ...(pcRoot ? { pcRoot } : {}) });
+  const pictures = readPictures(ORACULO_DIR);
+  const plan = planSeed(readLedgerReadOnly(ledgerFile), { host: argOf('--host') ?? readCronConfig().host, vpsHome: HOME, ...(pcRoot ? { pcRoot } : {}), sessionOf: sessionResolver(pictures) });
   const byStage = plan.cards.reduce<Record<string, number>>((acc, card) => ({ ...acc, [card.stage]: (acc[card.stage] ?? 0) + 1 }), {});
   if (process.argv.includes('--seco')) {
     for (const project of plan.projects) console.log(`projeto ${project.id} (${project.name}, ${project.host}): ${project.aliases.join(' | ')}`);
-    for (const card of plan.cards) console.log(`cartão ${card.taskId} → ${card.projectId} ${card.stage}${card.place ? ` ${card.place}` : ''}${card.front ? ` [${card.front}]` : ''}: ${card.title} — ${card.note}`);
-    console.log(JSON.stringify({ seco: true, ledger: ledgerFile, projetos: plan.projects.length, cartoes: plan.cards.length, porColuna: byStage, deFora: plan.skipped, quadro: boardFile ?? '(sem sqlite.json)' }));
+    for (const card of plan.cards) console.log(`cartão ${card.taskId} → ${card.projectId} ${card.stage}${card.place ? ` ${card.place}` : ''}${card.session ? ` sessão ${card.session}` : ''}${card.front ? ` [${card.front}]` : ''}: ${card.title} — ${card.note}`);
+    // read-only: which cards already on the board would get their session now
+    const fills = boardFile && existsSync(boardFile) ? countSessionFills(boardFile, plan) : null;
+    if (fills) for (const fill of fills) console.log(`ganharia sessão: ${fill.cardId} (${fill.taskId}, ${fill.stage}, ${fill.place}) → ${fill.session}`);
+    const withSession = plan.cards.filter((card) => card.session);
+    console.log(
+      JSON.stringify({
+        seco: true,
+        ledger: ledgerFile,
+        retratos: pictures.length,
+        projetos: plan.projects.length,
+        cartoes: plan.cards.length,
+        porColuna: byStage,
+        comSessao: withSession.length,
+        comSessaoEmFazendo: withSession.filter((card) => card.stage === 'doing').length,
+        ganhariamSessao: fills ? fills.length : '(quadro não lido)',
+        ganhariamSessaoEmFazendo: fills ? fills.filter((fill) => fill.stage === 'doing').length : '(quadro não lido)',
+        deFora: plan.skipped,
+        quadro: boardFile ?? '(sem sqlite.json)',
+      }),
+    );
     return 0;
   }
   if (!boardFile) {
@@ -564,10 +657,39 @@ async function semear(boardFile: string | null): Promise<number> {
   return 0;
 }
 
+const PLACE = /^(?:place|session):[A-Za-z0-9-]{1,64}$/;
+
+/**
+ * `raia <projeto> <lugar> [<sessão>]`: the lane's Líder, as the daemon does for a Líder who uses the card_* tools
+ * (touch_lane with force: he takes the lane at once, and a new Líder never inherits the previous one's session). For a
+ * Líder with no card_* tools (the Líder único, a Líder on another machine). `lider` = the Líder único's own name.
+ */
+async function raia(boardFile: string | null): Promise<number> {
+  const [project, place, session] = process.argv.slice(3);
+  if (!project || !place || (place !== 'lider' && !PLACE.test(place)) || (session !== undefined && !UUID.test(session))) {
+    console.error('uso: board-cron.mjs raia <projeto> <place:…|session:…|lider> [<sessão uuid>]');
+    return 2;
+  }
+  if (!boardFile) {
+    console.error(`[raia] sem ${join(DIR, BOARD_SQLITE_CONFIG)} válido: as raias moram no quadro em SQLite.`);
+    return 1;
+  }
+  const store = createBoardSqlite(boardFile);
+  try {
+    await store.touchLane(project, place, session, true);
+    const lane = await store.laneOf(project);
+    const alive = lane?.leader_session ? (tmux(['has-session', '-t', `donel-${lane.leader_session}`]).ok ? 'aberta aqui' : 'fechada aqui') : 'sem sessão';
+    console.log(JSON.stringify({ raia: lane, sessao: alive }));
+  } finally {
+    store.close();
+  }
+  return 0;
+}
+
 async function main(): Promise<number> {
   const mode = process.argv[2];
-  if (mode !== 'ronda' && mode !== 'lider' && mode !== 'semear') {
-    console.error('uso: board-cron.mjs ronda|lider|semear [--seco]');
+  if (mode !== 'ronda' && mode !== 'lider' && mode !== 'semear' && mode !== 'raia') {
+    console.error('uso: board-cron.mjs ronda|lider|semear [--seco]|raia <projeto> <lugar> [<sessão>]');
     return 2;
   }
   const choice = chooseBoard({ sqliteConfig: process.env.DONEL_BOARD_SQLITE_CONFIG || join(DIR, BOARD_SQLITE_CONFIG), supabaseConfig: process.env.DONEL_BOARD_CONFIG || join(DIR, 'supabase.json') });
@@ -576,6 +698,7 @@ async function main(): Promise<number> {
     return 1;
   }
   if (mode === 'semear') return semear(choice.kind === 'sqlite' ? choice.file : null);
+  if (mode === 'raia') return raia(choice.kind === 'sqlite' ? choice.file : null);
   if (choice.kind === 'off') return 0; // the board is off: nothing touched
   mkdirSync(DIR, { recursive: true });
   const client = openBoard(choice);

@@ -9,13 +9,22 @@
 // needs a link and a future deadline that the Oráculo never had: inventing them would be a lie the cron then trusts.
 // Those cards stay in Fazendo with the note "importado: travada — <precisa>; falta justificar", and the session (or
 // the vigia, which tells the Líder about a card in Fazendo with no justification) fills the justification.
+//
+// Session (devolução do Revisor, 20/11): the vigia wakes `session_id`, which no import filled (only a `card_move` of the
+// session itself does). The seed takes it from the place: the live session that holds the place in this machine's
+// picture (`retrato.json` and the satellites' pictures: the folder sid, which is the tmux `donel-<sid>`; a renewed place
+// is held by its successor), else the uuid of a `session:<uuid>` place, else the conversation of the place's card on the
+// pictured board (`picturedBoards`, the same reading as the gate). No picture: only `session:<uuid>` resolves. A second
+// run fills the cards still without one (`fillSession`: no version, no move, only where the place is still the same).
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { DatabaseSync as DatabaseSyncType } from 'node:sqlite';
 import { progressOf, type LedgerProgress } from '../shared/ledger/andamento';
 import { awaitsSend, frenteOf, isClosed, requestedByOf, type LedgerTask } from '../shared/ledger/contract';
 import { projectFolderOf } from '../oraculo/board-client';
 import type { BoardSqliteStore, ProjectInput } from '../oraculo/board-sqlite';
+import { picturedBoards, type BoardPicture } from '../oraculo/portao';
 
 const { DatabaseSync } = process.getBuiltinModule('node:sqlite') as typeof import('node:sqlite');
 type DatabaseSync = DatabaseSyncType;
@@ -59,6 +68,8 @@ export interface CardSeed {
   readonly place?: string;
   readonly stage: 'inbox' | 'todo' | 'doing';
   readonly note: string;
+  /** The session doing it (the uuid the vigia wakes), resolved from the place; none when nothing says it. */
+  readonly session?: string;
 }
 
 export interface SeedPlan {
@@ -75,6 +86,99 @@ export interface SeedOptions {
   readonly vpsHome: string;
   /** The PC's `...\seazone` folder; missing = taken from the Windows paths of the ledger itself. */
   readonly pcRoot?: string;
+  /** The session of a place on a project (`sessionResolver`); missing = only `session:<uuid>` places resolve. */
+  readonly sessionOf?: SessionOf;
+}
+
+export type SessionOf = (projectId: string, placeId: string) => string | undefined;
+
+/** A session id the cron can use (`donel-<id>` in tmux, `<id>.jsonl` transcript): the cron's own pattern. */
+const SESSION_ID = /^[0-9a-f-]{8,64}$/i;
+const SESSION_PLACE = 'session:';
+
+/**
+ * The session of a place, from the pictures this machine has (`retrato.json`, the satellites'): the live holder of the
+ * place (a picture entry whose `quemSou.lugar` is the place on that project's board, not handed over to a successor;
+ * the newest), else `session:<uuid>`'s own uuid, else the conversation of the place's card on the pictured board.
+ */
+export function sessionResolver(pictures: readonly BoardPicture[]): SessionOf {
+  const holders = new Map<string, { sid: string; at: number }>();
+  const cards = new Map<string, string>();
+  for (const picture of pictures) {
+    for (const [sid, session] of Object.entries(picture.sessoes ?? {})) {
+      const { lugar, pasta } = session.quemSou ?? {};
+      if (typeof lugar !== 'string' || typeof pasta !== 'string' || session.renovadaPara || !SESSION_ID.test(sid)) continue;
+      const key = `${projectSlug(projectFolderOf(pasta))}|${lugar}`;
+      const at = session.at ?? picture.at ?? 0;
+      const known = holders.get(key);
+      if (!known || at > known.at) holders.set(key, { sid, at });
+    }
+    for (const [pasta, { board }] of picturedBoards(picture)) {
+      const project = projectSlug(projectFolderOf(pasta));
+      for (const [placeId, card] of Object.entries(board?.cards ?? {})) {
+        const key = `${project}|${placeId}`;
+        if (card.kind === 'session' && card.sessionId && SESSION_ID.test(card.sessionId) && !cards.has(key)) cards.set(key, card.sessionId);
+      }
+    }
+  }
+  return (projectId, placeId) => {
+    const key = `${projectId}|${placeId}`;
+    const held = holders.get(key)?.sid;
+    if (held) return held;
+    if (placeId.startsWith(SESSION_PLACE) && SESSION_ID.test(placeId.slice(SESSION_PLACE.length))) return placeId.slice(SESSION_PLACE.length);
+    return cards.get(key);
+  };
+}
+
+/** `retrato.json` and the satellites' pictures (`portoes-retrato/*.json`) in the Oráculo's folder; an unreadable one is left out. */
+export function readPictures(oraculoDir: string): BoardPicture[] {
+  const files = [join(oraculoDir, 'retrato.json')];
+  try {
+    for (const name of readdirSync(join(oraculoDir, 'portoes-retrato'))) if (name.endsWith('.json')) files.push(join(oraculoDir, 'portoes-retrato', name));
+  } catch {
+    // no satellite
+  }
+  const out: BoardPicture[] = [];
+  for (const file of files) {
+    try {
+      const raw = JSON.parse(readFileSync(file, 'utf8')) as BoardPicture;
+      if (raw && typeof raw === 'object' && raw.sessoes && typeof raw.sessoes === 'object') out.push({ at: typeof raw.at === 'number' ? raw.at : 0, sessoes: raw.sessoes });
+    } catch {
+      // missing or cut: that picture is not used
+    }
+  }
+  return out;
+}
+
+/** What the vigia needs of a task on the owner's desk (the Oráculo): its state, and whether it is closed. */
+export interface DeskState {
+  readonly state: LedgerTask['state'];
+  readonly closed: boolean;
+}
+
+/** The Oráculo's tasks `ids`, read-only (only those rows); a missing ledger = none. */
+export function readDeskStates(file: string, ids: readonly string[]): Map<string, DeskState> {
+  const out = new Map<string, DeskState>();
+  if (ids.length === 0 || !existsSync(file)) return out;
+  const put = (task: LedgerTask): void => {
+    out.set(task.id, { state: task.state, closed: isClosed(task) });
+  };
+  if (file.endsWith('.json')) {
+    const tasks = readLedgerReadOnly(file).tasks;
+    for (const id of ids) if (tasks[id]) put(tasks[id]!);
+    return out;
+  }
+  const db: DatabaseSync = new DatabaseSync(file, { readOnly: true } as never);
+  try {
+    const query = db.prepare('SELECT doc FROM tarefas WHERE id = ?');
+    for (const id of new Set(ids)) {
+      const row = query.get(id) as { doc: string } | undefined;
+      if (row) put(JSON.parse(row.doc) as LedgerTask);
+    }
+  } finally {
+    db.close();
+  }
+  return out;
 }
 
 const segments = (folder: string): string[] => folder.split(/[\\/]+/).filter(Boolean);
@@ -144,6 +248,7 @@ export function planSeed(ledger: SeedLedger, options: SeedOptions): SeedPlan {
     .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
   const folders = [...new Set(live.map((task) => projectFolderOf(task.projectPath)))];
   const pcRoot = options.pcRoot?.replace(/[\\/]+$/, '') ?? pcRootOf(folders);
+  const resolveSession = options.sessionOf ?? sessionResolver([]);
   const projects = new Map<string, { name: string; aliases: Set<string> }>();
   for (const folder of folders) {
     const id = projectSlug(folder);
@@ -156,9 +261,11 @@ export function planSeed(ledger: SeedLedger, options: SeedOptions): SeedPlan {
     const slug = projectSlug(projectFolderOf(task.projectPath));
     const front = frenteOf(task);
     const { stage, note } = stageOf(task);
+    const projectId = projects.has(slug) ? slug : NO_PROJECT;
+    const session = stage === 'inbox' ? undefined : resolveSession(projectId, task.ownerPlaceId);
     return {
       taskId: task.id,
-      projectId: projects.has(slug) ? slug : NO_PROJECT,
+      projectId,
       title: task.title?.trim() || task.request.split('\n')[0]!.trim() || task.id,
       ownerRequest: task.request,
       criterion: task.doneWhen,
@@ -169,6 +276,7 @@ export function planSeed(ledger: SeedLedger, options: SeedOptions): SeedPlan {
       ...(stage === 'inbox' ? {} : { place: task.ownerPlaceId }),
       stage,
       note,
+      ...(session ? { session } : {}),
     };
   });
   return {
@@ -178,10 +286,40 @@ export function planSeed(ledger: SeedLedger, options: SeedOptions): SeedPlan {
   };
 }
 
+export interface SessionFill {
+  readonly cardId: string;
+  readonly taskId: string;
+  readonly stage: string;
+  readonly place: string;
+  readonly session: string;
+}
+
+/**
+ * `semear --seco`: the cards already on the board that a run would give their session (the same rule as `runSeed`),
+ * from the board's file opened read-only (nothing created, no schema written).
+ */
+export function countSessionFills(boardFile: string, plan: SeedPlan): SessionFill[] {
+  const db: DatabaseSync = new DatabaseSync(boardFile, { readOnly: true } as never);
+  try {
+    const query = db.prepare('SELECT id, stage, place_id, session_id FROM cards WHERE client_ref = ?');
+    const out: SessionFill[] = [];
+    for (const seed of plan.cards) {
+      if (!seed.session || !seed.place) continue;
+      const card = query.get(`oraculo:${seed.taskId}`) as { id: string; stage: string; place_id: string | null; session_id: string | null } | undefined;
+      if (card && !card.session_id && card.place_id === seed.place) out.push({ cardId: card.id, taskId: seed.taskId, stage: card.stage, place: seed.place, session: seed.session });
+    }
+    return out;
+  } finally {
+    db.close();
+  }
+}
+
 export interface SeedResult {
   readonly projects: number;
   readonly created: number;
   readonly existing: number;
+  /** Cards (new or old) that got their session now. */
+  readonly sessions: number;
 }
 
 /**
@@ -193,6 +331,7 @@ export async function runSeed(store: BoardSqliteStore, plan: SeedPlan, log: (lin
   for (const project of plan.projects) await store.upsertProject(project);
   let created = 0;
   let existing = 0;
+  let sessions = 0;
   for (const seed of plan.cards) {
     const ref = `oraculo:${seed.taskId}`;
     let card = await store.cardByClientRef(ref);
@@ -216,17 +355,23 @@ export async function runSeed(store: BoardSqliteStore, plan: SeedPlan, log: (lin
       });
       created += 1;
     }
-    if (card.version !== 1) continue;
-    const moved = await store.moveCard({
-      p_card_id: card.id,
-      p_to: seed.stage,
-      p_actor: SEED_ACTOR,
-      p_expected_version: 1,
-      p_note: seed.note,
-      ...(seed.stage === 'doing' && seed.place ? { p_place_id: seed.place } : {}),
-      p_as_leader: true,
-    });
-    log(`${seed.taskId} → ${moved.id} (${moved.project_id}, ${moved.stage}): ${seed.note}`);
+    if (card.version === 1) {
+      card = await store.moveCard({
+        p_card_id: card.id,
+        p_to: seed.stage,
+        p_actor: SEED_ACTOR,
+        p_expected_version: 1,
+        p_note: seed.note,
+        ...(seed.stage === 'doing' && seed.place ? { p_place_id: seed.place } : {}),
+        p_as_leader: true,
+      });
+      log(`${seed.taskId} → ${card.id} (${card.project_id}, ${card.stage}): ${seed.note}`);
+    }
+    // Only the session of the place the card still has (a card the Líder gave to another place keeps its own).
+    if (seed.session && !card.session_id && seed.place && card.place_id === seed.place && (await store.fillSession(card.id, seed.place, seed.session))) {
+      sessions += 1;
+      log(`${seed.taskId} → ${card.id}: sessão ${seed.session}`);
+    }
   }
-  return { projects: plan.projects.length, created, existing };
+  return { projects: plan.projects.length, created, existing, sessions };
 }

@@ -1,6 +1,6 @@
 // Quadro de tarefas (t-1e354d15) — the `card_*` tools of the MCP server `donel`: definitions and argument validation,
 // pure. The daemon on the VPS runs them (src/oraculo/board-tools.ts), intercepting them at the gate before the PC: the
-// board lives in the owner's Supabase and must answer with the PC off. The caller's place and session come from the
+// board lives on the VPS (a SQLite since 20/11, board-sqlite.ts) and must answer with the PC off. The caller's place and session come from the
 // board picture, never from the arguments. Not the Oráculo's `tarefa_*` (the owner's desk): never mix the two.
 
 import { OWNER_REASONS, STAGES, STAGE_LABELS, type OwnerReason, type Stage } from './rules';

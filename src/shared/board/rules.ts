@@ -1,8 +1,10 @@
 // Quadro de tarefas (t-1e354d15, dono 16/11: "o ledger é um quadro de tarefas, não um registro"). The task board lives
-// in the owner's personal Supabase, schema `board` (docs/board/schema.sql); the andamento of a session is its card
-// moving between stages. It is NOT the Oráculo (the owner's decision desk, `src/shared/ledger/`): nothing here reads or
-// writes it. The database enforces these same rules in `board.move_card` (the service key bypasses RLS, so a client
-// cannot be trusted); this file is the copy the daemon and the cron use to refuse early, and what the tests pin.
+// in a SQLite of the VPS since 20/11 (`~/.donel/board/board.sqlite`, src/oraculo/board-sqlite.ts; design
+// docs/design/quadro-de-tarefas-sqlite.md); the andamento of a session is its card moving between stages. It is NOT the
+// Oráculo (the owner's decision desk, `src/shared/ledger/`): nothing here reads or writes it. These are the rules of a
+// move: the SQLite store applies them inside its write transaction (where they count), the daemon and the cron refuse
+// early with them, and the tests pin them. The Supabase schema `board` (docs/board/schema.sql, `board.move_card`) has
+// the same rules in SQL, for the board kept there when `sqlite.json` is absent.
 
 /** The board's stages, in order. `column` is a reserved word in SQL, hence `stage`. */
 export const STAGES = ['inbox', 'todo', 'doing', 'blocked', 'waiting_owner', 'done'] as const;

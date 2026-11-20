@@ -89,6 +89,13 @@ export interface BoardSqliteStore extends BoardStore, BoardCronStore {
   ownerFeed(afterId: number): Promise<readonly OwnerFeedRow[]>;
   /** `board.lanes_without_leader`. */
   lanesWithoutLeader(): Promise<readonly LaneRow[]>;
+  /** Admin (`board-cron raia`): the lane of a project, or null. */
+  laneOf(projectId: string): Promise<LaneRow | null>;
+  /**
+   * Admin (the seed): the session that does a card the import left without one. Only while the card has none and its
+   * place is still `placeId`; no version, no move (it is who to wake, not a step of the card). False = nothing changed.
+   */
+  fillSession(cardId: string, placeId: string, sessionId: string): Promise<boolean>;
   close(): void;
 }
 
@@ -587,6 +594,18 @@ export function createBoardSqlite(file: string, options: { readonly now?: () => 
           .all(iso(now() - LEADER_ALIVE_MS))
           .map((row) => plain<LaneRow>(row)),
       ),
+
+    laneOf: (projectId) =>
+      read(() => {
+        const row = db.prepare('SELECT project_id, leader_place, leader_session, leader_seen_at FROM lanes WHERE project_id = ?').get(projectId);
+        return row ? plain<LaneRow>(row) : null;
+      }),
+    fillSession: async (cardId, placeId, sessionId) =>
+      write(() => {
+        if (!hasText(sessionId)) throw new BoardError('a sessão é obrigatória');
+        const result = db.prepare('UPDATE cards SET session_id = ? WHERE id = ? AND session_id IS NULL AND place_id = ?').run(sessionId, cardId, placeId);
+        return Number(result.changes) > 0;
+      }),
 
     upsertProject: async (project) =>
       write(() => {
