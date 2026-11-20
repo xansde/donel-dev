@@ -261,7 +261,7 @@ export interface BoardReadView {
 export function openBoardSqliteReadOnly(file: string, options: { readonly now?: () => number } = {}): BoardReadView & { close(): void } {
   const now = options.now ?? Date.now;
   if (!existsSync(file)) throw new BoardError('o quadro de tarefas não existe nesta máquina');
-  const db = new DatabaseSync(file, { readOnly: true });
+  const db = new DatabaseSync(file, { readOnly: true } as never);
   try {
     db.exec('PRAGMA busy_timeout = 5000;');
   } catch (error) {
