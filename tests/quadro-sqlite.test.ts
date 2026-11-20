@@ -12,7 +12,7 @@ import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, nodeLedgerProofFs } from '../src/main/ledger-store';
 import { openSqliteLedgerStore } from '../src/oraculo/ledger-sqlite';
 import { chooseBoard, createBoardSqlite, type BoardSqliteStore } from '../src/oraculo/board-sqlite';
-import { planSeed, readLedgerReadOnly, runSeed, sessionResolver } from '../src/board-cron/semente';
+import { parseHostOf, planSeed, readLedgerReadOnly, runSeed, sessionResolver } from '../src/board-cron/semente';
 
 const dirs: string[] = [];
 const stores: BoardSqliteStore[] = [];
@@ -151,6 +151,23 @@ describe('semente a partir do Oráculo', () => {
     expect(byTask.get(running)?.note).toContain('travada');
     expect(byTask.get(owner)).toMatchObject({ stage: 'inbox' });
     expect(await store.projectOf('/home/u/seazone/Donel Dev/.claude/worktrees/y')).toBe('donel-dev');
+  });
+
+  it('--host-de dá o host de cada projeto no primeiro cadastro; projeto que já existe guarda o dele', async () => {
+    expect(parseHostOf(['homologacao=homologacoes', 'bizops=vps-pessoal'])).toEqual({ homologacao: 'homologacoes', bizops: 'vps-pessoal' });
+    expect(() => parseHostOf(['homologacao'])).toThrow('--host-de');
+    const task = (id: string, projectPath: string) => ({ id, projectPath, state: 'aberta', createdAt: 1, events: [], request: id, doneWhen: 'pronto', due: '', ownerPlaceId: DEV, risk: 'baixo' });
+    const ledger = { tasks: { 't-1': task('t-1', '/home/u/seazone/Homologacao'), 't-2': task('t-2', '/home/u/seazone/atlas') } } as never;
+    const plan = planSeed(ledger, { host: 'vps-pessoal', vpsHome: '/home/u', hostOf: { homologacao: 'homologacoes' } });
+    expect(Object.fromEntries(plan.projects.map((p) => [p.id, p.host]))).toEqual({ atlas: 'vps-pessoal', homologacao: 'homologacoes' });
+    expect(plan.unknownHostOf).toEqual([]);
+    // a --host-de whose project is not in the plan (a typo) is reported, never dropped in silence
+    expect(planSeed(ledger, { host: 'vps-pessoal', vpsHome: '/home/u', hostOf: { homologacoes: 'homologacoes', atlas: 'pc' } }).unknownHostOf).toEqual(['homologacoes']);
+    const store = board();
+    await store.upsertProject({ id: 'atlas', name: 'atlas', host: 'pc', aliases: [] });
+    await runSeed(store, plan);
+    expect((await store.upsertProject({ id: 'atlas', name: 'atlas', aliases: [] })).host).toBe('pc');
+    expect((await store.upsertProject({ id: 'homologacao', name: 'Homologacao', aliases: [] })).host).toBe('homologacoes');
   });
 
   it('o cartão leva a sessão do lugar (session:<uuid>, ou quem segura o lugar no retrato), também numa segunda rodada', async () => {

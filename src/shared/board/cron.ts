@@ -233,6 +233,19 @@ export function followLaneLeaders(
   return out;
 }
 
+/**
+ * The card follows its place (sobra da t-1e354d15, 20/11): `session_id` is the session that last moved the card, and a
+ * place renewed (or reopened, or `/clear`) leaves it pointing at a closed one; the seed only fills an empty one. The
+ * round resolves the card's place to the session alive here that holds it now (`sessionOf`, the lanes' resolver) and
+ * uses that one; nothing alive holds the place = the card keeps its own (the Líder hears it is closed). Nothing is
+ * written: who to wake is not a step of the card.
+ */
+export function followCardSession(card: CronCard, sessionOf: (projectId: string, placeId: string) => string | undefined): CronCard {
+  if (!card.placeId) return card;
+  const session = sessionOf(card.projectId, card.placeId);
+  return session && session !== card.sessionId ? { ...card, sessionId: session } : card;
+}
+
 /** One notice per session in a round: the texts of all its cards in one, in the order they came. */
 export interface NoticeGroup<T> {
   readonly session: string;
@@ -260,24 +273,36 @@ export function groupNotices<T>(items: readonly T[], sessionOf: (item: T) => str
 // A response on the card's link is someone else's (design §5: "mensagem de outra pessoa"). The sessions comment with
 // the same GitHub and Slack accounts the cron reads with, so what that account wrote never counts.
 
+/** A GitHub account: `type` is "Bot" for an app (its login ends in "[bot]"). */
+interface GithubAccount {
+  readonly login?: string;
+  readonly type?: string;
+}
+
 interface GithubAuthored {
-  readonly user?: { readonly login?: string } | null;
+  readonly user?: GithubAccount | null;
 }
 
 export interface GithubReading {
   readonly comments: readonly (GithubAuthored & { readonly created_at?: string })[];
   readonly reviews?: readonly (GithubAuthored & { readonly submitted_at?: string })[];
   /** issues/<n>: closed_at and closed_by (a PR is an issue there too). */
-  readonly issue?: { readonly closed_at?: string | null; readonly closed_by?: { readonly login?: string } | null };
+  readonly issue?: { readonly closed_at?: string | null; readonly closed_by?: GithubAccount | null };
   /** pulls/<n>: merged_at and merged_by. */
-  readonly pull?: { readonly merged_at?: string | null; readonly merged_by?: { readonly login?: string } | null };
+  readonly pull?: { readonly merged_at?: string | null; readonly merged_by?: GithubAccount | null };
 }
 
 const newer = (iso: string | null | undefined, since: number): boolean => typeof iso === 'string' && Date.parse(iso) > since;
 
-/** Something on a GitHub link after `since` that `self` (the gh account of this machine) did not do. */
+/**
+ * Something on a GitHub link after `since` that `self` (the gh account of this machine) did not do. A bot (CI, preview,
+ * dependabot, a review app) is nobody's response: its comment would wake the session for nothing.
+ */
 export function othersOnGithub(reading: GithubReading, self: string, since: number): boolean {
-  const other = (who: { readonly login?: string } | null | undefined): boolean => (who?.login ?? '').toLowerCase() !== self.toLowerCase();
+  const other = (who: GithubAccount | null | undefined): boolean => {
+    const login = (who?.login ?? '').toLowerCase();
+    return login !== self.toLowerCase() && !login.endsWith('[bot]') && who?.type !== 'Bot';
+  };
   if (reading.comments.some((c) => newer(c.created_at, since) && other(c.user))) return true;
   if ((reading.reviews ?? []).some((r) => newer(r.submitted_at, since) && other(r.user))) return true;
   if (reading.pull && newer(reading.pull.merged_at, since) && other(reading.pull.merged_by)) return true;
