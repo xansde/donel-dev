@@ -115,7 +115,7 @@ export function buildPostMortemScript(start: number, end: number): string {
     "  q=''; w=''",
     '  for dia in $janelas; do',
     '    d=${dia%%,*}; r=${dia#*,}; a=${r%%,*}; b=${r#*,}',
-    '    f=/var/log/sysstat/sa$d; [ -r "$f" ] || f=/var/log/sa/sa$d; [ -r "$f" ] || continue',
+    '    f="${DONEL_SA_DIR:-/var/log/sysstat}"/sa$d; [ -r "$f" ] || f=/var/log/sa/sa$d; [ -r "$f" ] || continue',
     '    q="$q$(S_TIME_FORMAT=ISO LC_ALL=C sar -q -f "$f" -s "$a" -e "$b" 2>/dev/null)\n"',
     '    w="$w$(S_TIME_FORMAT=ISO LC_ALL=C sar -S -f "$f" -s "$a" -e "$b" 2>/dev/null)\n"',
     '  done',

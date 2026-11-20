@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -329,11 +330,21 @@ describe('repetição e registro: o que o dono lê é verdade', () => {
     expect(passedRecord({ label: 'VPS pessoal', kind: 'vps-fora', firstSeen: QUEDA_VPS, endedAt: VOLTA_VPS, cause: medida, affected: NO_AFFECTED }).body).toContain('mediu a causa na máquina');
   });
 
-  it('a janela do sar que vira a meia-noite lê os dois dias', () => {
-    const start = Date.UTC(2026, 10, 18, 3, 5); // 18/11 00:05 em Brasília
-    const script = buildPostMortemScript(start, start + 35 * MIN);
-    expect(script).toContain('for dia in');
-    expect(script).not.toContain('e=23:59:59');
+  it.skipIf(process.platform === 'win32')('a janela do sar que vira a meia-noite lê os dois dias (sar e arquivos de mentira)', () => {
+    // 19/11 23:50 a 20/11 00:30 em Brasília; o pico de carga (9,5) está no arquivo do dia 20, às 00:20.
+    const dir = mkdtempSync(join(tmpdir(), 'sar-'));
+    dirs.push(dir);
+    mkdirSync(join(dir, 'bin'));
+    writeFileSync(join(dir, 'sa19'), '23:50:01 18 917 1.10 0.25 0.47 0\n');
+    writeFileSync(join(dir, 'sa20'), '00:10:01 18 869 0.30 0.27 0.34 0\n00:20:01 19 889 9.50 0.64 0.42 7\n');
+    // A fake sar: prints the lines of the file (-f) between -s and -e; -S prints a swap line.
+    writeFileSync(join(dir, 'bin', 'sar'), `#!/bin/sh\nmodo=$1; shift\nwhile [ $# -gt 0 ]; do case $1 in -f) f=$2;; -s) s=$2;; -e) e=$2;; esac; shift; done\nif [ "$modo" = "-S" ]; then echo "00:20:01 1 1 40.00 0 0"; exit 0; fi\nawk -v s="$s" -v e="$e" '$1 >= s && $1 <= e' "$f"\n`);
+    chmodSync(join(dir, 'bin', 'sar'), 0o755);
+    const script = buildPostMortemScript(Date.UTC(2026, 10, 20, 2, 50), Date.UTC(2026, 10, 20, 3, 30));
+    const run = spawnSync('sh', ['-c', script], { env: { PATH: `${join(dir, 'bin')}:/usr/bin:/bin`, TZ: 'America/Sao_Paulo', DONEL_SA_DIR: dir }, encoding: 'utf8' });
+    const pm = parsePostMortem(run.stdout);
+    expect(pm?.maxLoad).toBe(9.5);
+    expect(pm?.maxBlocked).toBe(7);
   });
 });
 

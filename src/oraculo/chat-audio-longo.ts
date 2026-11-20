@@ -207,7 +207,7 @@ export const PEDACO_PACIENCIA_S = 900;
 
 /** The curl of one piece (t-6306aec9): its patience goes in a header, so the transcriber does not drop it at 570 s. */
 export function pedacoCurlArgs(url: string, file: string, type: string, out: string): string[] {
-  return ['curl', '-sS', '--max-time', String(PEDACO_PACIENCIA_S), '-H', `X-Donel-Paciencia-S: ${PEDACO_PACIENCIA_S}`, '--fail-with-body', '-o', out, '-F', `file=@${file};type=${type}`, '-F', 'response_format=json', '-F', 'language=pt', `${url.replace(/\/$/, '')}/inference`];
+  return ['curl', '-sS', '--max-time', String(PEDACO_PACIENCIA_S), '-H', `X-Donel-Paciencia-S: ${PEDACO_PACIENCIA_S}`, '-w', '%{http_code}', '--fail-with-body', '-o', out, '-F', `file=@${file};type=${type}`, '-F', 'response_format=json', '-F', 'language=pt', `${url.replace(/\/$/, '')}/inference`];
 }
 
 export function limitedTranscriber(options: { readonly url: string; readonly limitador?: string; readonly tmpOut: (file: string) => string }): TranscribePedaco {
@@ -226,6 +226,8 @@ export function limitedTranscriber(options: { readonly url: string; readonly lim
     if (r.code === SEM_VAGA) throw new TranscribeError('tempo', 'a VPS ficou sem vaga para transcrever');
     if (r.code === TIMEOUT || r.code === 28) throw new TranscribeError('tempo', 'um pedaço demorou demais');
     if (r.code === 7) throw new TranscribeError('conexao', 'o transcritor da VPS não respondeu');
+    // 504 = the piece waited in the transcriber's queue past its patience: another try later, never a lost stretch.
+    if (r.code === 22 && /504\s*$/.test(r.stdout)) throw new TranscribeError('tempo', 'um pedaço esperou demais na fila do transcritor');
     let body: { text?: unknown } | null = null;
     try {
       body = JSON.parse(readFileSync(out, 'utf8')) as { text?: unknown };
