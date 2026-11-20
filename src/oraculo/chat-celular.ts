@@ -49,7 +49,8 @@ const MAX_TEXT = CHAT_MAX_TEXT;
 const MAX_REPLY = 4000;
 /** A row delivered here and never answered in this long leaves the wait (the transcript lost it). */
 const MAX_WAIT_MS = 24 * 60 * 60_000;
-const JOINED_REPLY = '↳ respondi junto com a mensagem seguinte.';
+/** The Líder's line when one answer covers two messages: never a warning on the phone (avisos.ts). */
+export const JOINED_REPLY = '↳ respondi junto com a mensagem seguinte.';
 /** Under the owner's words when the Líder reads them here: nothing to run, his answer goes back by itself. */
 export const LOCAL_REPLY_HINT = 'Responda aqui mesmo: o que você escrever ao fim deste turno volta sozinho ao celular.';
 export const DELIVERED_NOTE = 'entregue ao Líder único pela VPS';

@@ -22,6 +22,7 @@ import { MAX_ARQUIVO_BODY, MAX_ARQUIVO_BYTES } from './chat-arquivo';
 import type { GlossarioResumo, GlossarioStore } from './glossario';
 import { CREDENCIAL_PATH, type CredencialHandler } from './credencial';
 import { montarUsoIa, USO_IA_PATH, type UsoIaPaths } from './uso-ia';
+import type { Avisos } from './avisos';
 
 export const V2_PREFIX = '/api/v2/';
 export const SIGNATURE_SCHEME = 'donel-req-v1';
@@ -61,6 +62,12 @@ const MAX_RESULTADO_LINKS = 10;
 /** Who asked, as `quadro::e_do_dono` in the app reads it. */
 const OWNER_ASKED = /^\s*(alexandre|dono)\b/i;
 const NOT_A_RESULT = new Set(['cancelada', 'substituída']);
+/**
+ * t-b07b50ff (docs/adr/0011) — the phone's native warnings (`GET avisos`, a long-poll): behind a local flag read at each
+ * request; off = 404 `desligada` and the app stops its service.
+ */
+export const AVISOS_PATH = 'avisos';
+export const AVISOS_FLAG = 'celular-avisos';
 
 const HEADERS = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } as const;
 const json = (status: number, value: unknown): MobileResponse => ({ status, headers: { ...HEADERS, 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(value) });
@@ -92,6 +99,8 @@ export interface CelularV2Deps {
    * the local flag `celular-uso-ia`, read at every request. Absent or off = 404 `desligada`.
    */
   readonly usoIa?: UsoIaPaths & { readonly flagOn: () => boolean };
+  /** t-b07b50ff — the warnings' long-poll (src/oraculo/avisos.ts): only the entregador, where the chat lives. Absent = 404. */
+  readonly avisos?: Avisos;
   readonly log?: (line: string) => void;
   readonly now?: () => number;
   /** Local feature flags (`local-flags.ts`); default: the files in `~/.donel/flags/` of this machine, read each time. */
@@ -122,13 +131,14 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
   /** A proof's prepared form, by file: the hash of a print is read once, not at every list. */
   const prepared = new Map<string, Awaited<ReturnType<typeof prepareProof>>>();
 
-  function authorize(request: MobileRequest): MobileResponse | null {
+  /** The device that signed, or why not. */
+  function authorize(request: MobileRequest): { readonly denied: MobileResponse } | { readonly device: string } {
     const match = /^Donel-HMAC\s+(\d{10,16})\.([0-9a-f]{64})$/.exec(request.authorization?.trim() ?? '');
-    if (!match) return erro(401, 'nao-pareado');
+    if (!match) return { denied: erro(401, 'nao-pareado') };
     const ts = match[1]!;
-    if (Math.abs(now() - Number(ts)) > CLOCK_WINDOW_MS) return erro(401, 'relogio', 'O relógio do celular está fora da hora da VPS.');
+    if (Math.abs(now() - Number(ts)) > CLOCK_WINDOW_MS) return { denied: erro(401, 'relogio', 'O relógio do celular está fora da hora da VPS.') };
     const device = deps.verify(signedMessage(request.method, request.url, ts, request.body ?? ''), match[2]!);
-    return device ? null : erro(401, 'nao-pareado');
+    return device ? { device: device.name } : { denied: erro(401, 'nao-pareado') };
   }
 
   function rowsOf(doc: LedgerDoc): TarefaRow[] {
@@ -530,8 +540,8 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     } catch {
       return erro(400, 'invalido');
     }
-    const denied = authorize(request);
-    if (denied) return denied;
+    const auth = authorize(request);
+    if ('denied' in auth) return auth.denied;
     const path = url.pathname.slice(V2_PREFIX.length);
     const method = request.method.toUpperCase();
     const isPost = method === 'POST';
@@ -568,6 +578,11 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     }
     if (method === 'GET' && path === 'arvore') return arvore();
     if (method === 'GET' && path === USO_IA_PATH) return usoIa();
+    if (method === 'GET' && path === AVISOS_PATH) {
+      if (!deps.avisos) return erro(404, 'nao-encontrada');
+      if (!flagOn(AVISOS_FLAG)) return erro(404, 'desligada');
+      return json(200, await deps.avisos.atender(auth.device, url.searchParams));
+    }
     return erro(404, 'nao-encontrada');
   };
 }

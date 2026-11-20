@@ -28,6 +28,7 @@ import { createMobilePedidosPort, createPedidoRouter, createPedidosStore, type M
 import { createTranscriptionJobs, DEFAULT_WHISPER_URL, whisperServerTranscriber } from './transcrever';
 import { createPushStore, isPushSubscription, newlyWaiting, pushMessageFor, sendPush, type PushFetch } from './webpush';
 import type { LedgerDoc } from '../../shared/ledger/contract';
+import type { OwnerInboxItem } from '../../shared/ledger/inbox';
 
 /** What the phone's server needs, without Electron: the PC's app and the Oráculo's daemon on the VPS both run it. */
 export interface CelularCoreDeps {
@@ -61,6 +62,11 @@ export interface CelularCoreDeps {
    */
   readonly port?: number;
   readonly publicPort?: number;
+  /**
+   * t-b07b50ff — the items that started waiting for the owner, each time some do: called before any push check (the
+   * phone app has no push subscription; the registro writes them for its native warnings). Only the daemon passes it.
+   */
+  readonly onFresh?: (fresh: readonly OwnerInboxItem[], doc: LedgerDoc) => void;
 }
 
 export interface CelularCore extends CelularService {
@@ -234,6 +240,13 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
   function warnNewItems(doc: LedgerDoc): void {
     const { fresh, next } = newlyWaiting(waiting, doc, Date.now());
     waiting = next;
+    if (fresh.length > 0 && deps.onFresh) {
+      try {
+        deps.onFresh(fresh, doc);
+      } catch (error) {
+        console.error('[donel-dev] celular: os avisos do app não foram gravados:', error);
+      }
+    }
     if (!auth.enabled || deps.suspended?.() || fresh.length === 0) return;
     const paired = new Set(auth.devices().map((device) => device.id));
     let keys;
