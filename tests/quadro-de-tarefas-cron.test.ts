@@ -91,13 +91,12 @@ describe('vigia', () => {
     expect(planVigia(card({ leaderNoticedAt: NOW - 60_000 }), idle, wakes, NOW).do).toBe('skip');
   });
 
-  it('entregue no Oráculo esperando o aceite não é parado; rejeitada volta a ser; aceita vai ao Líder uma vez', () => {
+  it('entregue no Oráculo esperando o aceite não é parado; rejeitada volta a ser; aceita não vai ao Líder (a ronda fecha o cartão)', () => {
     expect(planVigia(card({ desk: { state: 'entregue', closed: false } }), idle, [], NOW).do).toBe('skip');
     expect(planVigia(card({ desk: { state: 'rejeitada', closed: false } }), idle, [], NOW).do).toBe('wake');
     expect(planVigia(card({ desk: { state: 'entregue', closed: false } }), closed, [], NOW).do).toBe('skip');
-    // accepted on the desk and still in Fazendo: the Líder hears it once, to move it to Feito
-    expect(planVigia(card({ desk: { state: 'aceita', closed: true } }), idle, [], NOW)).toMatchObject({ do: 'leader' });
-    expect(planVigia(card({ desk: { state: 'aceita', closed: true }, leaderNoticedAt: NOW - 9 * 3600_000 }), idle, [], NOW).do).toBe('skip');
+    // accepted on the desk and still in Fazendo: the round's follow of the Oráculo moves it to Feito (r-a01b8ca6)
+    expect(planVigia(card({ desk: { state: 'aceita', closed: true } }), idle, [], NOW).do).toBe('skip');
   });
 
   it('o aviso vai ao Líder da raia vivo; sem ele, ao Líder único vivo; sem nenhum, diz por quê', () => {
