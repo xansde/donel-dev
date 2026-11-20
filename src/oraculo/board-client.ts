@@ -34,6 +34,8 @@ export interface CardRow {
   readonly charge_count?: number;
   readonly leader_noticed_at?: string | null;
   readonly justified_at?: string | null;
+  /** The card on the owner's desk (the Oráculo task the seed imported it from), when there is one. */
+  readonly oraculo_id?: string | null;
 }
 
 export interface LaneRow {
@@ -78,6 +80,10 @@ export interface CreateCardArgs {
   readonly p_stage?: 'inbox' | 'todo';
   readonly p_place_id?: string;
   readonly p_session_id?: string;
+  /** `AAAA-MM-DD`. */
+  readonly p_due?: string;
+  readonly p_risk?: 'baixo' | 'alto';
+  readonly p_oraculo_id?: string;
   /** The board's picture shows the caller as the Líder the owner put there (see docs/board/schema.sql). */
   readonly p_as_leader?: boolean;
 }

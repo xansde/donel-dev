@@ -17,7 +17,8 @@ import type { DeliverOwnerMessage, OwnerMessage } from '../main/ledger-card-writ
 import type { LedgerDeliveredTo } from '../shared/ledger/contract';
 import { boardName } from '../shared/vigia/board';
 import { clearAdoptedMarks, createOpenLocal, readOpenKit, roomRefusal, sweepUnfinishedOpenings, type ScriptRun } from './abrir-local';
-import { createBoardClient, readBoardConfig, type BoardStore } from './board-client';
+import type { BoardStore } from './board-client';
+import { BOARD_SQLITE_CONFIG, chooseBoard, openBoard } from './board-sqlite';
 import { createLocalLeaderFinder, currentConversation } from './lider-local';
 import { RETRATO_PC_FILE } from './modo';
 import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForward, type BoardPicture, type GateDeps, type PictureSession } from './portao';
@@ -442,22 +443,36 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
     ? deliverLocalFirst(recados.deliverLocal, junto.relay, 0)
     : async (message: OwnerMessage) => (await recados.deliverLocal(message).catch(() => null)) ?? (await apart!.notices.send(message), null);
 
-  // The task board: read at each call, so writing the config turns it on without a restart.
-  const boardConfigFile = process.env.DONEL_BOARD_CONFIG || join(place.home, '.donel', 'board', 'supabase.json');
-  let boardStore: { readonly key: string; readonly store: BoardStore } | null = null;
+  // The task board: the config is read at each call, so writing it turns the board on without a restart. sqlite.json
+  // (the board in a SQLite of this machine, 20/11) wins over supabase.json; an invalid one turns the board off.
+  const boardPaths = {
+    sqliteConfig: process.env.DONEL_BOARD_SQLITE_CONFIG || join(place.home, '.donel', 'board', BOARD_SQLITE_CONFIG),
+    supabaseConfig: process.env.DONEL_BOARD_CONFIG || join(place.home, '.donel', 'board', 'supabase.json'),
+  };
+  let boardStore: { readonly key: string; readonly store: BoardStore & { close?: () => void } } | null = null;
   let boardConfigWarned = false;
   const cards = (): BoardStore | null => {
-    const config = readBoardConfig(boardConfigFile);
-    if (!config) {
-      if (!boardConfigWarned && existsSync(boardConfigFile)) {
+    const choice = chooseBoard(boardPaths, place.home);
+    if (choice.kind === 'off' || choice.kind === 'invalid') {
+      if (!boardConfigWarned && choice.kind === 'invalid') {
         boardConfigWarned = true;
-        console.error(`[oraculo] ${boardConfigFile} existe mas é inválido ({url https, serviceKeyFile}); quadro de tarefas desligado.`);
+        console.error(`[oraculo] ${choice.file} existe mas é inválido (${choice.expected}); quadro de tarefas desligado.`);
       }
+      boardStore?.store.close?.();
+      boardStore = null;
       return null;
     }
     boardConfigWarned = false;
-    const key = `${config.url}|${config.serviceKeyFile}`;
-    if (boardStore?.key !== key) boardStore = { key, store: createBoardClient(config) };
+    if (boardStore?.key !== choice.key) {
+      boardStore?.store.close?.();
+      try {
+        boardStore = { key: choice.key, store: openBoard(choice) };
+      } catch (error) {
+        boardStore = null;
+        console.error(`[oraculo] o quadro de tarefas não abriu: ${error instanceof Error ? error.message : String(error)}`);
+        return null;
+      }
+    }
     return boardStore.store;
   };
 
