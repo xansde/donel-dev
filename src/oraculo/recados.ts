@@ -459,6 +459,12 @@ function plainScreen(text: string): string {
 /** A turn that did not end (an Esc, a lost Stop) and wrote nothing for this long, with a quiet screen, is not running. */
 const IDLE_TURN_MS = 5 * 60_000;
 
+/**
+ * How long the screen must stay the same for a session in an open turn to count as still (t-0116dccf): the CLI's
+ * spinner shows the elapsed time and changes every second, wherever it sits on the screen.
+ */
+const STILL_SCREEN_MS = 3_000;
+
 /** How many lines of the screen `sessao_ver_tela` shows (its end: the input box and what came just before it). */
 const SCREEN_LINES = 60;
 
@@ -630,11 +636,33 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     return found;
   }
 
-  /** A session no hook spoke of (or whose "ocupada" went stale): stopped when its transcript's last turn ended and is quiet. */
-  async function transcriptSaysStopped(sid: string): Promise<boolean> {
+  /** Each session's last screen read (plain text) and since when it reads the same (memory only). */
+  const lastScreens = new Map<string, { readonly text: string; readonly since: number }>();
+  /**
+   * Notes a read of `sid`'s screen and says whether it is quiet: no turn on it (`isWorking`), and the same text as a
+   * read at least `STILL_SCREEN_MS` before (a long turn's spinner, even far from the box, counts the seconds). Without
+   * an earlier read it is not quiet this time.
+   */
+  function screenIsQuiet(sid: string, screenText: string): boolean {
+    const text = plainScreen(screenText);
+    const known = lastScreens.get(sid);
+    if (!known || known.text !== text) {
+      lastScreens.set(sid, { text, since: now() });
+      return false;
+    }
+    return now() - known.since >= STILL_SCREEN_MS && !isWorking(text.split('\n'));
+  }
+
+  /**
+   * A session no hook spoke of (or whose "ocupada" went stale): stopped when its transcript's last turn ended and is
+   * quiet. A turn that never ended (a resume whose last entry is a user one nobody answered, or a session with no turn
+   * at all) and wrote nothing for IDLE_TURN_MS counts too, but only on a `quietScreen` (t-0116dccf): a long tool run
+   * writes nothing to the transcript either, and only its moving screen tells them apart.
+   */
+  async function transcriptSaysStopped(sid: string, quietScreen: boolean): Promise<boolean> {
     const path = await transcriptPath(sid);
     const turn = path ? await lastTurn(path) : null;
-    return turn !== null && turn.ended && now() - turn.at >= QUIET_MS;
+    return turn !== null && now() - turn.at >= QUIET_MS && (turn.ended || (quietScreen && now() - turn.at >= IDLE_TURN_MS));
   }
   /** A typed item's label in its session's transcript (the known one, else found by the sid): it came in. */
   async function typedInTranscript(sid: string, id: string): Promise<boolean> {
@@ -971,14 +999,18 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
 
   /** When each target with a waiting item was first missing from tmux (memory only). */
   const missing = new Map<string, number>();
+  /** Items whose place has two or more live sessions here: said once in the log (memory only). */
+  const crowded = new Set<string>();
 
   /**
    * t-c3fbe852 — a waiting item whose target left this machine (missing from tmux for `GONE_MS`): the Líder único
-   * renewed here gets it in its new tmux; otherwise an item that carries its message goes to the PC's relay with the
-   * same key (sent before it is marked: a crash in between sends it again, and the key joins it there), never twice.
+   * renewed here gets it in its new tmux; so does a place renewed here (t-0116dccf: exactly one live session of the
+   * same place in the picture, else nothing is guessed); otherwise an item that carries its message goes to the PC's
+   * relay with the same key (sent before it is marked: a crash in between sends it again, and the key joins it there),
+   * never twice.
    */
   async function sendBack(): Promise<void> {
-    const waiting = read().filter((item) => item.estado === 'fila' && !staleRecado(item, now()) && (item.volta || item.para.lugar === LEADER_OF_ALL));
+    const waiting = read().filter((item) => item.estado === 'fila' && !staleRecado(item, now()) && (item.volta || item.para.lugar === LEADER_OF_ALL || item.para.lugar.startsWith('place:')));
     if (!waiting.length) {
       missing.clear();
       return;
@@ -1003,6 +1035,27 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
         );
         log(`recado ${item.id} segue o Líder único para a sessão ${leader.sid}.`);
         continue;
+      }
+      if (item.para.lugar.startsWith('place:')) {
+        // Same place and same board, as `sidsOfPlace`. The board: the message's, else the old session's in the picture,
+        // else the sender's when it is a place (`sessao_enviar` only reaches its own board). None known: the place alone
+        // (its id is `place:<uuid>`, unique across boards).
+        const pasta = item.volta?.projectPath || pastaOf(item.para.sid) || (item.de.lugar.startsWith('place:') ? pastaOf(item.de.sid) : undefined);
+        const alive = Object.entries(deps.picture()?.sessoes ?? {})
+          .filter(([sid, session]) => live.has(sid) && session.quemSou.lugar === item.para.lugar && (!pasta || session.quemSou.pasta === pasta))
+          .map(([sid]) => sid);
+        if (alive.length === 1) {
+          update(
+            (candidate) => candidate.id === item.id && candidate.estado === 'fila',
+            (candidate) => ({ ...candidate, para: { ...candidate.para, sid: alive[0]! } }),
+          );
+          log(`recado ${item.id} segue o lugar ${item.para.lugar} para a sessão ${alive[0]}.`);
+          continue;
+        }
+        if (alive.length > 1 && !crowded.has(item.id)) {
+          crowded.add(item.id);
+          log(`recado ${item.id} para ${item.para.lugar}: a sessão ${item.para.sid} saiu, e o lugar tem ${alive.length} sessões vivas aqui (${alive.join(', ')}); não sei qual, ele espera.`);
+        }
       }
       if (!item.volta || !deps.relay) continue;
       try {
@@ -1135,12 +1188,14 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     lastWatch = at;
     const live = await localSessions();
     for (const sid of [...boxes.keys()]) if (!live.has(sid)) boxes.delete(sid);
+    for (const sid of [...lastScreens.keys()]) if (!live.has(sid)) lastScreens.delete(sid);
     const typing = new Set(read().filter((item) => item.estado === 'digitado').map((item) => item.para.sid));
     for (const sid of live) {
       if (!SID_PATTERN.test(sid)) continue;
       const screen = await tmux.screen(sid);
       // Not readable now (tmux silent, copy mode): the box stays as it was known.
       if (!screen || screen.inMode) continue;
+      const quiet = screenIsQuiet(sid, screen.text);
       const text = fieldText(screen.text);
       if (!text) {
         boxes.delete(sid);
@@ -1157,7 +1212,7 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       // had a turn (19/11: a renewed session's first message, before which the transcript holds nothing).
       const idle = async (): Promise<boolean> =>
         !BUSY_ON_SCREEN.test(screen.text) &&
-        (moodOf(sid) === 'parada' || (moodOf(sid) !== 'ocupada' && ((await transcriptSaysStopped(sid)) || (await transcriptSaysFresh(sid)))));
+        (moodOf(sid) === 'parada' || (moodOf(sid) !== 'ocupada' && ((await transcriptSaysStopped(sid, quiet)) || (await transcriptSaysFresh(sid)))));
       if (donel && known.enters < MAX_BOX_ENTERS) {
         if (at < known.nextEnterAt) continue;
         if (await idle()) {
@@ -1257,8 +1312,10 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
         if (mood?.mood === 'digitando' || (mood?.mood === 'ocupada' && now() - mood.at < STALE_BUSY_MS)) continue;
         if (mood?.mood !== 'parada' && (holds.get(sid) ?? 0) > now()) continue;
         const screen = await tmux.screen(sid);
-        if (!screen || screen.inMode || BUSY_ON_SCREEN.test(screen.text) || !fieldIsFree(screen.text).free) continue;
-        if (mood?.mood !== 'parada' && !(await transcriptSaysStopped(sid))) continue;
+        if (!screen || screen.inMode) continue;
+        const quiet = screenIsQuiet(sid, screen.text);
+        if (BUSY_ON_SCREEN.test(screen.text) || isWorking(plainScreen(screen.text).split('\n')) || !fieldIsFree(screen.text).free) continue;
+        if (mood?.mood !== 'parada' && !(await transcriptSaysStopped(sid, quiet))) continue;
         // The conversation decides: an item typed before whose label is in the transcript came in, never typed again.
         const ids = new Set<string>();
         let bytes = 0;

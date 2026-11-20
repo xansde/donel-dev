@@ -76,6 +76,8 @@ function setup(options: { picture?: BoardPicture; withLedger?: boolean } = {}) {
     at: clock,
     sessoes: { [SID_DEV]: session(DEV, 'dev', 'Dev'), [SID_REV]: session(REV, 'revisor', 'Revisor') },
   };
+  /** This machine's tmux (a test renews a place by swapping its sid here). */
+  const live = new Set([SID_DEV, SID_REV]);
   const screens = new Map<string, string>();
   const typed: { sid: string; text: string }[] = [];
   const enters: string[] = [];
@@ -111,7 +113,7 @@ function setup(options: { picture?: BoardPicture; withLedger?: boolean } = {}) {
       io,
       ledger: () => ledger,
       picture: () => picture,
-      localSessions: async () => new Set([SID_DEV, SID_REV]),
+      localSessions: async () => new Set(live),
       tmux,
       relay: async (message) => relayed.push(message),
       transcriptOf: async (sid) => `/transcripts/${sid}.jsonl`,
@@ -130,6 +132,7 @@ function setup(options: { picture?: BoardPicture; withLedger?: boolean } = {}) {
     file,
     ledger,
     picture,
+    live,
     screens,
     typed,
     enters,
@@ -376,6 +379,66 @@ describe('Recados em fila: sessão nunca ouvida (daemon reiniciado, hook instala
     await recados.tick();
     expect(g.typed).toHaveLength(2);
     expect(g.typed[1]!.text).toContain(`Recado ${next.id}`);
+  });
+
+  it('turno que nunca fechou (retomada com uma notificação sem resposta): quieto há mais de 5 min e tela livre, digita; tela trabalhando, não', async () => {
+    const g = setup();
+    await deliveredTask(g.ledger!);
+    const recados = g.make();
+    const sent = JSON.parse(textOf(await recados.enviar(SID_REV, g.picture.sessoes[SID_REV]!, { tool: 'sessao_enviar', para: DEV, texto: 'aprovado' }))) as { id: string };
+    // Open for 1 min: still a turn.
+    g.turns.set(SID_DEV, { ended: false, at: g.clock() - 60_000 });
+    await recados.tick();
+    expect(g.typed).toEqual([]);
+    // Open and silent for 6 min, but the screen says it is working (the footer, or the spinner above the box).
+    g.turns.set(SID_DEV, { ended: false, at: g.clock() - 6 * 60_000 });
+    g.screens.set(SID_DEV, `${screen('')}\n  ⏵⏵ bypass permissions on · esc to interrupt`);
+    await recados.tick();
+    g.screens.set(SID_DEV, ['● feito.', '✻ Cogitating… (12s)', '─'.repeat(40), '❯ ', '─'.repeat(40)].join('\n'));
+    await recados.tick();
+    expect(g.typed).toEqual([]);
+    // Quiet screen and free field: typed only once the screen stayed the same across two reads 3 s apart.
+    g.screens.set(SID_DEV, screen(''));
+    await recados.tick();
+    expect(g.typed).toEqual([]);
+    g.advance(3_000);
+    await recados.tick();
+    expect(g.typed).toEqual([{ sid: SID_DEV, text: expect.stringContaining(`Recado ${sent.id}`) }]);
+  });
+
+  it('turno aberto e quieto há 10 min, mas a tela mexe (o spinner longe da caixa conta o tempo): não digita; parou de mexer, digita', async () => {
+    const g = setup();
+    await deliveredTask(g.ledger!);
+    const recados = g.make();
+    const sent = JSON.parse(textOf(await recados.enviar(SID_REV, g.picture.sessoes[SID_REV]!, { tool: 'sessao_enviar', para: DEV, texto: 'aprovado' }))) as { id: string };
+    // A long task list puts the spinner more than 8 rows above the box, and a statusLine drops the footer hint.
+    const todos = Array.from({ length: 10 }, (_, i) => `     ☐ passo ${i}`);
+    const working = (elapsed: string) =>
+      [`✻ Compiling… (${elapsed} · ↓ 1.2k tokens)`, '  ⎿  ☒ feito', ...todos, '─'.repeat(40), '❯ ', '─'.repeat(40), '  ⏵⏵ bypass permissions on (shift+tab to cycle)'].join('\n');
+    for (const elapsed of ['10m 2s', '10m 5s', '10m 8s']) {
+      g.turns.set(SID_DEV, { ended: false, at: g.clock() - 10 * 60_000 });
+      g.screens.set(SID_DEV, working(elapsed));
+      await recados.tick();
+      g.advance(3_000);
+    }
+    expect(g.typed).toEqual([]);
+    // The same screen in two reads 3 s apart: nothing runs.
+    await recados.tick();
+    expect(g.typed).toEqual([{ sid: SID_DEV, text: expect.stringContaining(`Recado ${sent.id}`) }]);
+  });
+
+  it('vigia da caixa: aviso do Donel na caixa de uma sessão num turno longo vivo (spinner acima da caixa, sem dica no rodapé), nenhum Enter', async () => {
+    const g = setup();
+    const recados = g.make();
+    const box = '◆ De Dev (place:x): [t-1] fim de turno';
+    // Text in the box drops the footer hint (CLI 2.1.314); the spinner stays above the box.
+    g.screens.set(SID_DEV, ['● Bash(npm run build)', '  ⎿  Running…', '✻ Compiling… (6m 2s · ↓ 1.2k tokens)', '─'.repeat(40), `❯ ${box}`, '─'.repeat(40), '  ⏵⏵ bypass permissions on (shift+tab to cycle)'].join('\n'));
+    for (let i = 0; i < 25; i += 1) {
+      g.turns.set(SID_DEV, { ended: false, at: g.clock() - 6 * 60_000 });
+      await recados.tick();
+      g.advance(30_000);
+    }
+    expect(g.enters).toEqual([]);
   });
 
   it('a caixa segura o texto a cada digitação: limpa e redigita; esgotadas as tentativas, caixa limpa, volta à fila, o Líder ouve uma vez e o fim de turno entrega uma vez', async () => {
@@ -892,5 +955,65 @@ describe('transcriptLastTurn: sessão renovada que ainda não teve turno', () =>
     const user = { parentUuid: 'a2', isSidechain: false, type: 'user', message: { role: 'user', content: '[Donel Dev · sessão renovada em voo] …' } };
     writeFileSync(path, `${[...lines, user].map((line) => JSON.stringify(line)).join('\n')}\n`);
     expect((await transcriptLastTurn(path))?.empty).not.toBe(true);
+  });
+});
+
+describe('Recados em fila: o lugar renovou (sid novo no mesmo lugar)', () => {
+  const SID_NEW = '88888888-2222-4333-8444-555555555555';
+  const SID_NEW_2 = '99999999-2222-4333-8444-555555555555';
+  const paraOf = (file: string, id: string) => (itemOf(file, id) as unknown as { para: { lugar: string; sid: string } }).para;
+
+  async function queuedForOldSid() {
+    const sessoes: Record<string, PictureSession> = { [SID_DEV]: session(DEV, 'dev', 'Dev'), [SID_REV]: session(REV, 'revisor', 'Revisor') };
+    const g = setup({ picture: { at: Date.UTC(2026, 10, 18, 12), sessoes } });
+    await deliveredTask(g.ledger!);
+    const recados = g.make();
+    const sent = JSON.parse(textOf(await recados.enviar(SID_DEV, sessoes[SID_DEV]!, { tool: 'sessao_enviar', para: REV, texto: 'pode revisar?' }))) as { id: string; entregue: string };
+    expect(sent.entregue).toBe('na-fila');
+    expect(paraOf(g.file, sent.id)).toEqual({ lugar: REV, sid: SID_REV });
+    // The place renews: the old sid leaves this machine's tmux and the picture.
+    g.live.delete(SID_REV);
+    delete sessoes[SID_REV];
+    return { g, recados, sent, sessoes };
+  }
+
+  it('uma sessão viva no lugar: o recado segue para o sid novo e é digitado nela', async () => {
+    const { g, recados, sent, sessoes } = await queuedForOldSid();
+    g.live.add(SID_NEW);
+    sessoes[SID_NEW] = session(REV, 'revisor', 'Revisor');
+    g.turns.set(SID_NEW, { ended: true, at: g.clock() - 60_000 });
+    await recados.tick();
+    g.advance(31_000);
+    await recados.tick();
+    expect(paraOf(g.file, sent.id)).toEqual({ lugar: REV, sid: SID_NEW });
+    expect(g.typed).toEqual([{ sid: SID_NEW, text: expect.stringContaining(`Recado ${sent.id}`) }]);
+  });
+
+  it('duas sessões vivas no lugar: não adivinha, o recado fica onde estava', async () => {
+    const { g, recados, sent, sessoes } = await queuedForOldSid();
+    for (const sid of [SID_NEW, SID_NEW_2]) {
+      g.live.add(sid);
+      sessoes[sid] = session(REV, 'revisor', 'Revisor');
+      g.turns.set(sid, { ended: true, at: g.clock() - 60_000 });
+    }
+    await recados.tick();
+    g.advance(31_000);
+    await recados.tick();
+    expect(paraOf(g.file, sent.id)).toEqual({ lugar: REV, sid: SID_REV });
+    expect(g.typed).toEqual([]);
+  });
+
+  it('a sessão viva do mesmo lugar é de outro quadro (outra pasta): não troca, o recado fica onde estava', async () => {
+    const { g, recados, sent, sessoes } = await queuedForOldSid();
+    g.live.add(SID_NEW);
+    const other = session(REV, 'revisor', 'Revisor');
+    sessoes[SID_NEW] = { ...other, quemSou: { ...other.quemSou, pasta: '/home/dono/seazone/outro' } };
+    g.turns.set(SID_NEW, { ended: true, at: g.clock() - 60_000 });
+    for (let i = 0; i < 3; i += 1) {
+      await recados.tick();
+      g.advance(31_000);
+    }
+    expect(paraOf(g.file, sent.id)).toEqual({ lugar: REV, sid: SID_REV });
+    expect(g.typed).toEqual([]);
   });
 });
