@@ -202,13 +202,21 @@ export type TranscribePedaco = (file: string, meta: { readonly type: string; rea
  * heavy job at a time on the machine) and runs curl against the transcriber. Without the limiter on this machine,
  * curl straight (still one piece at a time: the worker is serial).
  */
+/** How long curl waits for one piece: the transcriber is told (it discards an audio only 30 s before this). */
+export const PEDACO_PACIENCIA_S = 900;
+
+/** The curl of one piece (t-6306aec9): its patience goes in a header, so the transcriber does not drop it at 570 s. */
+export function pedacoCurlArgs(url: string, file: string, type: string, out: string): string[] {
+  return ['curl', '-sS', '--max-time', String(PEDACO_PACIENCIA_S), '-H', `X-Donel-Paciencia-S: ${PEDACO_PACIENCIA_S}`, '--fail-with-body', '-o', out, '-F', `file=@${file};type=${type}`, '-F', 'response_format=json', '-F', 'language=pt', `${url.replace(/\/$/, '')}/inference`];
+}
+
 export function limitedTranscriber(options: { readonly url: string; readonly limitador?: string; readonly tmpOut: (file: string) => string }): TranscribePedaco {
   const host = new URL(options.url).hostname;
   if (host !== '127.0.0.1' && host !== 'localhost' && host !== '[::1]') throw new Error('O transcritor tem de ser desta máquina.');
   const limitador = options.limitador ?? (process.env.DONEL_LIMITADOR || join(homedir(), 'bin', 'rotinas', 'limitador', 'limitador.py'));
   return async (file, meta) => {
     const out = options.tmpOut(file);
-    const curl = ['curl', '-sS', '--max-time', '900', '--fail-with-body', '-o', out, '-F', `file=@${file};type=${meta.type}`, '-F', 'response_format=json', '-F', 'language=pt', `${options.url.replace(/\/$/, '')}/inference`];
+    const curl = pedacoCurlArgs(options.url, file, meta.type, out);
     const limited = existsSync(limitador);
     const r = limited
       ? // Waits at most 15 min for each of its three gates (slot, build-pesado.lock, slot again) and runs 20: 65 min, under

@@ -5,6 +5,7 @@
 // a card nor its push. No password is read or sent: curing the vault is the owner's decision (phase 2).
 
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import type { OwnerMessage } from '../ledger-card-writer';
 import type { RemoteHealthReport } from '../../shared/health/remote';
 import type { VigiaCofrePrefs } from '../../shared/vigia/config';
 import { SERVICE_PLACE_PREFIX, SERVICE_ROLE, VIGIA_SERVICE, type LedgerActor, type LedgerForOwner, type LedgerOp, type LedgerTask } from '../../shared/ledger/contract';
@@ -73,6 +74,8 @@ export interface VigiaServiceDeps {
   readonly projectPath: () => string | null;
   /** The board (its name) of a session, for the card of a loop. */
   readonly boardOfSession?: (sid: string) => string | undefined;
+  /** Tells the Líder único of a task the owner asked for on a card (the board's delivery; absent = nobody told). */
+  readonly avisarLider?: (message: OwnerMessage) => Promise<unknown>;
   /**
    * The place (on its board) of a session, to tell which work in the Oráculo stopped with it (t-0358187b). Absent =
    * the warning names the sessions only.
@@ -310,9 +313,30 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
     return null;
   }
 
-  /** A task for the Líder único that the owner asked for on a card (investigate, or unlock now). */
-  async function askLeader(projectPath: string, at: number, what: { readonly title: string; readonly request: string; readonly doneWhen: string }): Promise<{ ok: boolean; reason?: string }> {
-    return deps.apply(ACTOR, { op: 'criar', projectPath, title: what.title, request: what.request, doneWhen: what.doneWhen, due: today(at), ownerPlaceId: 'lider', risk: 'baixo', requestedBy: 'vigia de travas, a pedido do dono na carta', frente: VIGIA_FRENTE });
+  /**
+   * A task for the Líder único that the owner asked for on a card (investigate, or unlock now). Its criterion carries the
+   * card's id: one already in the Oráculo (an answer lost on the way) is the same task, never a second one. The Líder
+   * único is told at once, with a key per card, so a repeat is one notice (ressalvas do #555).
+   */
+  async function askLeader(projectPath: string, at: number, cardId: string, what: { readonly title: string; readonly request: string; readonly doneWhen: string }): Promise<{ ok: boolean; reason?: string }> {
+    let id: string | null = null;
+    try {
+      id = deps.tasks?.().find((task) => task.ownerPlaceId === 'lider' && task.doneWhen === what.doneWhen && !isCancelledTask(task))?.id ?? null;
+    } catch {
+      id = null;
+    }
+    if (id === null) {
+      const made = await deps.apply(ACTOR, { op: 'criar', projectPath, title: what.title, request: what.request, doneWhen: what.doneWhen, due: today(at), ownerPlaceId: 'lider', risk: 'baixo', requestedBy: 'vigia de travas, a pedido do dono na carta', frente: VIGIA_FRENTE });
+      if (!made.ok) return made;
+      id = made.task.id;
+    }
+    const text = `◆ O vigia de travas abriu para você a tarefa ${id} «${what.title}», a pedido do dono na carta ${cardId}. Faça ou passe a quem vai fazer (tarefa_transferir).`;
+    try {
+      await deps.avisarLider?.({ projectPath, placeId: '', text, leaderText: text, key: `vigia-lider:${cardId}` });
+    } catch (error) {
+      log(`[vigia] o aviso ao Líder único não saiu: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return { ok: true };
   }
 
   /** The place's sessions before the lock and their work in the Oráculo that was running. */
@@ -435,7 +459,7 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
           const task = tasks.find((candidate) => candidate.id === entry.cartaId);
           const last = task?.events[task.events.length - 1];
           if (!task || task.state !== 'aceita' || last?.kind !== 'aceita' || last.by.kind !== 'dono') continue;
-          const made = await askLeader(projectPath, at, unlockTask(entry.trava.label, entry.trava.kind, entry.cartaId, entry.firstSeen));
+          const made = await askLeader(projectPath, at, entry.cartaId, unlockTask(entry.trava.label, entry.trava.kind, entry.cartaId, entry.firstSeen));
           if (made.ok) open[key] = { ...entry, acted: true };
           else log(`[vigia] o Oráculo recusou a tarefa de destravar: ${made.reason}`);
         }
@@ -485,6 +509,9 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
           const first = passages[0]!;
           const lock = { key, trava: travaOf.get(key) ?? { key, kind: first.kind, placeId: first.placeId, label: labelOf(first.placeId), detail: '' } };
           const already = repeats[lock.key];
+          // A repeat card still waiting for the owner holds the next one, however old (ressalva do #555).
+          const stillLive = already ? tasks?.find((task) => task.id === already.cartaId)?.state === 'entregue' : false;
+          if (stillLive) continue;
           if (passages.length < REPEAT_TIMES || (already && already.at >= at - REPEAT_WINDOW_MS) || projectPath === null) continue;
           const last = passages[passages.length - 1]!;
           const card = repeatCard({ label: lock.trava.label, kind: lock.trava.kind, passages });
@@ -500,7 +527,7 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
           if (!task || task.state === 'entregue' || task.state === 'aberta' || task.state === 'em-execucao') continue;
           if (last?.kind === 'aceita' && last.by.kind === 'dono') {
             const what = investigationTask(card.label, card.kind, card.cartaId);
-            const made = await askLeader(projectPath, at, what);
+            const made = await askLeader(projectPath, at, card.cartaId, what);
             if (!made.ok) {
               log(`[vigia] o Oráculo recusou a investigação: ${made.reason}`);
               continue;

@@ -109,12 +109,18 @@ export function buildPostMortemScript(start: number, end: number): string {
     `printf '${PM} ncpu %s\\n' "$(nproc 2>/dev/null)"`,
     `printf '${PM} boot %s\\n' "$(( $(date +%s) - $(cut -d. -f1 /proc/uptime 2>/dev/null || echo 0) ))"`,
     'if command -v sar >/dev/null 2>&1; then',
-    `  d=$(date -d @${from} +%d); f=/var/log/sysstat/sa$d; [ -r "$f" ] || f=/var/log/sa/sa$d`,
-    '  if [ -r "$f" ]; then',
-    `    s=$(date -d @${from} +%H:%M:%S); e=$(date -d @${to} +%H:%M:%S); [ "$e" \\> "$s" ] || e=23:59:59`,
-    `    S_TIME_FORMAT=ISO LC_ALL=C sar -q -f "$f" -s "$s" -e "$e" 2>/dev/null | awk '$1 ~ /^[0-9]/ && $2 ~ /^[0-9]/ {n++; if ($4+0 > l) l = $4+0; if ($7+0 > b) b = $7+0} END {if (n) print "${PM} load", l, b}'`,
-    `    S_TIME_FORMAT=ISO LC_ALL=C sar -S -f "$f" -s "$s" -e "$e" 2>/dev/null | awk '$1 ~ /^[0-9]/ && $2 ~ /^[0-9]/ {n++; if ($4+0 > w) w = $4+0} END {if (n) print "${PM} swap", w}'`,
-    '  fi',
+    // One sar file per day: a window across midnight reads the end of one day and the start of the next (ressalva do #555).
+    `  d1=$(date -d @${from} +%d); d2=$(date -d @${to} +%d); s=$(date -d @${from} +%H:%M:%S); e=$(date -d @${to} +%H:%M:%S)`,
+    '  if [ "$d1" = "$d2" ]; then janelas="$d1,$s,$e"; else janelas="$d1,$s,23:59:59 $d2,00:00:00,$e"; fi',
+    "  q=''; w=''",
+    '  for dia in $janelas; do',
+    '    d=${dia%%,*}; r=${dia#*,}; a=${r%%,*}; b=${r#*,}',
+    '    f=/var/log/sysstat/sa$d; [ -r "$f" ] || f=/var/log/sa/sa$d; [ -r "$f" ] || continue',
+    '    q="$q$(S_TIME_FORMAT=ISO LC_ALL=C sar -q -f "$f" -s "$a" -e "$b" 2>/dev/null)\n"',
+    '    w="$w$(S_TIME_FORMAT=ISO LC_ALL=C sar -S -f "$f" -s "$a" -e "$b" 2>/dev/null)\n"',
+    '  done',
+    `  printf '%b' "$q" | awk '$1 ~ /^[0-9]/ && $2 ~ /^[0-9]/ {n++; if ($4+0 > l) l = $4+0; if ($7+0 > b) b = $7+0} END {if (n) print "${PM} load", l, b}'`,
+    `  printf '%b' "$w" | awk '$1 ~ /^[0-9]/ && $2 ~ /^[0-9]/ {n++; if ($4+0 > w) w = $4+0} END {if (n) print "${PM} swap", w}'`,
     'fi',
     `k=$( (sudo -n journalctl -q -k --since @${from} --until @${to} 2>/dev/null || journalctl -q -k --since @${from} --until @${to} 2>/dev/null) | grep -ciE 'out of memory: kill|oom-kill:|invoked oom-killer'; true)`,
     `if sudo -n true 2>/dev/null || journalctl -q -k -n 1 2>/dev/null | grep -q .; then printf '${PM} oom %s\\n' "\${k:-0}"; fi`,
@@ -153,6 +159,8 @@ export interface Cause {
   readonly name: string;
   /** The reading behind it ("carga até 287 em 4 CPUs, ..."), never anything that came from a secret. */
   readonly reading: string;
+  /** The cause was measured on the machine (its own records came back); `false` = only what the vigia saw. */
+  readonly measured: boolean;
 }
 
 const CAUSE_NAME: Readonly<Record<CauseKind, string>> = {
@@ -193,7 +201,8 @@ export function probableCause(input: {
   readonly pm: PostMortem | null;
   readonly downTogether: readonly string[];
 }): Cause {
-  const cause = (kind: CauseKind, reading: string): Cause => ({ kind, name: CAUSE_NAME[kind], reading });
+  const wasMeasured = input.pm !== null && (input.kind === 'vps-fora' || input.kind === 'vps-login');
+  const cause = (kind: CauseKind, reading: string): Cause => ({ kind, name: CAUSE_NAME[kind], reading, measured: wasMeasured });
   if (input.kind === 'vps-login') return cause('login', `${input.detail}; a máquina respondia, mas o acesso pediu verificação ou login.`);
   if (input.kind === 'cofre') return cause('cofre', `${input.detail}.`);
   if (input.kind === 'sessoes') return cause('sessoes', `${input.detail}.`);
@@ -218,9 +227,15 @@ export function probableCause(input: {
  * repeat card, whether someone investigates.
  */
 export function teamActions(kind: TravaKind, cause: Cause, firstSeen: number, endedAt: number): string[] {
-  void cause;
+  const seen = `o vigia viu ${kind === 'vps-fora' ? 'a queda' : 'a trava'} às ${hourBr(firstSeen)}, a volta às ${hourBr(endedAt)}`;
+  // Only what really happened (ressalva do #555): "measured" only when the machine's own records came back.
+  const how = cause.measured
+    ? 'e mediu a causa na máquina'
+    : kind === 'vps-fora' || kind === 'vps-login'
+      ? 'e não conseguiu medir a causa na máquina (a leitura não voltou)'
+      : 'e tirou a causa das próprias leituras dele';
   return [
-    `Feito: o vigia viu ${kind === 'vps-fora' ? 'a queda' : 'a trava'} às ${hourBr(firstSeen)}, a volta às ${hourBr(endedAt)} e mediu a causa na máquina (dono: vigia de travas).`,
+    `Feito: ${seen} ${how} (dono: vigia de travas).`,
     'Feito: ninguém foi acionado, porque a trava passou sozinha; o trabalho que parou segue com quem já o tinha (dono: vigia de travas).',
     `Próximo: o vigia segue lendo a máquina a cada 5 min; se a mesma trava voltar ${REPEAT_TIMES} vezes em 24 h, manda uma carta para você decidir se alguém investiga (dono: vigia de travas).`,
   ];
@@ -327,7 +342,9 @@ export function liveCard(input: { readonly label: string; readonly kind: TravaKi
 } {
   const { label, kind, firstSeen, affected } = input;
   const title = liveTitle(label, kind, firstSeen);
-  const stopped = affected.sessions.length === 0 ? '' : `${affected.sessions.length === 1 ? 'Uma sessão está parada' : `${affected.sessions.length} sessões estão paradas`} nela${affected.tasks.length ? `, com ${affected.tasks.length === 1 ? 'uma tarefa' : `${affected.tasks.length} tarefas`} em andamento` : ''}.`;
+  // The tasks are counted only when they were read (ressalva do #555: the body says "não lido" otherwise).
+  const tasks = affected.tasksRead && affected.tasks.length ? `, com ${affected.tasks.length === 1 ? 'uma tarefa' : `${affected.tasks.length} tarefas`} em andamento` : '';
+  const stopped = affected.sessions.length === 0 ? '' : `${affected.sessions.length === 1 ? 'Uma sessão está parada' : `${affected.sessions.length} sessões estão paradas`} nela${tasks}.`;
   return {
     title,
     forOwner: {
@@ -384,7 +401,8 @@ export function unlockTask(label: string, kind: TravaKind, cardId: string, since
   return {
     title: fit([`Destravar: ${label} ${KIND_STATE[kind]}`, `Destravar ${label}`]),
     request: `O dono pediu na carta ${cardId} do vigia de travas: ${label} ${KIND_STATE[kind]} desde ${clockBr(since)} (horário de Brasília). Chamar o Líder único para destravar.`,
-    doneWhen: 'A máquina voltou a responder e o trabalho parado foi retomado, com prova; ou o que só o dono resolve foi passado a ele.',
+    // The card's id makes the criterion unique: a lost answer is found again, never made twice.
+    doneWhen: `A máquina voltou a responder e o trabalho parado foi retomado, com prova; ou o que só o dono resolve foi passado a ele (carta ${cardId}).`,
   };
 }
 
@@ -393,6 +411,6 @@ export function investigationTask(label: string, kind: TravaKind, cardId: string
   return {
     title: fit([`Investigar: ${label} ${kind === 'vps-fora' ? 'caindo' : 'travando'} 3 vezes em 24 h`, `Investigar as quedas de ${label}`]),
     request: `O dono pediu para investigar, na carta ${cardId} do vigia de travas: ${label} ${KIND_STATE[kind]} ${REPEAT_TIMES} vezes ou mais em 24 h.`,
-    doneWhen: 'A causa das quedas está medida e a correção está aplicada ou proposta ao dono, com prova.',
+    doneWhen: `A causa das quedas está medida e a correção está aplicada ou proposta ao dono, com prova (carta ${cardId}).`,
   };
 }

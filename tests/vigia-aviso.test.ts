@@ -8,7 +8,7 @@ import { ownerInbox } from '../src/shared/ledger/inbox';
 import { createLedgerService, nodeLedgerProofFs } from '../src/main/ledger-store';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createVigiaService } from '../src/main/vigia/vigia-service';
-import { LATE_LINE, parsePostMortem, passedRecord, passedTitle, probableCause, buildPostMortemScript } from '../src/shared/vigia/aviso';
+import { LATE_LINE, liveCard, NO_AFFECTED, parsePostMortem, passedRecord, passedTitle, probableCause, buildPostMortemScript } from '../src/shared/vigia/aviso';
 
 // Aviso do vigia bem estruturado (t-0358187b). Dono, 17/11: "essas cartas sem a data/hora da queda na primeira carta é
 // uma falha" e "esse tipo de aviso tá mal estruturado ainda". A capa diz a máquina, o início e o fim em horário de
@@ -122,6 +122,7 @@ function setup() {
   const ledger = createLedgerService({ filePath: join(dir, 'ledger.json'), io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs, now: () => state.clock });
   const notes: string[] = [];
   const ops: LedgerOp[] = [];
+  const leaderNotices: string[] = [];
   const vigia = createVigiaService({
     places: () => [{ id: 'vps', label: 'VPS pessoal', sshTarget: 'vps' }],
     run: async (_target, script) => {
@@ -145,6 +146,10 @@ function setup() {
     placeOfSession: (sid) => (sid === 's-dev' ? { projectPath: '/projetos/donel', placeId: 'p-dev' } : undefined),
     cofre: () => null,
     notify: (title, body) => notes.push(`${title} | ${body}`),
+    avisarLider: async (message) => {
+      leaderNotices.push(message.text);
+      return 'lider';
+    },
     statePath: join(dir, 'vigia-travas.json'),
     now: () => state.clock,
   });
@@ -159,7 +164,7 @@ function setup() {
     state.reached = true;
     await at(end);
   };
-  return { state, ledger, notes, ops, at, fall, statePath: join(dir, 'vigia-travas.json') };
+  return { state, ledger, notes, ops, leaderNotices, at, fall, statePath: join(dir, 'vigia-travas.json') };
 }
 
 describe('serviço: a trava que passou é registro; a viva e a repetida pedem decisão', () => {
@@ -252,6 +257,29 @@ describe('serviço: o que o dono escolhe e o que se perde no caminho', () => {
     const leader = Object.values((await t.ledger.load()).doc.tasks).filter((task) => task.ownerPlaceId === 'lider');
     expect(leader.map((task) => task.title)).toEqual(['Destravar: VPS pessoal fora do ar']);
     expect(leader[0]!.request).toContain('17/11 07:30');
+    // The Líder único is told (once), not left to find it on his next read (ressalva do #555).
+    expect(t.leaderNotices).toHaveLength(1);
+    expect(t.leaderNotices[0]).toContain(leader[0]!.id);
+  });
+
+  it('a resposta do Oráculo se perde ao criar a tarefa do Líder único: na rodada seguinte não sai outra', async () => {
+    const t = setup();
+    t.state.reached = false;
+    await t.at(QUEDA_VPS);
+    await t.at(QUEDA_VPS + 5 * MIN);
+    const card = ownerInbox((await t.ledger.load()).doc, null, t.state.clock)[0]!.task;
+    expect((await t.ledger.apply({ kind: 'dono' }, { op: 'aceitar', id: card.id, option: 'Chamar o Líder único' })).ok).toBe(true);
+    t.state.loseNext = 'criar';
+    await t.at(QUEDA_VPS + 10 * MIN);
+    await t.at(QUEDA_VPS + 15 * MIN);
+    await t.at(QUEDA_VPS + 20 * MIN);
+    expect(Object.values((await t.ledger.load()).doc.tasks).filter((task) => task.ownerPlaceId === 'lider')).toHaveLength(1);
+  });
+
+  it('sem leitura do trabalho, a capa da carta viva não conta tarefas', () => {
+    const live = liveCard({ label: 'VPS pessoal', kind: 'vps-fora', firstSeen: QUEDA_VPS, detail: 'x', affected: { sessions: ['a', 'b'], tasks: [{ id: 't-1', title: 'x' }], readAt: QUEDA_VPS, tasksRead: false } });
+    expect(live.forOwner.summary).toContain('2 sessões estão paradas nela.');
+    expect(live.forOwner.summary).not.toContain('tarefa');
   });
 
   it('a resposta do Oráculo se perde na entrega do registro: na rodada seguinte não sai um segundo registro', async () => {
@@ -276,6 +304,36 @@ describe('serviço: o que o dono escolhe e o que se perde no caminho', () => {
     await t.fall(QUEDA_VPS + 60 * MIN, QUEDA_VPS + 75 * MIN);
     const titles = Object.values((await t.ledger.load()).doc.tasks).filter((task) => closedAlone(task)).map((task) => task.title);
     expect(titles).toEqual(['VPS pessoal fora do ar 17/11 07:30–07:50 (20 min)', 'VPS pessoal fora do ar 17/11 08:30–08:45 (15 min)']);
+  });
+});
+
+describe('repetição e registro: o que o dono lê é verdade', () => {
+  it('a carta de repetição viva segura a próxima: sem resposta em 24 h, não sai uma segunda', async () => {
+    const t = setup();
+    for (const h of [0, 3, 6]) await t.fall(QUEDA_VPS + h * 60 * MIN, QUEDA_VPS + h * 60 * MIN + 15 * MIN);
+    expect(ownerInbox((await t.ledger.load()).doc, null, t.state.clock)).toHaveLength(1);
+    // More than 24 h later, still unanswered, and 3 more falls: the live card stays the only one.
+    for (const h of [27, 29, 31]) await t.fall(QUEDA_VPS + h * 60 * MIN, QUEDA_VPS + h * 60 * MIN + 15 * MIN);
+    const repeats = ownerInbox((await t.ledger.load()).doc, null, t.state.clock).filter((item) => item.task.title?.includes('vezes em 24 h'));
+    expect(repeats).toHaveLength(1);
+  });
+
+  it('o registro só diz que mediu a causa quando mediu', () => {
+    const semLeitura = probableCause({ kind: 'vps-fora', detail: 'x', start: QUEDA_VPS, end: VOLTA_VPS, pm: null, downTogether: [] });
+    const semMedida = passedRecord({ label: 'VPS pessoal', kind: 'vps-fora', firstSeen: QUEDA_VPS, endedAt: VOLTA_VPS, cause: semLeitura, affected: NO_AFFECTED });
+    expect(semMedida.body).not.toContain('mediu a causa');
+    expect(semMedida.body).toContain('não conseguiu medir a causa');
+    const cofre = probableCause({ kind: 'cofre', detail: 'o cofre está trancado', start: QUEDA_VPS, end: VOLTA_VPS, pm: null, downTogether: [] });
+    expect(passedRecord({ label: 'VPS pessoal', kind: 'cofre', firstSeen: QUEDA_VPS, endedAt: VOLTA_VPS, cause: cofre, affected: NO_AFFECTED }).body).not.toContain('mediu a causa');
+    const medida = probableCause({ kind: 'vps-fora', detail: 'x', start: QUEDA_VPS, end: VOLTA_VPS, pm: parsePostMortem(SAR_DA_QUEDA), downTogether: [] });
+    expect(passedRecord({ label: 'VPS pessoal', kind: 'vps-fora', firstSeen: QUEDA_VPS, endedAt: VOLTA_VPS, cause: medida, affected: NO_AFFECTED }).body).toContain('mediu a causa na máquina');
+  });
+
+  it('a janela do sar que vira a meia-noite lê os dois dias', () => {
+    const start = Date.UTC(2026, 10, 18, 3, 5); // 18/11 00:05 em Brasília
+    const script = buildPostMortemScript(start, start + 35 * MIN);
+    expect(script).toContain('for dia in');
+    expect(script).not.toContain('e=23:59:59');
   });
 });
 
