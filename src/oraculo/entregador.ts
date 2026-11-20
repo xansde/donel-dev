@@ -209,7 +209,11 @@ function localOpenReviewerRoute(openReviewer: OpenLocal['openReviewer']): NonNul
   };
 }
 
-/** The registro's side of `LOCAL_OPEN_REVIEWER_PATH`: no answer = 'recusada' (the reconciliador tries again later). */
+/**
+ * The registro's side of `LOCAL_OPEN_REVIEWER_PATH`. No answer (the entregador down, or a cut while the opening may still
+ * be going) throws, so the service route answers 502 and the reconciliador keeps the opening pending: its next call gets
+ * 'ja-tem' with the place when this one did open. Never 'recusada', which the reconciliador does not retry at once.
+ */
 export function createLocalOpenReviewerClient(deps: {
   readonly port: () => number;
   readonly timeoutMs?: number;
@@ -221,7 +225,7 @@ export function createLocalOpenReviewerClient(deps: {
   return async (order) => {
     // Never sent twice: a cut after it went out may have opened it, and the next call answers 'ja-tem'.
     const sent = await post(`http://127.0.0.1:${deps.port()}${LOCAL_OPEN_REVIEWER_PATH}`, '', JSON.stringify(order), timeoutMs);
-    if (typeof sent !== 'object') return { resultado: 'recusada', texto: 'o entregador do Oráculo não respondeu à abertura' };
+    if (typeof sent !== 'object') throw new Error(`o entregador do Oráculo não respondeu à abertura (${sent})`);
     try {
       const said = JSON.parse(sent.body) as { resultado?: unknown; lugar?: unknown; texto?: unknown; erro?: unknown };
       if (sent.status === 200 && typeof said.resultado === 'string' && RESULTS.has(said.resultado)) {

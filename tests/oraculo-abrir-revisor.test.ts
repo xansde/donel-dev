@@ -15,6 +15,7 @@ import { createLedgerService, nodeLedgerProofFs } from '../src/main/ledger-store
 import { OPEN_KIT_FILE, type OpenKit } from '../src/main/open-kit';
 import { buildClaudeArgs } from '../src/shared/commandBuilder';
 import { createOpenLocal, type ScriptRun } from '../src/oraculo/abrir-local';
+import { createLocalOpenReviewerClient } from '../src/oraculo/entregador';
 import { createOracleApiHandler, type OracleRequest } from '../src/oraculo/api';
 import type { BoardPicture } from '../src/oraculo/portao';
 import { SERVICE_PATH } from '../src/oraculo/servicos';
@@ -130,7 +131,7 @@ function machine(options: { reviewer?: 'alive' | 'closed' } = {}) {
     log: () => undefined,
   });
   const newFolders = (): string[] => readdirSync(sessionsDir).filter((sid) => ![SID_LIDER, SID_DEV, SID_REVISOR].includes(sid));
-  return { handle, newFolders };
+  return { handle, newFolders, openLocal, picture };
 }
 
 const PEDIDO = '[t-5358d400] Revisor elástico do quadro atlas: decidir as entregas paradas.\n- t-b03fdec8 (418 min) corrigir o login';
@@ -178,5 +179,28 @@ describe('abrir-revisor: o reconciliador abre o Revisor elástico do quadro', ()
     expect([first.body.resultado, second.body.resultado].sort()).toEqual(['aberta', 'ja-tem']);
     expect(m.newFolders()).toHaveLength(1);
     expect(second.body.lugar ?? first.body.lugar).toBe(`session:${m.newFolders()[0]}`);
+  });
+
+  it('o sessao_abrir do Líder único com o PC fora também não abre um 2º Revisor no quadro', async () => {
+    const m = machine({ reviewer: 'alive' });
+    const said = await m.openLocal.abrir(SID_LIDER, m.picture.sessoes[SID_LIDER]!, { tool: 'sessao_abrir', papel: 'revisor', quadro: 'atlas', pedido: PEDIDO });
+    expect(said).toMatchObject({ kind: 'error' });
+    expect(said.text).toContain('place:revisor-atlas');
+    expect(m.newFolders()).toEqual([]);
+  });
+
+  it('o entregador que não responde (corte com a abertura em curso) vira 502, nunca recusada', async () => {
+    const ledgerHome = mkdtempSync(join(tmpdir(), 'abrir-revisor-corte-'));
+    dirs.push(ledgerHome);
+    const ledgerFile = join(ledgerHome, 'ledger.json');
+    const handle = createOracleApiHandler({
+      ledger: createLedgerService({ filePath: ledgerFile, io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs }),
+      ledgerFile,
+      tokenHash: () => hash(PC),
+      services: () => new Map([['reconciliador', hash(RECONCILIADOR)]]),
+      abrirRevisor: createLocalOpenReviewerClient({ port: () => 1, post: async () => 'caiu' }),
+      log: () => undefined,
+    });
+    expect((await answerOf(handle(ask(RECONCILIADOR, {})))).status).toBe(502);
   });
 });

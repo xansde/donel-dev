@@ -36,7 +36,9 @@
 // and only when the board has no Revisor alive, waiting for a slot (its tmux up, still in the limitador's wait) or being
 // made (`reviewerOnBoard`). In the same line as every opening, so two calls close together open one. A board of another
 // machine: its fresh picture says whether a Revisor is there (`remoteReviewer`), else the order goes there as the Líder
-// único's. A Revisor alive on the PC itself is not seen here (accepted: rare, and the PC's own board shows it).
+// único's. `openOn` keeps the same rule for every opening of the role `revisor` here (the Líder único's sessao_abrir
+// with the PC off, a satellite's order). A Revisor alive on the PC itself, or opened by the app with the PC on, is not
+// seen here (accepted: rare, and the PC's own board shows it).
 //
 // The session folder holds keys: nothing read from a meta here is ever shown or logged.
 
@@ -253,6 +255,8 @@ export function boardFolderFrom(
 /** The role of the elastic Revisor the reconciliador opens (t-3b258224). */
 export const REVIEWER_ROLE_ID = 'revisor';
 const REVIEWER_NAME = 'Revisor';
+const REVIEWER_THERE = (board: string, place: string): string =>
+  `Não abri: o quadro ${board} já tem o Revisor ${place}, vivo ou esperando vaga (um Revisor por quadro, ordem r-0b7e4683). Mande as entregas novas a ele com sessao_enviar; se ele travou, feche-o antes.`;
 
 /**
  * t-3b258224 — pure: the place of a Revisor of board `pasta` on this machine, alive in its tmux (working, or still in
@@ -624,6 +628,10 @@ export function createOpenLocal(deps: OpenLocalDeps): OpenLocal {
     if (noRoom) return fail(`Não abri: esta máquina está sem vaga agora (${noRoom}). Tente de novo em alguns minutos.`);
     const folders = readFolders(deps.sessionsDir);
     const live = await deps.liveSessions();
+    // t-3b258224 — one Revisor per board at a time, whoever asks here (the reconciliador, the Líder único's sessao_abrir
+    // with the PC off, a satellite's order): a second one would decide the same deliveries twice.
+    const reviewer = role.id === REVIEWER_ROLE_ID ? reviewerOnBoard(folders, live, pasta) : null;
+    if (reviewer) return fail(REVIEWER_THERE(lastSegment(pasta), reviewer));
     if (kit.openCap !== null) {
       const openNow = folders.filter((folder) => folder.openedBy === opener && folder.localCwd === pasta && live.has(folder.sid)).length;
       if (openNow >= kit.openCap) return fail(`Não abri: limite ${kit.openCap}, abertas ${openNow} neste quadro; feche uma e tente de novo.`);
