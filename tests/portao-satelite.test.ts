@@ -481,7 +481,7 @@ describe('sonda do retrato', () => {
         liveSessions: async () => new Set([NEW]),
         picture: () => ({ at: 0, sessoes: kept }),
         setSession: (folder, session) => void (kept[folder] = session),
-        call: async (port, _token, tool) => {
+        call: async (_port, _token, tool) => {
           if (tool === 'sessao_quem_sou') asked.push(now);
           return up ? answer(tool) : null;
         },
