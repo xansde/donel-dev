@@ -23,6 +23,8 @@
 //   machine pictures, queued for it (`{ok, text}`; `{conhecido: false}` = no machine has that board).
 // - `aberturas` `{respostas?, kit?}` (t-d461e003): the satellite's answers to the openings it made; what still waits for
 //   it, and the kit of roles when its hash changed (`{aberturas, kit?}`, abrir-satelite.ts).
+// - `renovar` `{sessao, tarefa}` (t-8406f473): the renewal before a card move of the entregador apart (its board is
+//   there, the ledger here): the task of a closed place whose successor is the session follows it. `{ok}`.
 // - `fila` `{aviso: OwnerMessage}` (passo 9, only this machine's own entregador, `isLocalGate`): a message of its
 //   sessions for a place of another machine goes into that machine's queue here (the registro alone writes them);
 //   `{maquina}`, or `{maquina: null}` when no fresh picture has that place (the entregador then takes its old way).
@@ -53,9 +55,11 @@ export const GATE_OPEN_PATH = '/v1/portao/abrir';
 /** t-d461e003 — a satellite's openings: its answers in, the orders waiting for it out (abrir-satelite.ts). */
 export const GATE_OPENINGS_PATH = '/v1/portao/aberturas';
 export const GATE_QUEUE_PATH = '/v1/portao/fila';
+/** t-8406f473 — the renewal before a card move of the entregador apart (its board is there, the ledger here). */
+export const GATE_RENEW_PATH = '/v1/portao/renovar';
 /** A machine's picture (each board once, with its arrows): up to this. */
 export const MAX_GATE_PICTURE_BYTES = 16 * 1024 * 1024;
-const GATE_PATHS: ReadonlySet<string> = new Set([GATE_TOOL_PATH, GATE_NOTICE_PATH, GATE_LINK_PATH, GATE_PICTURE_PATH, GATE_INBOX_PATH, GATE_OPEN_PATH, GATE_OPENINGS_PATH, GATE_QUEUE_PATH]);
+const GATE_PATHS: ReadonlySet<string> = new Set([GATE_TOOL_PATH, GATE_NOTICE_PATH, GATE_LINK_PATH, GATE_PICTURE_PATH, GATE_INBOX_PATH, GATE_OPEN_PATH, GATE_OPENINGS_PATH, GATE_QUEUE_PATH, GATE_RENEW_PATH]);
 /** The tool route's body may carry the delivery's proof files (base64): up to this. */
 export const MAX_GATE_BODY_BYTES = 64 * 1024 * 1024;
 const GATE_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/;
@@ -134,8 +138,8 @@ export function noticeOf(value: unknown): OwnerMessage | null {
 export interface GateToolRoutesDeps {
   /** The daemon's (guarded) ledger. */
   readonly ledger: () => LedgerService;
-  /** The recados of this daemon: only the renewal step before a task (`antesDaTarefa`) is used here. */
-  readonly recados?: Pick<GateRecados, 'antesDaTarefa'> | null;
+  /** The recados of this daemon: only the renewal steps (before a task, before a card move) are used here. */
+  readonly recados?: Pick<GateRecados, 'antesDaTarefa' | 'antesDoCartao'> | null;
   /** The owner's phone shows "virou tarefa" (as this machine's gate does). */
   readonly linkPedido?: (pedidoId: string, tarefa: { readonly id: string; readonly titulo: string }) => void;
   /** A notice for the PC to deliver (this daemon's relay). Absent = the `aviso` route answers 404. */
@@ -244,6 +248,19 @@ export function createGateToolRoutes(deps: GateToolRoutesDeps): GateRoutes {
         return link(body);
       } catch (error) {
         log(`[oraculo] portão ${name}: erro na ligação: ${error instanceof Error ? error.message : String(error)}`);
+        return json(500, { error: 'erro no Oráculo' });
+      }
+    }
+    if (path === GATE_RENEW_PATH) {
+      const sessao = pictureOf(body.sessao);
+      if (!sessao || typeof body.tarefa !== 'string' || !body.tarefa) return json(400, { error: 'sessao ou tarefa inválido' });
+      const caller = callerFromPicture(sessao);
+      if (typeof caller === 'string') return json(200, { ok: false, text: caller });
+      try {
+        await deps.recados?.antesDoCartao?.(caller, sessao, body.tarefa);
+        return json(200, { ok: true });
+      } catch (error) {
+        log(`[oraculo] portão ${name}: renovação antes do cartão falhou: ${error instanceof Error ? error.message : String(error)}`);
         return json(500, { error: 'erro no Oráculo' });
       }
     }

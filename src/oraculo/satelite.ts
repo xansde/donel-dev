@@ -27,7 +27,7 @@ import type { ConfigIoDeps } from '../main/config-store';
 import type { LedgerDeliveredTo, LedgerTask } from '../shared/ledger/contract';
 import type { LedgerToolCall } from '../shared/ledger/tools';
 import type { BoardPicture, GateLedgerContext, PictureSession } from './portao';
-import { GATE_INBOX_PATH, GATE_LINK_PATH, GATE_NOTICE_PATH, GATE_PICTURE_PATH, GATE_TOOL_PATH } from './portoes';
+import { GATE_INBOX_PATH, GATE_LINK_PATH, GATE_NOTICE_PATH, GATE_PICTURE_PATH, GATE_RENEW_PATH, GATE_TOOL_PATH } from './portoes';
 import { compactPicture } from './retrato-satelite';
 import { createRelay, type Relay } from './relay';
 
@@ -185,6 +185,21 @@ export function createSatelliteReviewLink(deps: SatelliteDeps): (mine: PictureSe
     } catch {
       return null;
     }
+  };
+}
+
+/**
+ * t-8406f473 — the renewal before a card move, asked of the personal VPS's Oráculo (`POST /v1/portao/renovar`) by the
+ * entregador apart, whose board is here and ledger there. Throws when it did not answer (the gate logs it).
+ */
+export function createSatelliteCardRenewal(deps: SatelliteDeps): (mine: PictureSession, taskId: string) => Promise<void> {
+  const post = deps.post ?? postJson;
+  const url = `${deps.url.replace(/\/+$/, '')}${GATE_RENEW_PATH}`;
+  return async (mine, taskId) => {
+    const token = deps.token();
+    if (!token) throw new Error('sem portao.token');
+    const result = await post(url, token, JSON.stringify({ sessao: mine, tarefa: taskId }), deps.timeoutMs ?? 5_000);
+    if (typeof result !== 'object' || result.status !== 200) throw new Error(`o registro não renovou (${typeof result === 'object' ? result.status : result})`);
   };
 }
 

@@ -192,6 +192,11 @@ export interface GateDeps {
   readonly serverVersion: string;
   /** The task board's client; absent or null = no `card_*` tools (the board is off). */
   readonly cards?: () => BoardStore | null;
+  /**
+   * t-8406f473 — a session (folder sid) was served the `card_*` tools: the board's vigia wakes only those
+   * (`markCardTools`, `~/.donel/board/com-cartoes/<sid>`). Absent = no mark.
+   */
+  readonly markCards?: (sid: string) => void;
   readonly now?: () => number;
   /** The recados queue (`sessao_enviar` here, the notices after a task, the hooks' route); absent = none. */
   readonly recados?: GateRecados;
@@ -790,8 +795,26 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
           boardPlaces: new Set(mine.board ? Object.keys(mine.board.cards) : []),
         };
       }
+      if (who.liderUnico !== true && (call.tool === 'card_move' || call.tool === 'card_justify')) await beforeCard(cards, mine, call.id);
       const outcome = await runCardTool(cards, caller, call, (deps.now ?? Date.now)());
       return outcome.ok ? { kind: 'text', text: outcome.text } : { kind: 'error', text: outcome.text };
+    };
+
+    /**
+     * t-8406f473 — moving a card works its Oráculo task (`oraculo_id`) as a `tarefa_andamento` does: the task of a closed
+     * place whose successor is this session follows it first (the recados' renewal). A failure is a log line.
+     */
+    const beforeCard = async (store: BoardStore, mine: PictureSession, cardId: string): Promise<void> => {
+      if (!deps.recados?.antesDoCartao) return;
+      try {
+        const taskId = (await store.getCard(cardId))?.oraculo_id;
+        if (!taskId) return;
+        const caller = callerFromPicture(mine);
+        if (typeof caller === 'string') return;
+        await deps.recados.antesDoCartao(caller, mine, taskId);
+      } catch (error) {
+        log(`[oraculo] portão: renovação antes do cartão ${cardId} falhou: ${error instanceof Error ? error.message : String(error)}`);
+      }
     };
 
     /**
@@ -843,7 +866,24 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     return { response, passOn };
   }
 
-  return async (request) => {
+  /** t-8406f473 — a session served the `card_*` tools is marked (the board's vigia wakes only those); never fails the answer. */
+  const markedCards = (request: GateRequest, response: GateResponse): GateResponse => {
+    if (!deps.markCards || response.status !== 200 || singleMessage(request.body)?.method !== 'tools/list') return response;
+    const sid = /^\/s\/([^/]+)\/mcp$/.exec(request.path)?.[1];
+    const result = singleMessage(response.body)?.result;
+    const tools = isRecord(result) && Array.isArray(result.tools) ? result.tools : [];
+    if (!sid || !tools.some((tool) => isRecord(tool) && typeof tool.name === 'string' && isCardToolName(tool.name))) return response;
+    try {
+      deps.markCards(sid);
+    } catch (error) {
+      log(`[oraculo] portão: marca de card_* da sessão ${sid} falhou: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return response;
+  };
+
+  return async (request) => markedCards(request, await serve(request));
+
+  async function serve(request: GateRequest): Promise<GateResponse> {
     const hook = HOOK_PATH.exec(request.path);
     if (hook) {
       // The loopback is the server's check; the hooks carry no MCP token.
@@ -938,7 +978,7 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     // Nothing reached the PC: a `sessao_enviar` the recados passed on is theirs again, now with the PC off. A session the
     // PC has no picture of is made here (nothing of the PC serves it).
     return (await local(sid, request.body, cards, 'desligado', true, mine ? picture : (deps.pictureWithoutPc?.(sid) ?? picture), true)).response;
-  };
+  }
 }
 
 export interface TunnelForwardOptions {

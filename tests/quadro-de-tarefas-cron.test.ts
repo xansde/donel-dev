@@ -32,18 +32,30 @@ function card(over: Partial<CronCard> = {}): CronCard {
   };
 }
 
-const idle = { alive: true, idleSince: NOW - STALL_MS - 60_000 };
-const closed = { alive: false, idleSince: null };
+const idle = { alive: true, idleSince: NOW - STALL_MS - 60_000, cards: true };
+const closed = { alive: false, idleSince: null, cards: false };
 const justification = (due: number) => ({ text: 'esperando o Fazolin', link: 'https://seazone.slack.com/archives/C1/p1700000000000100', due });
 
 describe('vigia', () => {
   it('acorda Fazendo parado sem justificativa; justificado, ocupado ou em outra coluna fica quieto', () => {
     expect(planVigia(card(), idle, [], NOW)).toMatchObject({ do: 'wake', session: SESSION, mark: 'woken' });
     expect(planVigia(card({ justification: justification(NOW + 3600_000) }), idle, [], NOW).do).toBe('skip');
-    expect(planVigia(card(), { alive: true, idleSince: NOW - 60_000 }, [], NOW).do).toBe('skip');
+    expect(planVigia(card(), { ...idle, idleSince: NOW - 60_000 }, [], NOW).do).toBe('skip');
     // a long tool call (no finished turn) is working, not stopped
-    expect(planVigia(card(), { alive: true, idleSince: null }, [], NOW).do).toBe('skip');
+    expect(planVigia(card(), { ...idle, idleSince: null }, [], NOW).do).toBe('skip');
     expect(planVigia(card({ stage: 'blocked', justification: justification(NOW + 1) }), idle, [], NOW).do).toBe('skip');
+  });
+
+  it('sessão só lenta (Bash de fundo, subagente, CPU) ou sem card_* não é acordada nem vai ao Líder; a parada com card_* segue acordada', () => {
+    // t-8406f473 — the same filter as the despertador: a turn ended while a background job or a subagent still works
+    expect(planVigia(card(), { ...idle, busy: 'comando do Bash ainda rodando' }, [], NOW)).toMatchObject({ do: 'skip', why: 'só lenta: comando do Bash ainda rodando' });
+    expect(planVigia(card(), { ...idle, busy: 'subagente em segundo plano escreveu há 2 min' }, [], NOW).do).toBe('skip');
+    // a session that cannot move its card would only be nagged: never woken, never sent to the Líder as stopped
+    expect(planVigia(card(), { ...idle, cards: false }, [], NOW)).toMatchObject({ do: 'skip', why: 'sessão sem card_*' });
+    const capped = Array.from({ length: VIGIA_MAX_PER_DAY }, (_, i) => NOW - (i + 1) * 3600_000).reverse();
+    expect(planVigia(card(), { ...idle, cards: false }, capped, NOW).do).toBe('skip');
+    expect(planVigia(card(), { ...idle, busy: 'usando CPU (40%)' }, capped, NOW).do).toBe('skip');
+    expect(planVigia(card(), idle, [], NOW)).toMatchObject({ do: 'wake', session: SESSION });
   });
 
   it('campo ocupado em 3 rondas seguidas chega ao Líder, sem calar o aviso de cobrança esgotada', () => {
