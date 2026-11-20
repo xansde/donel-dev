@@ -106,26 +106,34 @@ describe('vigia de saída', () => {
   // app) é filho do app quando o editor não estava aberto; o `taskkill /T` de uma saída travada o levava junto, com
   // arquivo não salvo. O vigia encerra o app e a árvore dele, menos cada editor com a própria árvore.
   it.runIf(hasPwsh)('escolhe a árvore do app para encerrar e deixa de fora cada editor com os filhos dele', () => {
-    const all = [
-      [101, 100, 'Donel Dev.exe'], // renderer
-      [102, 101, 'node.exe'], // filho do renderer
-      [200, 100, 'Code.exe'], // editor aberto pelo app
-      [201, 200, 'Code.exe'], // processo auxiliar do editor
-      [202, 201, 'node.exe'], // terminal do editor
-      [300, 100, 'cmd.exe'], // terminal do app
-      [301, 300, 'Cursor.exe'], // `cursor .` no terminal do app
-      [302, 301, 'Cursor.exe'],
-      [400, 1, 'Code.exe'], // fora da árvore
-      [500, 1, 'node.exe'],
-      [103, 103, 'loop.exe'], // pai de si mesmo: não pode prender o laço
+    // [pid, pai, nome, minuto em que nasceu]; o app (100) nasceu às 10:00
+    const all: [number, number, string, number][] = [
+      [101, 100, 'Donel Dev.exe', 1], // renderer
+      [102, 101, 'node.exe', 2], // filho do renderer
+      [200, 100, 'Code.exe', 3], // editor aberto pelo app
+      [201, 200, 'Code.exe', 4], // processo auxiliar do editor
+      [202, 201, 'node.exe', 5], // terminal do editor
+      [300, 100, 'cmd.exe', 6], // terminal do app
+      [301, 300, 'Cursor.exe', 7], // `cursor .` no terminal do app
+      [302, 301, 'Cursor.exe', 8],
+      [400, 1, 'Code.exe', 9], // fora da árvore
+      [500, 1, 'node.exe', 10],
+      [103, 100, 'loop.exe', 11],
+      [104, 104, 'loop.exe', 12], // pai de si mesmo: não pode prender o laço
+      // revisão do #554: órfão cujo pai morto teve o pid reusado pelo renderer (101). Nasceu antes dele: não é do app.
+      [900, 101, 'slack.exe', -120],
+      [901, 900, 'slack.exe', -119],
     ];
     const fake = all
-      .map(([id, parent, name]) => `[pscustomobject]@{ProcessId=${id};ParentProcessId=${parent};Name='${name}'}`)
+      .map(
+        ([id, parent, name, minute]) =>
+          `[pscustomobject]@{ProcessId=${id};ParentProcessId=${parent};Name='${name}';CreationDate=$t0.AddMinutes(${minute})}`,
+      )
       .join(',');
-    const script = `$root = 100; $all = @(${fake}); ${DESCENDANTS_TO_END_SCRIPT}; ($kill | Sort-Object) -join ','`;
+    const script = `$t0 = [datetime]'2026-11-20T10:00:00'; $root = 100; $rootStart = $t0; $all = @(${fake}); ${DESCENDANTS_TO_END_SCRIPT}; ($kill | Sort-Object) -join ','`;
     const out = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', timeout: 60_000 });
     expect(out.stderr).toBe('');
-    expect(out.stdout.trim()).toBe('101,102,300');
+    expect(out.stdout.trim()).toBe('101,102,103,300');
   }, 90_000);
 
   it('salta para fora da árvore do app (Start-Process), sem detached, e não usa o taskkill /T', () => {
@@ -142,6 +150,7 @@ describe('vigia de saída', () => {
     expect(hop).toMatch(/^Start-Process -FilePath powershell\.exe /);
     const inner = decodeEncoded(/'-EncodedCommand','([A-Za-z0-9+/=]+)'/.exec(hop)![1]);
     expect(inner).toContain('Stop-Process -Id $root -Force');
+    expect(inner).toMatch(/Get-CimInstance Win32_Process -OperationTimeoutSec \d+/);
     expect(inner).not.toMatch(/taskkill/i);
   });
 
