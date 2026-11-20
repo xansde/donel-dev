@@ -730,6 +730,12 @@ export function repeatedWrite(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
     return null;
   }
   if (!('id' in op)) return null;
+  // t-e1e992ab — the limiter's key is its series, and the Oráculo picks the task anew at each try: a retry matches any
+  // line of the series in the window, on any task, whatever came after it (another series, the place's newer task).
+  if (op.op === 'andamento' && key !== undefined && actor.kind === 'lugar' && actor.placeId === `${SERVICE_PLACE_PREFIX}${LIMITER_SERVICE}`) {
+    const keyed = (event: LedgerEvent): boolean => event.kind === 'comentada' && event.requestId === key && sameActor(event.by, actor) && Math.abs(now - event.at) <= REPEAT_WRITE_WINDOW_MS;
+    return Object.values(doc.tasks).find((candidate) => candidate.events.some(keyed)) ?? null;
+  }
   const task = doc.tasks[op.id];
   if (!task) return null;
   if (op.op === 'assumir' || op.op === 'entregar' || op.op === 'aceitar' || op.op === 'rejeitar' || op.op === 'frente') return keyedRepeat(task, actor, op, key, now);

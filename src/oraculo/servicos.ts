@@ -111,7 +111,9 @@ export type ServiceOp = Extract<LedgerOp, { op: 'criar' | 'assumir' | 'entregar'
 /**
  * t-e1e992ab — the limiter's progress line: `{ op: 'andamento', lugar?, reserva, progress, requestId? }`. The limiter
  * knows only the place of who waited (or none: a cron routine, the Líder único); the Oráculo picks the task
- * (`limiterTaskOf`). No `id`: the service never names a task, so it cannot aim the line at one it chose.
+ * (`limiterTaskOf`). No `id`, but this is not a confinement: `reserva` is a task id from the limiter's own config, and
+ * the Oráculo writes there whatever live task it names. What holds the line is the ledger (contract.ts, `andamento`):
+ * only "esperando", only on a live task, signed `servico:limitador`, never reaching the Líder.
  */
 export interface LimiterProgressOp {
   readonly op: 'andamento';

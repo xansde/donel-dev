@@ -200,6 +200,22 @@ describe('carta de serviço no Oráculo da VPS', () => {
       expect(t.lines(t.reserva)).toHaveLength(3);
     });
 
+    it('a mesma série repetida não grava 2a linha, nem depois de outra série na mesma tarefa, nem depois de o lugar assumir outra', async () => {
+      const t = await limiter();
+      const x = { op: 'andamento', reserva: t.reserva, progress: { ...esperando, precisa: 'rotina' }, requestId: 'lim-xxxxxxxxxxxxxxxx' };
+      const y = { op: 'andamento', reserva: t.reserva, progress: { ...esperando, precisa: 'lider unico' }, requestId: 'lim-yyyyyyyyyyyyyyyy' };
+      for (const op of [x, y, x]) expect(JSON.parse((await t.as(LIM, op)).body as string)).toMatchObject({ ok: true, id: t.reserva });
+      expect(t.lines(t.reserva)).toHaveLength(2);
+      // The place took another task between the two tries: the retry answers where the series was written.
+      const first = await t.make(A, false);
+      const z = { op: 'andamento', lugar: A, reserva: t.reserva, progress: esperando, requestId: 'lim-zzzzzzzzzzzzzzzz' };
+      expect(JSON.parse((await t.as(LIM, z)).body as string)).toMatchObject({ ok: true, id: first });
+      const second = await t.make(A, true);
+      expect(JSON.parse((await t.as(LIM, z)).body as string)).toMatchObject({ ok: true, id: first });
+      expect(t.lines(first)).toHaveLength(1);
+      expect(t.lines(second)).toEqual([]);
+    });
+
     it('reserva fechada, tarefa nomeada, lugar malformado ou campo estranho: 400 e nada gravado', async () => {
       const t = await limiter();
       const id = await t.make(A, true);
