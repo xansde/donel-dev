@@ -478,7 +478,8 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
     remote: openings ? async (call) => openings.request(call) : createRemoteOpenClient({ url: apart!.url, token: () => readGateToken(dir), view: remoteView }),
   });
   // t-49dee38d — a session past the context limit renewed here with the PC away (renovar-local.ts): off until
-  // `<dir>/renovar-local.json` says `"enabled": true`. Only this daemon of the personal VPS runs it; the satellite does not.
+  // `<dir>/renovar-local.json` says `"enabled": true` and lists the session in `"somente"` (empty = nobody). Only this
+  // daemon of the personal VPS runs it; the satellite does not.
   const renewal = createLocalRenewal({
     sessionsDir,
     handoffsDir: join(place.home, '.donel', 'handoffs'),
@@ -567,6 +568,8 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
       // The setup of a remote session reads this to point its MCP at the gate.
       writeFileSync(join(dir, 'portao'), `${gate.port}\n`, { mode: 0o600 });
       recados.start();
+      // A renewal cut by this restart is never resumed: logged for the Líder, the session stays out (renovar-local.ts).
+      await renewal.recover();
       renewal.start();
       apart?.notices.start();
       // The sessions the PC has not pictured (its push, every 30 s, comes first: a fresh picture is not asked again).
