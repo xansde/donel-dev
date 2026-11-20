@@ -13,7 +13,7 @@ no fim, cada uma com a recomendação.
 | --- | --- | --- |
 | 03/11 | Treinamento das lideranças (síntese na memória, `projects-donel-dev-reunioes-2026-11-03-…`) | Lema do Billverso, que o dono trouxe: "Os agentes mudam. As cadeiras ficam." Cada agente ocupa uma cadeira; cada tarefa tem dono e critério de aceite. |
 | 05/11 | `src/shared/teamPrefs.ts` | "Onde eu escolho o limite de sessões abertas pelos líderes de cada mindscape? Quero tirar o limite" (virou o `team.openCap`, padrão sem limite). |
-| 06/11 | PDA das cadeiras (PR #256, `docs/planos/cadeiras.pda.md`) | "Rig é um time de pods, que é um squad de cadeiras." |
+| 06/11 | PDA das cadeiras (PR #256, ainda aberto: `docs/planos/cadeiras.pda.md` não está na staging) | "Rig é um time de pods, que é um squad de cadeiras." |
 | 07/11 | `docs/planos/cadeiras-arquitetura.md`, decisão 2 | **Cadeira = papel no quadro**; o pod arruma as próprias cadeiras. "Sentar alguém / acordar a cadeira (com fila)" ficou fora daquela rodada. |
 | 09/11 | Inventário de crons do BizOps (`handoffs/FAIXA-PRETA-inventario-crons.md`) | "Relógio de 1 dia útil não é cadeira, é cron job né amigão": cadeira é sessão que trabalha, não rotina com horário. |
 | 16/11 | `~/seazone/_docs/arquitetura-alvo.md`, peça 2 | "o ledger vira o quadro de tarefas: os Líderes puxam o trabalho de lá, e o andamento é o cartão mudando de coluna". |
@@ -34,7 +34,7 @@ num chat que a memória não guardou.
 | "Pedir" do celular | `fila.json` do relay | Mensagem ao Líder único. |
 | Tarefa pedida no celular | `celular-local.json` → `src/oraculo/tarefas-pedidas.ts` | Tarefa no Oráculo, sem dono executor. |
 | `tarefa_criar` de uma sessão | Oráculo (`src/shared/ledger/`) | Tarefa; o cartão nasce no `tarefa_assumir` (`src/oraculo/cartao-da-tarefa.ts`) ou pela semente (`src/board-cron/semente.ts`). |
-| `card_create` de uma sessão | Quadro de tarefas, coluna Entrada (`src/oraculo/board-sqlite.ts`) | Cartão; o Líder do quadro tria para A fazer. |
+| `card_create` de uma sessão | Quadro de tarefas, coluna Entrada (`src/oraculo/board-sqlite.ts`; quadro em SQLite e movimento do cartão nos PRs #541 a #547, 19–20/11) | Cartão; o Líder do quadro tria para A fazer. |
 
 Nenhuma delas diz ao dono "seu pedido é o 3º da fila e espera vaga".
 
@@ -45,7 +45,8 @@ Nenhuma delas diz ao dono "seu pedido é o 3º da fila e espera vaga".
   `~/bin/rotinas/limitador/espera_sessao.sh`, que espera a vaga até 240 min (`limitador.py espera --tipo sessao`).
   Sem vaga no fim, o `claude` não abre (sai 75).
 - A vaga é do limitador: `sessoes_max` (5 desde 18/11; volta a 10 em 25/11 pelo cron `volta_estrutura_25_11.sh`),
-  mais memória, PSI e carga. Ordem da espera (20/11, Líder único): o Revisor antes do resto, depois a chegada.
+  mais memória, PSI e carga. Ordem da espera (20/11, Líder único; BizOps #127, mesclado em 20/11): o Revisor antes do
+  resto, depois a chegada.
   Passam direto, sem fila: renovação, retomada, Líder único, Theo e a isenção temporária com prazo.
 - Há um segundo teto, sem conversa com o primeiro: `team.openCap` (por Líder e por quadro; acima dele o dono precisa
   permitir).
@@ -56,7 +57,7 @@ Nenhuma delas diz ao dono "seu pedido é o 3º da fila e espera vaga".
 ### Cadeira no app
 
 - Cadeira é **derivada**, nunca guardada: os lugares do quadro com o mesmo papel (`src/shared/mindscape/chairs.ts`,
-  lente "Cadeiras" do Mindscape). O `mindscape.json` v6 guarda só os pods.
+  lente "Cadeiras" do Mindscape). Os pods entraram no `mindscape.json` na v6 (hoje `MINDSCAPE_SCHEMA_VERSION` é 8), e só eles são guardados.
 - Estados da cadeira hoje: problema, atenção, bem, sem sinal (saúde de quem está sentado). Não há "vaga" nem "fila".
 
 ## 3. Problema
@@ -200,7 +201,7 @@ Cadeira: **livre** (há vaga), **cheia** (sem vaga e com N na fila), **parada** 
 - `~/seazone/_docs/arquitetura-alvo.md` (peças 2, 3 e 4; recomendação 2).
 - `~/seazone/BizOps/handoffs/FAIXA-PRETA-inventario-crons.md`.
 - `~/bin/rotinas/limitador/limitador.py`, `espera_sessao.sh`, `INSTALAR.md`.
-- Repo: `docs/planos/cadeiras-arquitetura.md`, PDA `docs/planos/cadeiras.pda.md` (commit d66ea486, PR #256),
+- Repo: `docs/planos/cadeiras-arquitetura.md`, PDA `docs/planos/cadeiras.pda.md` (commit d66ea486, PR #256 ainda aberto, fora da staging),
   `docs/design/quadro-de-tarefas.md`, `docs/adr/0009-abrir-sessao-sem-pc.md`, `src/shared/mindscape/chairs.ts`,
   `src/shared/teamPrefs.ts`, `src/shared/board/rules.ts`, `src/oraculo/{abrir-local,primeiras,relay,celular-local,tarefas-pedidas,cartao-da-tarefa,vencimento}.ts`,
   `src/board-cron/semente.ts`.
