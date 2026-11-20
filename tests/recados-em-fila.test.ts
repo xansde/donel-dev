@@ -657,7 +657,7 @@ describe('Recados em fila: caixa pendurada', () => {
       now: g.clock,
       log: () => undefined,
     });
-    const sent = JSON.parse(textOf(await recados.enviar(SID_DEV, g.picture.sessoes[SID_DEV]!, { tool: 'sessao_enviar', para: 'lider', texto: 'olha o PR 12' }))) as { id: string };
+    const sent = JSON.parse(textOf(await recados.enviar(SID_DEV, g.picture.sessoes[SID_DEV]!, { tool: 'sessao_enviar', para: 'lider', texto: 'olha o PR 12', motivo: 'bloqueio' }))) as { id: string };
     expect(sent.id).toMatch(/^r-/);
     for (let i = 0; i < 1800; i += 1) {
       await recados.tick();
