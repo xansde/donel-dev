@@ -58,6 +58,7 @@ import { GATE_PHONE_PAIR_PATH, isChatRoute, registroPhonePort } from './celular-
 import { MOBILE_PORT } from '../main/celular/server';
 import { localFlagOn } from '../main/local-flags';
 import { USO_IA_FLAG } from './uso-ia';
+import { HOMOLOGACAO_FLAG } from './homologacao';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
 /** t-89279f84 — `{url, serviceKeyFile}`: present, the Supabase is the ledger's source (ledger.json is not read). */
@@ -331,6 +332,11 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
       dir: process.env.DONEL_USO_IA_DIR || join(home, '.donel', 'faixa-preta-dia'),
       estado: process.env.DONEL_USO_IA_ESTADO || join(home, '.donel', 'uso-ia'),
       flagOn: () => localFlagOn(USO_IA_FLAG, home),
+    },
+    // t-b3f48bf5 — the phone's homologation screen: the cleaned copy the export cron writes, read only, behind a flag.
+    homologacao: {
+      file: process.env.DONEL_HOMOLOGACAO_EXPORT || join(home, '.donel', 'homologacao', 'export.json'),
+      flagOn: () => localFlagOn(HOMOLOGACAO_FLAG, home),
     },
     kick,
     audio: (id) => audioWorker?.enqueue(id),
