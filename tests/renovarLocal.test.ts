@@ -597,6 +597,42 @@ describe('renovar-local: sucessora em pleno 1º turno nunca é fechada (S2)', ()
   });
 });
 
+// ---- rodada 4: resposta cortada pela rede não é resposta ------------------------------------------------------------
+
+/** What the CLI writes when the connection drops mid-answer: a real entry with an empty thinking and end_turn, then the error. */
+const THINKING_ONLY = assistant(40_000, 'end_turn', [{ type: 'thinking', thinking: '' }]);
+const CONNECTION_LOST = apiError('API Error: Connection lost mid-response. Retrying the request may help.');
+
+describe('renovar-local: só resposta com texto, sem erro depois, conta (rodada 4)', () => {
+  it('thinking vazio com end_turn seguido de "Connection lost": a velha não morre', async () => {
+    const vps = fake({ newTail: `${FIRST_USER}${THINKING_ONLY}\n${CONNECTION_LOST}` });
+    await vps.renewal.tick();
+    expect(vps.events).not.toContain(KILL_OLD);
+  });
+
+  it('caso feliz: thinking e depois texto real com end_turn fecha a velha', async () => {
+    const thinking = assistant(40_000, 'end_turn', [{ type: 'thinking', thinking: 'ler a passagem' }]);
+    const text = assistant(40_100, 'end_turn', [{ type: 'text', text: 'Li a passagem; prioridade: X.' }]);
+    const vps = fake({ newTail: `${FIRST_USER}${thinking}\n${text}\n` });
+    await vps.renewal.tick();
+    expect(vps.events).toContain(KILL_OLD);
+    expect(vps.events).not.toContain(KILL_NEW);
+  });
+
+  it('erro sintético depois de uma resposta com texto desfaz o "respondeu": a velha não morre', async () => {
+    const text = assistant(40_100, 'end_turn', [{ type: 'text', text: 'Li a passagem.' }]);
+    const vps = fake({ newTail: `${FIRST_USER}${text}\n${JSON.stringify({ type: 'user', message: { role: 'user', content: 'segue' } })}\n${THINKING_ONLY}\n${CONNECTION_LOST}` });
+    await vps.renewal.tick();
+    expect(vps.events).not.toContain(KILL_OLD);
+  });
+
+  it('texto vazio com end_turn não é resposta', async () => {
+    const vps = fake({ newTail: `${FIRST_USER}${assistant(40_000, 'end_turn', [{ type: 'text', text: '  ' }])}\n` });
+    await vps.renewal.tick();
+    expect(vps.events).not.toContain(KILL_OLD);
+  });
+});
+
 describe('renovar-local: teto de tentativas, sem laço (S3/S4/S5)', () => {
   it('S3: a nova calada em cada tentativa: no máximo 2 pedidos e 2 sucessoras, e o Líder é avisado', async () => {
     const vps = fake({ newTail: null });
