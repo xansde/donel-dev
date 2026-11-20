@@ -23,6 +23,7 @@ import type { GlossarioResumo, GlossarioStore } from './glossario';
 import { CREDENCIAL_PATH, type CredencialHandler } from './credencial';
 import { projetoDoQuadro, visaoGeral, type QuadroLeitura } from './quadro-v2';
 import { montarUsoIa, USO_IA_PATH, type UsoIaPaths } from './uso-ia';
+import { HOMOLOGACAO_PATH, lerHomologacao, type HomologacaoPaths } from './homologacao';
 import type { Avisos } from './avisos';
 
 export const V2_PREFIX = '/api/v2/';
@@ -102,6 +103,11 @@ export interface CelularV2Deps {
    * the local flag `celular-uso-ia`, read at every request. Absent or off = 404 `desligada`.
    */
   readonly usoIa?: UsoIaPaths & { readonly flagOn: () => boolean };
+  /**
+   * t-b3f48bf5 — the homologation screen (`GET homologacao`, src/oraculo/homologacao.ts): the cron's cleaned copy, read
+   * only, at a path fixed here; the local flag `celular-homologacao`, read at every request. Absent or off = 404 `desligada`.
+   */
+  readonly homologacao?: HomologacaoPaths & { readonly flagOn: () => boolean };
   /** t-b07b50ff — the warnings' long-poll (src/oraculo/avisos.ts): only the entregador, where the chat lives. Absent = 404. */
   readonly avisos?: Avisos;
   readonly log?: (line: string) => void;
@@ -550,6 +556,17 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     }
   }
 
+  function homologacao(): MobileResponse {
+    if (!deps.homologacao?.flagOn()) return erro(404, 'desligada');
+    const leitura = lerHomologacao(deps.homologacao, now());
+    if (leitura.kind === 'ausente') return erro(404, 'sem-copia', 'A cópia do painel de homologação ainda não existe nesta VPS.');
+    if (leitura.kind === 'invalida') {
+      deps.log?.(`[homologacao] cópia inválida: ${leitura.motivo}`);
+      return erro(503, 'copia-invalida', 'A cópia do painel de homologação não pôde ser lida agora.');
+    }
+    return json(200, leitura.body);
+  }
+
   return async (request) => {
     let url: URL;
     try {
@@ -597,6 +614,7 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     if (method === 'GET' && path === 'quadro') return quadro(null);
     if (method === 'GET' && path === 'quadro/projeto') return quadro(url.searchParams.get('id') ?? '');
     if (method === 'GET' && path === USO_IA_PATH) return usoIa();
+    if (method === 'GET' && path === HOMOLOGACAO_PATH) return homologacao();
     if (method === 'GET' && path === AVISOS_PATH) {
       if (!deps.avisos) return erro(404, 'nao-encontrada');
       if (!flagOn(AVISOS_FLAG)) return erro(404, 'desligada');
