@@ -28,7 +28,8 @@
 //   answered here without harm (initialize, the tool list, ping, notifications, `sessao_quem_sou`, `sessao_listar`)
 //   is answered here when the PC is silent for `LOCAL_ANSWER_MS`. Any other tool waits for the PC as before; a 502
 //   stays a 502.
-// - `POST /recados/<evento>`: the VPS's user-level hooks, loopback only, no MCP token.
+// - `POST /recados/<evento>`: the VPS's user-level hooks, loopback only, with the session's hook token (`X-Donel-Token`,
+//   `hookToken` of the meta of the session `X-Donel-Tmux` names; t-94202d38), never the MCP token.
 // - `POST /s/<sid>/h/<Evento>` (t-d461e003): the app's hooks of a session (its `settings.json`, pointed here by the
 //   setup). With the session's hook token (`X-Donel-Token`, `hookToken` of its meta), passed on as it came to the PC's
 //   hook bridge on the session's tunnel (`hookPort`); with the PC off (the tunnel refused, or `pcAway`) answered `{}`
@@ -84,6 +85,8 @@ export const CONNECT_MS = 2_000;
 /** How long a call that can be answered here without harm waits for the PC before it is. */
 export const LOCAL_ANSWER_MS = 3_000;
 const HOOK_PATH = /^\/recados\/([a-z-]{1,40})$/;
+/** The tmux session of a Donel session (`donel-<sid>`), as the recados hook names it (recados.ts `TMUX_PREFIX`). */
+const RECADOS_TMUX_PREFIX = 'donel-';
 /** The app's hooks of a session; the event is checked apart (`HOOK_EVENT`), like the sid. */
 const SESSION_HOOK_PATH = /^\/s\/([^/]+)\/h\/([^/]*)$/;
 /** The hook bridge's own rule for an event name (`/h/([A-Za-z]+)`, hook-bridge.ts), bounded. */
@@ -886,8 +889,15 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
   async function serve(request: GateRequest): Promise<GateResponse> {
     const hook = HOOK_PATH.exec(request.path);
     if (hook) {
-      // The loopback is the server's check; the hooks carry no MCP token.
       if (!deps.recados || request.method !== 'POST') return { status: 404, headers: {}, body: '' };
+      // t-94202d38 — the loopback alone let any process of the machine (another user of it) take a session's recados by
+      // naming its tmux. The hook names its session (`X-Donel-Tmux: donel-<sid>`) and carries that session's hook token
+      // (`X-Donel-Token`, the `hook-header` file the app's own hooks send), compared in constant time, never logged.
+      const tmuxName = request.headers['x-donel-tmux']?.trim() ?? '';
+      const hookSid = tmuxName.startsWith(RECADOS_TMUX_PREFIX) ? tmuxName.slice(RECADOS_TMUX_PREFIX.length) : '';
+      const hookMeta = SID_PATTERN.test(hookSid) ? readHookMeta(deps.sessionsDir, hookSid) : null;
+      const token = request.headers['x-donel-token'] ?? '';
+      if (!hookMeta || !token || !sameToken(token, hookMeta.hookToken)) return { status: 401, headers: {}, body: '' };
       return deps.recados.hook(hook[1]!, request.headers, request.body);
     }
     const sessionHook = SESSION_HOOK_PATH.exec(request.path);

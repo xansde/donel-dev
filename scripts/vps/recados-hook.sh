@@ -14,7 +14,8 @@
 #   }
 #
 # Outside a Donel session (tmux session "donel-<sid>"), from a CLI run inside one (a `claude -p` of its Bash), with the
-# gate down or answering an error, it prints nothing and exits 0: the CLI goes on as if there were no hook. Port: DONEL_PORTAO_PORT (default 47817, the gate's).
+# gate down or answering an error (a 401: no token for this session), it prints nothing and exits 0: the CLI goes on as
+# if there were no hook. Port: DONEL_PORTAO_PORT (default 47817, the gate's).
 
 evento="${1:-}"
 case "$evento" in
@@ -60,9 +61,23 @@ if [ "$pid" != "$painel" ] || [ "$clis" -gt 1 ]; then
   exit 0
 fi
 
+# t-94202d38 — the gate takes a session's recados only with its hook token: the `hook-header` file the app writes in
+# the session's folder (`X-Donel-Token: …`, mode 600), the same header its own hooks send. curl reads it from the file,
+# so the token is never on a command line (any user of the machine reads argv). No file = nothing asked.
+sid="${nome#donel-}"
+case "$sid" in
+  '' | *[!A-Za-z0-9-]*) cat >/dev/null 2>&1; exit 0 ;;
+esac
+cabecalho="$HOME/.donel/s/$sid/hook-header"
+if [ ! -r "$cabecalho" ]; then
+  cat >/dev/null 2>&1
+  exit 0
+fi
+
 saida="$(curl -s -f --max-time 2 --data-binary @- \
   -H 'Content-Type: application/json' \
   -H "X-Donel-Tmux: $nome" \
+  -H "@$cabecalho" \
   "http://127.0.0.1:${DONEL_PORTAO_PORT:-47817}/recados/$evento" 2>/dev/null)" || exit 0
 
 # Only a JSON object reaches the CLI (an empty or odd answer = no hook output).

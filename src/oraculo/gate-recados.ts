@@ -44,6 +44,6 @@ export interface GateRecados {
   antesDoCartao?(caller: LedgerCaller, mine: PictureSession, taskId: string): Promise<void>;
   /** After a tarefa_* answered here: the notices the PC used to give (delivery, travada/precisa-do-dono, verdict). */
   depoisDaTarefa(sid: string, mine: PictureSession, caller: LedgerCaller, call: LedgerToolCall, answerText: string): void;
-  /** POST /recados/<evento> from the VPS user-level hooks (loopback only, no MCP token). */
+  /** POST /recados/<evento> from the VPS user-level hooks (loopback only; the gate checked the session's hook token). */
   hook(evento: string, headers: Readonly<Record<string, string>>, body: string): Promise<GateHookResponse>;
 }
