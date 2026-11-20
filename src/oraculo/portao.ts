@@ -117,6 +117,11 @@ export interface PictureSession {
    * (retrato-satelite.ts): it lives there, so a message to it waits in that machine's queue, never in this tmux.
    */
   readonly maquina?: string;
+  /**
+   * t-49dee38d — this session handed its place over to the successor its renewal opened (that sid), which is now the
+   * place's only owner (retrato-local.ts): its ledger writes are refused; it only ends its turn and waits to be closed.
+   */
+  readonly renovadaPara?: string;
 }
 
 /** What the PC pushes (`POST /v1/retrato`): every VPS session it has open. */
@@ -496,7 +501,21 @@ function leaderList(picture: BoardPicture | null, quadro: string | undefined): B
 
 /** This session's `tarefa_*` are answered by this gate: it has a picture that says its place (not the Líder único). */
 function tasksAnsweredHere(mine: PictureSession | null): mine is PictureSession {
-  return mine !== null && typeof callerFromPicture(mine) !== 'string';
+  return mine !== null && (typeof mine.renovadaPara === 'string' || typeof callerFromPicture(mine) !== 'string');
+}
+
+/** t-49dee38d — the words a session that handed its place over gets: in its `quemSou`, and as the gate's refusal. */
+export function renewedText(successor: string): string {
+  return `esta sessão foi renovada; quem responde pelo lugar agora é ${successor.slice(0, 8)}`;
+}
+
+/** The `tarefa_*` that only read the ledger: a session that handed its place over still may. */
+const LEDGER_READS: ReadonlySet<string> = new Set(['tarefa_listar', 'tarefa_ver', 'tarefa_novidades']);
+
+/** t-49dee38d — why a session that handed its place over may not write to the ledger; `null` = it may. */
+export function renewedRefusal(mine: PictureSession, tool: string): string | null {
+  if (typeof mine.renovadaPara !== 'string' || LEDGER_READS.has(tool)) return null;
+  return `Recusado: ${renewedText(mine.renovadaPara)}. Não registre andamento, entrega nem decisão de tarefa daqui: termine o turno e espere ser fechada.`;
 }
 
 function nameOf(who: Record<string, unknown>): string {
@@ -643,6 +662,8 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
 
     const ledger = async (call: LedgerToolCall): Promise<BrowserToolOutcome> => {
       if (!mine) return { kind: 'error', text: NO_PICTURE };
+      const renewed = renewedRefusal(mine, call.tool);
+      if (renewed) return { kind: 'error', text: renewed };
       if (mine.quemSou.liderUnico === true && pc !== 'ligado') return leaderLedger(mine, call);
       const pictured = callerFromPicture(mine);
       if (typeof pictured === 'string') return { kind: 'error', text: pictured };
