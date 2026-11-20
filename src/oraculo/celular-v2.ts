@@ -21,6 +21,7 @@ import { CHAT_AUDIO_MAX_MS, CHAT_AUDIO_MAX_PARTES, CHAT_AUDIO_MIMES, CHAT_AUDIO_
 import { MAX_ARQUIVO_BODY, MAX_ARQUIVO_BYTES } from './chat-arquivo';
 import type { GlossarioResumo, GlossarioStore } from './glossario';
 import { CREDENCIAL_PATH, type CredencialHandler } from './credencial';
+import { montarUsoIa, USO_IA_PATH, type UsoIaPaths } from './uso-ia';
 
 export const V2_PREFIX = '/api/v2/';
 export const SIGNATURE_SCHEME = 'donel-req-v1';
@@ -86,6 +87,11 @@ export interface CelularV2Deps {
    * the only code that touches the password. Absent = 404. Wired only where the chat lives (it announces there).
    */
   readonly credencial?: CredencialHandler;
+  /**
+   * t-1c683858 — the "Uso de IA" screen (`GET uso-ia`, src/oraculo/uso-ia.ts): where it reads and keeps its state, and
+   * the local flag `celular-uso-ia`, read at every request. Absent or off = 404 `desligada`.
+   */
+  readonly usoIa?: UsoIaPaths & { readonly flagOn: () => boolean };
   readonly log?: (line: string) => void;
   readonly now?: () => number;
   /** Local feature flags (`local-flags.ts`); default: the files in `~/.donel/flags/` of this machine, read each time. */
@@ -507,6 +513,16 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     return json(200, { nos: [], rodada: null });
   }
 
+  function usoIa(): MobileResponse {
+    if (!deps.usoIa?.flagOn()) return erro(404, 'desligada');
+    try {
+      return json(200, montarUsoIa(deps.usoIa, now(), deps.log));
+    } catch (error) {
+      deps.log?.(`[uso-ia] leitura falhou: ${error instanceof Error ? error.message : String(error)}`);
+      return erro(500, 'falhou', 'Não deu para ler o uso de IA agora.');
+    }
+  }
+
   return async (request) => {
     let url: URL;
     try {
@@ -551,6 +567,7 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
       return json(200, { mensagens: deps.store.conversa(limit), glossario: glossarioResumo() });
     }
     if (method === 'GET' && path === 'arvore') return arvore();
+    if (method === 'GET' && path === USO_IA_PATH) return usoIa();
     return erro(404, 'nao-encontrada');
   };
 }
