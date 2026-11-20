@@ -853,6 +853,21 @@ describe('renovar-local T1: antes de fechar a velha, o que chegou a ela depois d
     expect(vps.toLeader.some((message) => message.leaderText.includes('reencaminh'))).toBe(true);
   });
 
+  it('reinício entre o kill e o 2º reencaminhamento: a marca segue em voo e o recover avisa o Líder', async () => {
+    const vps = fake();
+    let found: string[] | undefined;
+    vps.state.forwardAnswer = async () => {
+      // The entregador restarting right here (the old one already killed): a fresh renewal reads the marks.
+      if (vps.state.forwardCalls.length === 2) found = await createLocalRenewal(vps.deps).recover();
+      return { ok: true, reencaminhados: 0, passados: 0 };
+    };
+    await vps.renewal.tick();
+    expect(vps.events).toContain(KILL_OLD);
+    expect(vps.state.forwardCalls).toHaveLength(2);
+    expect(found).toEqual([OLD]);
+    expect(vps.markOf()).toMatchObject({ passo: 'fechou', sucessora: NEW });
+  });
+
   it('reencaminhar que lança erro: não fecha a velha', async () => {
     const vps = fake();
     vps.state.forwardAnswer = async () => {
@@ -969,6 +984,84 @@ describe('renovar-local T1 com a fila de recados de verdade', () => {
     await renewal.tick();
     expect(vps.events).not.toContain(KILL_OLD);
     expect(vps.toLeader.some((message) => message.leaderText.includes('reencaminh'))).toBe(true);
+  });
+
+  // ---- rodada 2: o que o CLI grava como queued_command (digitado durante um turno) --------------------------------
+  const queuedAt = (ms: number, prompt: string, origin?: Record<string, unknown>): string =>
+    `${JSON.stringify({ type: 'attachment', uuid: `qc-${ms}`, timestamp: new Date(ms).toISOString(), isSidechain: false, attachment: { type: 'queued_command', prompt, commandMode: 'prompt', ...(origin ? { origin } : {}) } })}\n`;
+
+  it('o dono digita na velha DURANTE o turno da passagem (queued_command): chega à nova uma vez, mesmo gravado depois como user', async () => {
+    const { vps, gate, toNew, renewal } = wired();
+    let reqAt = 0;
+    vps.state.onType = () => {
+      reqAt = vps.clock();
+      vps.state.oldTail =
+        `${ENDED}${userAt(reqAt, 'siga as instruções')}${queuedAt(reqAt + 2_000, 'também não esquece o deploy do Z', { kind: 'human' })}` +
+        `${queuedAt(reqAt + 3_000, '<task-notification>\n<summary>Background command terminou</summary>\n</task-notification>', { kind: 'task-notification', producer: 'session-task' })}${endedAt(reqAt + 4_000)}`;
+      vps.state.oldMtime = reqAt + 4_000;
+    };
+    await renewal.tick();
+    expect(vps.events).toContain(KILL_OLD);
+    expect(toNew().filter((entry) => String(entry.texto).includes('não esquece o deploy do Z'))).toHaveLength(1);
+    expect(toNew().some((entry) => String(entry.texto).includes('Background command terminou'))).toBe(false);
+    // The CLI also writes it as a user entry later: asked again, it is still one.
+    vps.state.oldTail += userAt(reqAt + 5_000, 'também não esquece o deploy do Z');
+    await gate.forwardAfterHandoff({ de: OLD, para: NEW, lugar: PLACE, desde: reqAt });
+    expect(toNew().filter((entry) => String(entry.texto).includes('não esquece o deploy do Z'))).toHaveLength(1);
+  });
+
+  it('"◆ De Líder" colado durante o turno da passagem (queued_command): chega à nova uma vez', async () => {
+    const { vps, toNew, renewal } = wired();
+    vps.state.onType = () => {
+      const reqAt = vps.clock();
+      vps.state.oldTail = `${ENDED}${userAt(reqAt, 'siga as instruções')}${queuedAt(reqAt + 2_000, '<pasted_content id="ab12">\n◆ De Líder (place:lider): [t-9] revise o PR 77\n</pasted_content>')}${endedAt(reqAt + 4_000)}`;
+      vps.state.oldMtime = reqAt + 4_000;
+    };
+    await renewal.tick();
+    expect(toNew().filter((entry) => String(entry.texto).includes('revise o PR 77'))).toHaveLength(1);
+  });
+
+  it('item digitado na velha ANTES do pedido (sem confirmação) não vai à nova como "depois da passagem"', async () => {
+    const { vps, file, items, renewal } = wired();
+    vps.state.onOpen = () => {
+      writeFileSync(
+        file,
+        JSON.stringify({
+          items: [
+            { id: 'r-0000d1d1', chave: 'c-d1', de: { lugar: 'place:lider', nome: 'Líder' }, para: { lugar: PLACE, sid: OLD }, texto: '◆ Recado r-0000d1d1 de Líder (place:lider): antigo digitado', criado: T0 - 20 * MIN, estado: 'digitado', tentativas: 1, digitadoEm: T0 - 19 * MIN },
+          ],
+        }),
+      );
+    };
+    await renewal.tick();
+    expect(vps.events).toContain(KILL_OLD);
+    expect(items().filter((entry) => (entry.para as { sid: string }).sid === NEW && String(entry.texto).includes('antigo digitado'))).toHaveLength(0);
+  });
+
+  it('conversa da velha maior que 512 KB depois da passagem: lê até alcançar o pedido e não perde a frase do dono', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'renovar-512k-'));
+    dirs.push(home);
+    const desde = T0;
+    const transcript = join(home, 'old.jsonl');
+    const filler = Array.from({ length: 700 }, (_, index) => endedAt(desde + 10_000 + index).replace('"ok"', JSON.stringify('x'.repeat(1_000)))).join('');
+    writeFileSync(transcript, `${userAt(desde - 60_000, 'trabalho de antes')}${endedAt(desde - 50_000)}${userAt(desde, 'siga as instruções')}${userAt(desde + 2_000, 'frase do dono logo depois do pedido')}${filler}`);
+    const file = join(home, 'oraculo', 'recados.json');
+    mkdirSync(join(home, 'oraculo'), { recursive: true });
+    const gate = createGateRecados({
+      file,
+      io,
+      ledger: () => null,
+      picture: () => null,
+      localSessions: async () => new Set([OLD, NEW]),
+      tmux: { screen: async () => ({ inMode: false, text: QUIET_SCREEN }), type: async () => true, enter: async () => true, clear: async () => true },
+      transcriptOf: async (sid) => (sid === OLD ? transcript : undefined),
+      now: () => desde + 20 * MIN,
+      log: () => undefined,
+    });
+    const outcome = await gate.forwardAfterHandoff({ de: OLD, para: NEW, lugar: PLACE, desde, excluir: 'siga as instruções' });
+    const sent = existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as { items: Record<string, unknown>[] }).items : [];
+    expect(outcome.ok).toBe(true);
+    expect(sent.filter((entry) => String(entry.texto).includes('frase do dono logo depois do pedido'))).toHaveLength(1);
   });
 });
 
