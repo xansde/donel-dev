@@ -230,12 +230,16 @@ export function withLocalSessions(stored: BoardPicture | null, folders: readonly
     });
   }
   // A successor the PC pictured as a loose conversation (`session:<nova>`) while the old one handed it the place: the
-  // old one's mark rules, so the place is the successor's (r3, revisão do #540: never two owners).
+  // old one's mark rules, so the place is the successor's (r3, revisão do #540: never two owners). r4: also with the old
+  // one already closed (no `renewed` left): a live successor (`renovaDe`) the PC adopted as `session:<itself>` keeps the
+  // place it inherited, which `inheritedPlaces` gave it only with no other live owner; else the place has no owner.
   const takenOver = new Map<string, string>();
   const successors = new Set([...renewed.values()].map((handed) => handed.sid));
+  const renewing = new Set(everyFolder.flatMap((folder) => (folder.renovaDe !== undefined ? [folder.sid] : [])));
   for (const [sid, session] of Object.entries(known)) {
     const place = inherited.get(sid);
-    if (!place || !successors.has(sid) || session.quemSou.liderUnico === true || session.quemSou.lugar === place || typeof session.quemSou.pasta !== 'string') continue;
+    const adopted = renewing.has(sid) && session.quemSou.lugar === `session:${sid}`;
+    if (!place || !(successors.has(sid) || adopted) || session.quemSou.liderUnico === true || session.quemSou.lugar === place || typeof session.quemSou.pasta !== 'string') continue;
     takenOver.set(sid, place);
     newPlaces.push({ sid, pasta: session.quemSou.pasta, lugar: place, ...(typeof session.quemSou.papel === 'string' ? { papel: session.quemSou.papel } : {}), ...(typeof session.quemSou.nome === 'string' ? { nome: session.quemSou.nome } : {}) });
   }

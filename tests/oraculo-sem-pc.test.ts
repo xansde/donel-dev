@@ -660,6 +660,83 @@ describe('sessão renovada na VPS com o PC fora (t-d461e003)', () => {
     expect((await w.endTurn(SID_NOVO)).reason).toContain('depois do fim');
   });
 
+  // Revisão da r3 do #540: com a velha JÁ fechada, o PC volta e adota a sucessora como session:<nova>
+  // (adoptSessionOpenedWithoutPc). Ela segue dona do lugar herdado; o lugar nunca fica sem dono.
+  const looseOf = (sid: string): PictureSession => ({ quemSou: { nome: 'Dev · atlas', pasta: PROJECT, lugar: `session:${sid}`, papel: 'dev' }, listar: [...LISTAR, { id: `session:${sid}`, papel: 'dev', estado: 'trabalhando' }], board: BOARD, at: 0 });
+  const ownsTask = async (w: ReturnType<typeof vps>, sid: string, id: string, place: string, step: string): Promise<void> => {
+    expect(lugarOf(w, sid), step).toBe(place);
+    const fromNew = await w.tool(sid, 'tarefa_andamento', { id, estado: 'trabalhando', proximo: step });
+    expect(fromNew.error, `${step}: ${fromNew.text}`).toBe(false);
+    const sent = await w.tool(SID_LIDER, 'sessao_enviar', { quadro: 'atlas', para: place, texto: `recado ${step}`, motivo: 'bloqueio' });
+    expect(sent.error, sent.text).toBe(false);
+    expect((await w.endTurn(sid)).reason, step).toContain(`recado ${step}`);
+  };
+
+  it('fecha a velha, depois o PC volta e adota a sucessora como session:<nova>: ela segue dona do lugar', async () => {
+    const w = vps();
+    const id = await taskOfDev(w, SID_DEV);
+    w.folder(SID_NOVO, successorMeta(SID_DEV));
+    markOf(w, SID_DEV, 'abriu', { sucessora: SID_NOVO });
+    markOf(w, SID_DEV, 'fechou', { sucessora: SID_NOVO });
+    w.live.delete(SID_DEV);
+    await ownsTask(w, SID_NOVO, id, DEV, 'sem PC');
+
+    const dev = w.stored.picture!.sessoes[SID_DEV]!;
+    w.stored.picture = { at: w.clock.now - 500, sessoes: { [SID_DEV]: dev, [SID_NOVO]: { ...looseOf(SID_NOVO), at: w.clock.now - 500 } } };
+    expect(w.local.away()).toBe(false);
+    await ownsTask(w, SID_NOVO, id, DEV, 'PC adotou');
+    expect(w.forwarded).toEqual([]);
+  });
+
+  it('PC ligado retratou a sucessora como session:<nova> na troca; a velha fecha depois: a sucessora segue dona', async () => {
+    const w = vps();
+    const id = await taskOfDev(w, SID_DEV);
+    w.folder(SID_NOVO, successorMeta(SID_DEV));
+    markOf(w, SID_DEV, 'abriu', { sucessora: SID_NOVO });
+    const dev = w.stored.picture!.sessoes[SID_DEV]!;
+    w.stored.picture = { at: w.clock.now - 500, sessoes: { [SID_DEV]: { ...dev, at: w.clock.now - 500 }, [SID_NOVO]: { ...looseOf(SID_NOVO), at: w.clock.now - 500 } } };
+    await ownsTask(w, SID_NOVO, id, DEV, 'na troca');
+    markOf(w, SID_DEV, 'fechou', { sucessora: SID_NOVO });
+    w.live.delete(SID_DEV);
+    await ownsTask(w, SID_NOVO, id, DEV, 'velha fechada');
+  });
+
+  it('cadeia session:<A> (A → B → C), o PC volta e adota C como session:<C>: C segue dona de session:<A>', async () => {
+    const w = vps();
+    const A = '88888888-2222-4333-8444-555555555555';
+    const C = '99999999-2222-4333-8444-555555555555';
+    const PLACE_A = `session:${A}`;
+    w.folder(A, { localCwd: PROJECT, projectName: 'atlas', name: 'Dev · atlas', roleId: 'dev', openedBy: SID_LIDER, placeId: PLACE_A, createdAt: '2026-11-19T11:00:00Z' });
+    const created = await w.tool(SID_LIDER, 'tarefa_criar', { quadro: 'atlas', dono: PLACE_A, titulo: 'x', pedido: 'x', criterio: 'x', prazo: '2026-11-30', risco: 'baixo' });
+    expect(created.error, created.text).toBe(false);
+    const id = idOf(created.text);
+    w.folder(SID_NOVO, successorMeta(A, { placeId: PLACE_A }));
+    markOf(w, A, 'abriu', { sucessora: SID_NOVO });
+    markOf(w, A, 'fechou', { sucessora: SID_NOVO });
+    w.live.delete(A);
+    w.folder(C, successorMeta(SID_NOVO, { placeId: PLACE_A }));
+    markOf(w, SID_NOVO, 'abriu', { sucessora: C });
+    markOf(w, SID_NOVO, 'fechou', { sucessora: C });
+    w.live.delete(SID_NOVO);
+    await ownsTask(w, C, id, PLACE_A, 'C sem PC');
+
+    w.stored.picture = { ...w.stored.picture!, at: w.clock.now - 500, sessoes: { ...w.stored.picture!.sessoes, [C]: { ...looseOf(C), at: w.clock.now - 500 } } };
+    await ownsTask(w, C, id, PLACE_A, 'PC adotou C');
+  });
+
+  it('retratada pelo PC como session:<ela>, sem renovaDe ou com a dona viva, não toma o lugar', () => {
+    const plain = vps();
+    plain.folder(SID_NOVO, { localCwd: PROJECT, name: 'Dev · atlas', roleId: 'dev', placeId: DEV, createdAt: '2026-11-19T11:59:30Z' });
+    plain.live.delete(SID_DEV);
+    plain.stored.picture = { ...plain.stored.picture!, sessoes: { ...plain.stored.picture!.sessoes, [SID_NOVO]: { ...looseOf(SID_NOVO), at: plain.clock.now - 500 } } };
+    expect(lugarOf(plain, SID_NOVO)).toBe(NOVO);
+
+    const held = vps();
+    held.folder(SID_NOVO, successorMeta(SID_DEV));
+    held.stored.picture = { ...held.stored.picture!, sessoes: { ...held.stored.picture!.sessoes, [SID_NOVO]: { ...looseOf(SID_NOVO), at: held.clock.now - 500 } } };
+    expect([lugarOf(held, SID_NOVO), lugarOf(held, SID_DEV)]).toEqual([NOVO, DEV]);
+  });
+
   it('com quem a abriu vivo, o recado ao Líder único é recusado (como no PC)', async () => {
     const w = renewed({ placeId: DEV });
     const dev = w.stored.picture!.sessoes[SID_DEV]!;
