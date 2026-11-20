@@ -21,6 +21,7 @@ import { CHAT_AUDIO_MAX_MS, CHAT_AUDIO_MAX_PARTES, CHAT_AUDIO_MIMES, CHAT_AUDIO_
 import { MAX_ARQUIVO_BODY, MAX_ARQUIVO_BYTES } from './chat-arquivo';
 import type { GlossarioResumo, GlossarioStore } from './glossario';
 import { CREDENCIAL_PATH, type CredencialHandler } from './credencial';
+import { projetoDoQuadro, visaoGeral, type QuadroLeitura } from './quadro-v2';
 import { montarUsoIa, USO_IA_PATH, type UsoIaPaths } from './uso-ia';
 import type { Avisos } from './avisos';
 
@@ -94,6 +95,8 @@ export interface CelularV2Deps {
    * the only code that touches the password. Absent = 404. Wired only where the chat lives (it announces there).
    */
   readonly credencial?: CredencialHandler;
+  /** t-f091595a — the task board, read only (quadro-v2.ts); absent = `quadro-desligado`. */
+  readonly quadro?: () => Promise<QuadroLeitura>;
   /**
    * t-1c683858 — the "Uso de IA" screen (`GET uso-ia`, src/oraculo/uso-ia.ts): where it reads and keeps its state, and
    * the local flag `celular-uso-ia`, read at every request. Absent or off = 404 `desligada`.
@@ -513,6 +516,20 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     return json(200, { ok: true, nova: result.nova, correcoes: correcoes ?? glossarioResumo().correcoes });
   }
 
+  const PROJECT_SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
+  /** t-f091595a — `GET quadro` and `GET quadro/projeto?id=`: the board as it is, never a write. */
+  async function quadro(projeto: string | null): Promise<MobileResponse> {
+    if (projeto !== null && !PROJECT_SLUG.test(projeto)) return erro(400, 'invalido', 'id: o slug do projeto');
+    const leitura = deps.quadro ? await deps.quadro() : ({ kind: 'desligado' } as const);
+    if (leitura.kind === 'desligado') return erro(503, 'quadro-desligado', 'O quadro de tarefas não está ligado nesta VPS.');
+    if (leitura.kind === 'invalido') return erro(503, 'quadro-invalido', 'A configuração do quadro de tarefas na VPS está inválida.');
+    if (leitura.kind === 'indisponivel') return erro(503, 'quadro-indisponivel', 'O quadro de tarefas não pôde ser lido agora.');
+    if (projeto === null) return json(200, visaoGeral(leitura.overview, now()));
+    const places = deps.places?.();
+    const answer = projetoDoQuadro(projeto, leitura, now(), (placeId) => places?.('', placeId)?.name);
+    return answer ? json(200, answer) : erro(404, 'nao-encontrada');
+  }
+
   function arvore(): MobileResponse {
     try {
       const raw = JSON.parse(readFileSync(deps.arvoreFile, 'utf8')) as unknown;
@@ -577,6 +594,8 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
       return json(200, { mensagens: deps.store.conversa(limit), glossario: glossarioResumo() });
     }
     if (method === 'GET' && path === 'arvore') return arvore();
+    if (method === 'GET' && path === 'quadro') return quadro(null);
+    if (method === 'GET' && path === 'quadro/projeto') return quadro(url.searchParams.get('id') ?? '');
     if (method === 'GET' && path === USO_IA_PATH) return usoIa();
     if (method === 'GET' && path === AVISOS_PATH) {
       if (!deps.avisos) return erro(404, 'nao-encontrada');

@@ -18,6 +18,8 @@ import { esteiraStoreDir } from './esteira-store';
 import { createMindscapeStore, mindscapeFilePath } from './mindscape-store';
 import { createRolesStore, type RolesStore } from './roles-store';
 import { createCelularService, type CelularService } from './celular/service';
+import { sshVpsTranscriber } from './celular/transcrever-ssh';
+import { VPS_TRANSCRIBE_TIMEOUT_MS } from './celular/transcrever';
 import { LEADER_ROLE_ID, ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
@@ -5200,6 +5202,8 @@ void app.whenReady().then(async () => {
     placeName: placeNameOf,
     cardWriter: () => cardWriter,
     deliverToLeader: () => deliverPedidoToLeader,
+    // t-0eb91241 — one transcriber, on the VPS: the Pedir by voice this PC serves goes there by ssh, not to OpenWhispr.
+    transcribe: sshVpsTranscriber({ remotes: () => appConfig.accounts.remotes, command: sshRemoteCommand, timeoutMs: VPS_TRANSCRIBE_TIMEOUT_MS }),
     // Oráculo na VPS: the phone talks to the daemon there; this PC's server stays down.
     remote: () => remoteOracleHost?.celular() ?? null,
   }); // Ledger no celular (PWA só na Tailscale)

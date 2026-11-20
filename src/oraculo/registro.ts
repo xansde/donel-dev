@@ -44,6 +44,7 @@ import { createChatCelularConsumer, createChatCelularQueue } from './chat-celula
 import { CELULAR_LOCAL_FILE, createCelularLocalStore } from './celular-local';
 import { createCelularV2Handler } from './celular-v2';
 import { AVISOS_CARTAS_FILE, createAvisosCartasWriter, entradasDeCartas } from './avisos-cartas';
+import { createQuadroLeitor, quadroPathsOf } from './quadro-v2';
 import { createCredencialHandler } from './credencial';
 import { createChatAudioWorker, daemonWhisper } from './chat-audio';
 import { createGlossarioStore, glossarioFile } from './glossario';
@@ -336,6 +337,8 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
     // t-c441e144 (docs/adr/0010) — the credential box announces in the chat: here only when the chat is (apart, the
     // entregador's 47815 answers it and this server never sees the body).
     ...(chatHere ? { credencial: createCredencialHandler({ dir, log: (line) => console.log(line) }) } : {}),
+    // t-f091595a — the task board (~/.donel/board), opened read only at each phone request.
+    quadro: createQuadroLeitor(quadroPathsOf(home), { home, log: (line) => console.log(line) }),
     log: (line) => console.log(line),
   });
   /** Apart, the chat routes are the entregador's: here they do not exist (a second writer of the conversation). */
