@@ -53,7 +53,7 @@ const marcaFalha = (ms: number, motivo: string): string => `(trecho de ${minutos
 /** The owner reads this in the app, beside the audio; the Líder reads it in the notice. */
 const MOTIVOS: Record<TranscribeError['kind'], string> = {
   conexao: 'o transcritor da VPS não respondeu',
-  tempo: 'a transcrição passou de 1 minuto',
+  tempo: 'a transcrição passou de 10 minutos',
   recusou: 'o transcritor recusou o áudio',
   'sem-texto': 'o transcritor não devolveu texto',
 };

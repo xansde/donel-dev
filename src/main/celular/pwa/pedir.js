@@ -309,13 +309,17 @@
     }).then(function (pronto) { return wavDe(pronto.getChannelData(0)); });
   }
 
+  /** De 2 em 2 s: 330 = 11 min, acima dos 10 min que o Oráculo espera o transcritor da VPS. */
+  var TENTATIVAS_TRANSCRICAO = 330;
+
   function esperarTranscricao(id, tentativas) {
     return new Promise(function (r) { setTimeout(r, 2000); })
       .then(function () { return chamar('/api/pedidos/audio?id=' + id); })
       .then(function (r) {
-        if (!r.ok) throw new Error('O PC perdeu esta transcrição (o app reiniciou?). O áudio ficou guardado; escreva o pedido.');
+        if (!r.ok) throw new Error('O Oráculo perdeu esta transcrição (reiniciou?). O áudio ficou guardado; escreva o pedido.');
         if (r.dados.estado === 'transcrevendo') {
-          if (tentativas > 210) throw new Error('A transcrição está demorando demais. Escreva o pedido.');
+          // t-0eb91241: o transcritor da VPS adia com a máquina carregada, e o Oráculo espera até 10 min; aqui, 11.
+          if (tentativas > TENTATIVAS_TRANSCRICAO) throw new Error('A transcrição está demorando demais. Escreva o pedido.');
           return esperarTranscricao(id, tentativas + 1);
         }
         if (r.dados.estado === 'falhou') throw new Error(r.dados.mensagem || 'A transcrição falhou.');
@@ -332,14 +336,14 @@
     paraWav(blob)
       .catch(function () { throw new Error('Não consegui ler este áudio aqui no celular. Grave de novo ou escreva.'); })
       .then(function (wav) {
-        mostrarVoz('Transcrevendo no PC… pode levar um minuto ou dois.', 'ocupado');
+        mostrarVoz('Transcrevendo… pode levar um minuto ou dois (com a máquina carregada, até 10).', 'ocupado');
         return fetch('/api/pedidos/audio', { method: 'POST', headers: { Authorization: 'Bearer ' + (token() || ''), 'Content-Type': 'audio/wav' }, body: wav, cache: 'no-store' })
           .then(function (resposta) {
             return resposta.json().catch(function () { return {}; }).then(function (dados) {
-              if (!resposta.ok) throw new Error(dados.mensagem || 'O PC não aceitou o áudio.');
+              if (!resposta.ok) throw new Error(dados.mensagem || 'O Oráculo não aceitou o áudio.');
               return dados.audioId;
             });
-          }, function () { throw new Error('Sem conexão com o PC para mandar o áudio.'); });
+          }, function () { throw new Error('Sem conexão com o Oráculo para mandar o áudio.'); });
       })
       .then(function (id) {
         return esperarTranscricao(id, 0).then(function (frase) {

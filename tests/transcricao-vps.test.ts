@@ -1,4 +1,6 @@
 import { createServer, type Server } from 'node:http';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createTranscriptionJobs, VPS_TRANSCRIBE_TIMEOUT_MS, whisperServerTranscriber } from '../src/main/celular/transcrever';
 import { daemonWhisper } from '../src/oraculo/chat-audio';
@@ -117,5 +119,20 @@ describe('o daemon da VPS transcreve o Pedir no transcritor da VPS', () => {
       if (!started.ok) throw new Error(started.mensagem);
       expect((await settled(jobs, started.audioId)).estado).toBe('falhou');
     }
+  });
+});
+
+describe('o daemon liga o Pedir ao transcritor da VPS', () => {
+  it('o servidor do celular do daemon recebe o transcritor da VPS (sem isso o Pedir cai no :8178 do PC)', () => {
+    // Guard of the wiring (t-0eb91241, revisão do #558): the daemon's phone server is built in registro.ts.
+    const source = readFileSync(join(__dirname, '../src/oraculo/registro.ts'), 'utf8');
+    const call = source.slice(source.indexOf('celular = createCelularCore({'), source.indexOf('});', source.indexOf('celular = createCelularCore({')));
+    expect(call).toContain('whisper: daemonWhisper(process.env)');
+  });
+
+  it('a página do Pedir espera mais que o Oráculo espera o transcritor', () => {
+    const page = readFileSync(join(__dirname, '../src/main/celular/pwa/pedir.js'), 'utf8');
+    const tries = Number(/var TENTATIVAS_TRANSCRICAO = (\d+);/.exec(page)?.[1]);
+    expect(tries * 2_000).toBeGreaterThan(VPS_TRANSCRIBE_TIMEOUT_MS);
   });
 });
