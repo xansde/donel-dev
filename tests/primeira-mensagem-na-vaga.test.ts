@@ -10,6 +10,7 @@ import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, nodeLedgerProofFs } from '../src/main/ledger-store';
 import { createGateHandler, type BoardPicture, type GateForward } from '../src/oraculo/portao';
 import { createGateRecados, type RecadosTmux } from '../src/oraculo/recados';
+import { withTaskHeader } from '../src/shared/mindscape/task-header';
 
 const io = createSystemConfigIoDeps();
 const dirs: string[] = [];
@@ -197,6 +198,39 @@ describe('Sessão que espera vaga no limitador: o pedido de abertura entra quand
     await g.run(20 * 60_000);
     expect(g.typed).toHaveLength(1);
     expect(g.items().filter((item) => item.para.sid === SID).map((item) => item.estado)).toEqual(['entregue']);
+  });
+
+  it('o PC colou o pedido com a linha da tarefa na frente (sessao_abrir com tarefa) e a etiqueta: o portão não entrega de novo', async () => {
+    const g = setup();
+    const pedido = 'Revise o PR 12.\n\n1. rode o verify\n2. mescle';
+    g.remember(pedido);
+    g.screens.set(SID, boxScreen(''));
+    g.refuseNext();
+    await g.run(8 * 60_000);
+    expect(g.typed).toHaveLength(1);
+    // The PC's main put "[t-…] título: objetivo" and a blank line in front; its renderer, the tag at the end.
+    g.pcPastes(`${withTaskHeader(pedido, { id: 't-1234abcd', titulo: 'Revisar PR 12', criterio: 'PR mesclado.' })} #sem-esteira`);
+    await g.run(60_000);
+    g.turnEnds();
+    await g.run(20 * 60_000);
+    expect(g.typed).toHaveLength(1);
+    expect(g.items().filter((item) => item.para.sid === SID).map((item) => item.estado)).toEqual(['entregue']);
+  });
+
+  it('a 1ª mensagem é outro pedido que só tem a mesma linha da tarefa: não conta como colado, o guardado ainda entra', async () => {
+    const g = setup();
+    const pedido = 'Revise o PR 12.\n\n1. rode o verify\n2. mescle';
+    g.remember(pedido);
+    g.screens.set(SID, boxScreen(''));
+    g.refuseNext();
+    await g.run(8 * 60_000);
+    expect(g.typed).toHaveLength(1);
+    g.pcPastes(`${withTaskHeader('Feche a worktree do PR 12.', { id: 't-1234abcd', titulo: 'Revisar PR 12', criterio: 'PR mesclado.' })} #sem-esteira`);
+    await g.run(60_000);
+    g.turnEnds();
+    await g.run(20 * 60_000);
+    expect(g.typed.length).toBeGreaterThan(1);
+    expect(g.typed.at(-1)!.text).toContain('1. rode o verify');
   });
 
   it('abertura que o app pôs na fila (lançada horas depois da resposta): o portão espera a janela do app a partir da caixa', async () => {

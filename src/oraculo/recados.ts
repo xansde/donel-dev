@@ -74,7 +74,7 @@ import { picturedBoards, type BoardPicture, type PictureSession } from './portao
 import type { CloseCall, GateHookResponse, GateRecados, ScreenCall, SendCall } from './gate-recados';
 import type { LocalLeader } from './lider-local';
 import { ageText, expiryNotice, isOwnerMessage, isStale, markLate, relaySenderOf, sentAtOf } from './vencimento';
-import { forgetFirstMessage, isSameRequest, readFirstMessages, sweepLongRequests, writeLongRequest, type FirstMessage } from './primeiras';
+import { forgetFirstMessage, isSameRequest, readFirstMessages, sweepLongRequests, writeLongRequest, type FirstMessage, type RequestKey } from './primeiras';
 
 /**
  * `devolvido` = its target left this machine before reading it: it went to the PC's relay with the same key (t-c3fbe852).
@@ -110,7 +110,7 @@ export interface RecadoItem {
    * t-f66595b2 — an opening request the gate kept (primeiras.ts): its hashes. Before each typing, a session whose first
    * message is that request (the PC pasted it) gets nothing: the item counts as delivered.
    */
-  readonly primeira?: { readonly hash: string; readonly hashPlano: string };
+  readonly primeira?: RequestKey;
 }
 
 /** The tmux of the sessions (`tmux -L donel`, session `donel-<sid>`); injected in the vitest. */
@@ -295,9 +295,16 @@ function parseItem(value: unknown): RecadoItem | null {
     ...(estado === 'vencido' ? { vencidoEm: vencidoEm ?? (typeof value.entregueEm === 'number' ? value.entregueEm : value.criado) } : {}),
     ...(parseMessage(value.volta) ? { volta: parseMessage(value.volta)! } : {}),
     ...(isRecord(value.primeira) && typeof value.primeira.hash === 'string' && typeof value.primeira.hashPlano === 'string'
-      ? { primeira: { hash: value.primeira.hash, hashPlano: value.primeira.hashPlano } }
+      ? { primeira: keyOf(value.primeira, value.primeira.hash, value.primeira.hashPlano) }
       : {}),
   };
+}
+
+function keyOf(value: Record<string, unknown>, hash: string, hashPlano: string): RequestKey {
+  const size = (field: unknown): number | undefined => (typeof field === 'number' && Number.isInteger(field) && field > 0 ? field : undefined);
+  const tamanho = size(value.tamanho);
+  const tamanhoPlano = size(value.tamanhoPlano);
+  return { hash, hashPlano, ...(tamanho ? { tamanho } : {}), ...(tamanhoPlano ? { tamanhoPlano } : {}) };
 }
 
 function parseMessage(value: unknown): OwnerMessage | null {
@@ -753,7 +760,7 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     return turn !== null && turn.empty !== true;
   }
   /** t-f66595b2 (condição do Líder) — the session's first message is this request: the PC pasted it. */
-  async function pastedAlready(sid: string, kept: { readonly hash: string; readonly hashPlano: string }): Promise<boolean> {
+  async function pastedAlready(sid: string, kept: RequestKey): Promise<boolean> {
     const path = await transcriptPath(sid);
     const first = path ? await firstUserText(path) : null;
     return first !== null && isSameRequest(kept, first);
@@ -872,7 +879,7 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       criado: at,
       estado: 'fila',
       tentativas: 0,
-      primeira: { hash: entry.hash, hashPlano: entry.hashPlano },
+      primeira: { hash: entry.hash, hashPlano: entry.hashPlano, ...(entry.tamanho ? { tamanho: entry.tamanho } : {}), ...(entry.tamanhoPlano ? { tamanhoPlano: entry.tamanhoPlano } : {}) },
     };
     write([item, ...items]);
     return item;
