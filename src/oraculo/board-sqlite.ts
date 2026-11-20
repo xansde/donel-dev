@@ -91,6 +91,7 @@ export interface BoardSqliteStore extends BoardStore, BoardCronStore {
   lanesWithoutLeader(): Promise<readonly LaneRow[]>;
   /** Admin (`board-cron raia`): the lane of a project, or null. */
   laneOf(projectId: string): Promise<LaneRow | null>;
+  cardByOraculoId(taskId: string): Promise<CardRow | null>;
   /**
    * Admin (the seed): the session that does a card the import left without one. Only while the card has none and its
    * place is still `placeId`; no version, no move (it is who to wake, not a step of the card). False = nothing changed.
@@ -293,6 +294,11 @@ export function createBoardSqlite(file: string, options: { readonly now?: () => 
       }),
     getCard: (id) => read(() => cardById(id)),
     cardByClientRef: (ref) => read(() => cardByRef(ref)),
+    cardByOraculoId: (taskId) =>
+      read(() => {
+        const row = db.prepare("SELECT * FROM cards WHERE oraculo_id = ? AND stage <> 'done' ORDER BY created_at DESC, rowid DESC LIMIT 1").get(taskId);
+        return row ? plain<CardRow>(row) : null;
+      }),
     listCards: (projectId, options) =>
       read(() => {
         const filter = options.stage ? 'AND c.stage = ?' : options.includeDone ? '' : "AND c.stage <> 'done'";

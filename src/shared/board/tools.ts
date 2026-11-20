@@ -22,6 +22,7 @@ export type CardToolCall =
       readonly frente?: string;
       readonly coluna?: 'inbox' | 'todo';
       readonly lugar?: string;
+      readonly quadro?: string;
     }
   | {
       readonly tool: 'card_move';
@@ -34,9 +35,10 @@ export type CardToolCall =
       readonly lugar?: string;
       readonly frente?: string;
       readonly versao?: number;
+      readonly quadro?: string;
     }
-  | { readonly tool: 'card_justify'; readonly id: string; readonly justificativa: CardJustificationArg; readonly versao?: number }
-  | { readonly tool: 'card_list'; readonly coluna?: Stage; readonly todos?: boolean };
+  | { readonly tool: 'card_justify'; readonly id: string; readonly justificativa: CardJustificationArg; readonly versao?: number; readonly quadro?: string }
+  | { readonly tool: 'card_list'; readonly coluna?: Stage; readonly todos?: boolean; readonly quadro?: string };
 
 export type CardToolName = CardToolCall['tool'];
 
@@ -121,6 +123,21 @@ export const CARD_TOOLS = [
   },
 ] as const;
 
+/**
+ * t-8406f473 — the Líder único has no board of his own: he names it in `quadro`, as in `tarefa_listar`. Only his tool
+ * list carries the field (the gate serves these to him); any other session's call with it is refused at the gate.
+ */
+export const LEADER_OF_ALL_CARD_TOOLS = CARD_TOOLS.map((tool) => ({
+  ...tool,
+  inputSchema: {
+    ...tool.inputSchema,
+    properties: {
+      ...tool.inputSchema.properties,
+      quadro: { type: 'string', description: 'Só o Líder único: o quadro (nome ou pasta, como no tarefa_listar), por exemplo donel-dev ou teamzone. Obrigatório para ele.' },
+    },
+  },
+}));
+
 const NAMES = new Set<string>(CARD_TOOLS.map((tool) => tool.name));
 
 export function isCardToolName(name: string): name is CardToolName {
@@ -176,6 +193,8 @@ function justification(value: unknown, required: boolean): CardJustificationArg 
 export function parseCardToolCall(name: CardToolName, raw: unknown): Parsed {
   const args = (typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>;
   try {
+    const quadro = text(args, 'quadro', 400, false);
+    const board = quadro ? { quadro } : {};
     switch (name) {
       case 'card_create': {
         const coluna = stage(args.coluna, 'coluna');
@@ -194,6 +213,7 @@ export function parseCardToolCall(name: CardToolName, raw: unknown): Parsed {
             ...(frente ? { frente } : {}),
             ...(coluna ? { coluna } : {}),
             ...(lugar ? { lugar } : {}),
+            ...board,
           },
         };
       }
@@ -225,16 +245,17 @@ export function parseCardToolCall(name: CardToolName, raw: unknown): Parsed {
             ...(lugar ? { lugar } : {}),
             ...(frente !== undefined ? { frente } : {}),
             ...(v ? { versao: v } : {}),
+            ...board,
           },
         };
       }
       case 'card_justify': {
         const v = version(args.versao);
-        return { ok: true, call: { tool: name, id: text(args, 'id', 64, true), justificativa: justification(args.justificativa, true)!, ...(v ? { versao: v } : {}) } };
+        return { ok: true, call: { tool: name, id: text(args, 'id', 64, true), justificativa: justification(args.justificativa, true)!, ...(v ? { versao: v } : {}), ...board } };
       }
       case 'card_list': {
         const coluna = stage(args.coluna, 'coluna');
-        return { ok: true, call: { tool: name, ...(coluna ? { coluna } : {}), ...(args.todos === true ? { todos: true } : {}) } };
+        return { ok: true, call: { tool: name, ...(coluna ? { coluna } : {}), ...(args.todos === true ? { todos: true } : {}), ...board } };
       }
     }
   } catch (error) {
