@@ -957,6 +957,27 @@ describe('renovar-local T1 com a fila de recados de verdade', () => {
     expect(String(forwarded[0]!.texto)).toContain('dono');
   });
 
+  // Ensaio 2 de 20/11 (06:17:28): a frase do dono foi à sucessora uma vez, mas o 2º reencaminhamento (depois do kill)
+  // contou de novo a mesma frase ("mais 1") e a fila de recados logou "1 reencaminhado" duas vezes.
+  it('2º reencaminhamento sem nada novo: não conta de novo o que já foi ("mais 1" só com envio de verdade)', async () => {
+    const { vps, gate, toNew, renewal } = wired();
+    vps.state.onOpen = () => {
+      const at = vps.clock();
+      vps.state.oldTail = `${ENDED}${userAt(at, 'ENSAIO-T1 frase do dono')}${endedAt(at + 5_000)}`;
+      vps.state.oldMtime = at + 5_000;
+    };
+    await renewal.tick();
+    expect(vps.events).toContain(KILL_OLD);
+    expect(toNew().filter((entry) => String(entry.texto).includes('ENSAIO-T1'))).toHaveLength(1);
+    const forwardLines = vps.lines.filter((line) => line.includes('renovar-local: reencaminhou'));
+    expect(forwardLines).toHaveLength(1);
+    expect(forwardLines[0]).toContain('1 recado ou mensagem que chegou');
+    expect(vps.lines.some((line) => line.includes(' mais '))).toBe(false);
+    // Asked again with nothing new: it says so (zero), and the queue still has it once.
+    expect(await gate.forwardAfterHandoff({ de: OLD, para: NEW, lugar: PLACE, desde: T0 })).toEqual({ ok: true, reencaminhados: 0, passados: 0 });
+    expect(toNew().filter((entry) => String(entry.texto).includes('ENSAIO-T1'))).toHaveLength(1);
+  });
+
   it('recado digitado na velha (rótulo no transcript, fora da fila daqui): vai à sucessora', async () => {
     const { vps, toNew, renewal } = wired();
     vps.state.onOpen = () => {
