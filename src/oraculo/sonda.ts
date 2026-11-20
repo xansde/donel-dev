@@ -11,7 +11,11 @@
 // picture. A session that does not answer waits longer each time (2, 4, 8, 16, 32 min) and never holds the others: on
 // 18/11 one mute session, always the oldest, was asked first every round, its 5 s timeout paused the probe, and no
 // other picture moved for hours (their recados went to the PC). Two sessions that answered before failing in a row is
-// the PC off or stalled: 2 min alone. No token is ever logged.
+// the PC off or stalled: 2 min alone. A new session (alive, never pictured and never seen answering: the sid of a
+// renewal) is asked on the next round even while the probe pauses, and if it fails it is asked again 20 s later, for
+// 5 min since its first try, then the normal backoff; its failure neither ends the round nor counts toward the PC off
+// (t-d97a4bfd: on 19/11 a renewal's first probe failed with the PC slow, it waited 4 min with no picture, and the gate
+// answered it as session:<sid>, with no arrows). No token is ever logged.
 
 import { readFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
@@ -32,6 +36,10 @@ const ROUND_MS = 15_000;
 const MAX_BACKOFF = 4;
 /** This many sessions that had answered failing in a row: the PC itself is off or stalled. */
 const PC_DOWN_AFTER = 2;
+/** A new session that failed is asked again after this long (rounds of 15 s: between 15 and 30 s). */
+const NEW_RETRY_MS = 20_000;
+/** A new session keeps the quick retry this long since its first try; then the normal backoff. */
+const NEW_WINDOW_MS = 5 * 60_000;
 const SID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -187,6 +195,9 @@ export function createProbe(deps: ProbeDeps): Probe {
   const failures = new Map<string, number>();
   /** Sessions that had answered, failing one after the other: `PC_DOWN_AFTER` of them pauses the probe. */
   let downStreak = 0;
+  /** The first try of each new session (t-d97a4bfd), and the sessions seen answering here. */
+  const firstTry = new Map<string, number>();
+  const answered = new Set<string>();
   /** When each probe of the last minute started (the budget). */
   let recent: number[] = [];
   let pausedUntil = 0;
@@ -210,11 +221,18 @@ export function createProbe(deps: ProbeDeps): Probe {
   }
 
   async function round(): Promise<void> {
-    if (running || now() < pausedUntil) return;
+    if (running) return;
     running = true;
     try {
       const picture = deps.picture();
       const at = now();
+      const paused = at < pausedUntil;
+      // Never pictured nor seen answering, and within its quick-retry window: the sid of a renewal.
+      const isNew = (sid: string): boolean => {
+        if (picture?.sessoes[sid] || answered.has(sid)) return false;
+        const first = firstTry.get(sid);
+        return first === undefined || at - first < NEW_WINDOW_MS;
+      };
       const ageOf = (sid: string): number => {
         const mine = picture?.sessoes[sid];
         return mine && picture ? at - (mine.at ?? picture.at) : Number.POSITIVE_INFINITY;
@@ -222,10 +240,13 @@ export function createProbe(deps: ProbeDeps): Probe {
       // No picture first, then the oldest.
       const waitOf = (sid: string): number => staleMs * 2 ** Math.min(failures.get(sid) ?? 0, MAX_BACKOFF);
       const due = [...(await deps.liveSessions())]
-        .filter((sid) => SID_PATTERN.test(sid) && ageOf(sid) >= staleMs && at - (lastProbe.get(sid) ?? Number.NEGATIVE_INFINITY) >= waitOf(sid))
+        .filter((sid) => SID_PATTERN.test(sid) && (!paused || isNew(sid)) && ageOf(sid) >= staleMs && at - (lastProbe.get(sid) ?? Number.NEGATIVE_INFINITY) >= (isNew(sid) ? NEW_RETRY_MS : waitOf(sid)))
         .sort((a, b) => ageOf(b) - ageOf(a) || a.localeCompare(b));
       let first = true;
       for (const sid of due) {
+        // A pause set during this round (a slow answer) leaves only the new sessions.
+        const fresh = isNew(sid);
+        if (now() < pausedUntil && !fresh) continue;
         recent = recent.filter((start) => now() - start < 60_000);
         if (recent.length >= perMinute) break;
         const meta = readMeta(deps.sessionsDir, sid);
@@ -237,8 +258,14 @@ export function createProbe(deps: ProbeDeps): Probe {
         first = false;
         const started = now();
         lastProbe.set(sid, started);
+        if (fresh && !firstTry.has(sid)) firstTry.set(sid, started);
         recent.push(started);
         const session = await probe(meta.port, meta.token);
+        if (!session && fresh) {
+          // A new session that does not answer yet: soon again, and it holds no one.
+          log(`[oraculo] sonda: a sessão nova ${sid} não respondeu pelo túnel; tenta de novo em ${NEW_RETRY_MS / 1000} s.`);
+          continue;
+        }
         if (!session) {
           // This session waits longer before the next try; the others go on next round. Only sessions that answered
           // before, failing in a row, say the PC itself is off.
@@ -255,6 +282,8 @@ export function createProbe(deps: ProbeDeps): Probe {
           break;
         }
         failures.delete(sid);
+        firstTry.delete(sid);
+        answered.add(sid);
         downStreak = 0;
         deps.setSession(sid, session);
         if (now() - started >= SLOW_MS) {
