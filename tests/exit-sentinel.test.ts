@@ -12,6 +12,7 @@ import {
   KILLER_CANDIDATES,
   maskCommandLine,
   maskForDisk,
+  MASK_INPUT_MAX,
   takeExitRecord,
   takeStrayExitRecords,
 } from '../src/main/exit-sentinel';
@@ -41,6 +42,7 @@ function innerScript(recordPath: string): string {
 // Fake, built in pieces so no scanner reads it as a real token.
 const FAKE_GH_TOKEN = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
 const CURL = 'cu' + 'rl';
+const FAKE_B64 = 'Zm9vYmFy' + 'YmF6cXV4' + 'cXV1eDEy' + 'MzQ1Njc4OTA';
 
 // Command lines of other programs on the PC, with the secret each one carries (review of #461).
 const SECRET_LINES: ReadonlyArray<readonly [string, string]> = [
@@ -70,6 +72,59 @@ const SECRET_LINES: ReadonlyArray<readonly [string, string]> = [
   [CURL + ' -uadmin:Hunter2! https://api.x', 'Hunter2!'],
   [CURL + ' -H "Authorization: Basic YWRtaW46cA==" https://api.x', 'YWRtaW46cA=='],
   ['tool /p:Senha9 /user:x', 'Senha9'],
+  // 3rd review of #461 (t-c1b710c2)
+  // (1) a value in escaped quotes, as Node on Windows quotes inner quotes
+  ['bash.exe -c "export GH_TOKEN=\\"Senha123\\"; gh api user"', 'Senha123'],
+  ['powershell.exe -Command "$env:API_TOKEN = \\"Senha 123\\"; gh api user"', 'Senha 123'],
+  ['cmd.exe /c "set DB_PASSWORD=\\"Senha 123\\"&& psql"', 'Senha 123'],
+  ['powershell.exe -Command "Invoke-X @{Password=\\"Senha 123\\"}"', 'Senha 123'],
+  ['tool --password \\"Senha com espaco\\" --x', 'com espaco'],
+  // (2) a plain-text password turned into a credential
+  ["powershell.exe -Command \"$s = ConvertTo-SecureString 'Senha123' -AsPlainText -Force\"", 'Senha123'],
+  ["powershell.exe -Command \"$s = ConvertTo-SecureString -AsPlainText -Force -String 'Senha123'\"", 'Senha123'],
+  ["powershell.exe -Command \"$s = 'Senha123' | ConvertTo-SecureString -AsPlainText -Force\"", 'Senha123'],
+  ["powershell.exe -Command \"Connect-X -Password (ConvertTo-SecureString 'Senha123' -AsPlainText -Force)\"", 'Senha123'],
+  ["powershell.exe -Command \"$c = New-Object System.Net.NetworkCredential('root', 'Senha123')\"", 'Senha123'],
+  ["powershell.exe -Command \"$c = [PSCredential]::new('root', (ConvertTo-SecureString 'Senha123' -AsPlainText -Force))\"", 'Senha123'],
+  // (3) a ':' between the name and the value
+  [CURL + " -H 'X-API-Key: Senha123' https://api.x", 'Senha123'],
+  [CURL + " -H 'PRIVATE-TOKEN: Senha123' https://gitlab.x", 'Senha123'],
+  [CURL + ' -d \'{"user":"root","password":"Senha 123"}\' https://api.x', 'Senha 123'],
+  ["node.exe -e \"login({user:'root',password:'Senha123'})\"", 'Senha123'],
+  ["powershell.exe -Command \"Invoke-RestMethod -Headers @{'x-api-key'='Senha123'}\"", 'Senha123'],
+  ['powershell.exe -Command "Connect-X -Password:Senha123"', 'Senha123'],
+  [CURL + ' -H "X-Upstream: Bearer Senha123" https://api.x', 'Senha123'],
+  // (6, low) a scheme word before the value
+  [CURL + ' -H "Authorization: token Senha123" https://api.x', 'Senha123'],
+  // (5) a long token with no name before it: only the rule for any long run of token characters catches it
+  ['cmd.exe /c deploy Zm9vYmFyYmF6cXV4cXV1eDEyMzQ1Njc4OTA', 'Zm9vYmFyYmF6cXV4cXV1eDEyMzQ1Njc4OTA'],
+  ['cmd.exe /c deploy q8Zt3Kp/0aX9vB2+wR7yL4nM6sE1dF5gH', 'q8Zt3Kp/0aX9vB2+wR7yL4nM6sE1dF5gH'],
+  // review of #549: what spares a path must not spare a token in the same place
+  [`cmd.exe /c git clone https://${FAKE_GH_TOKEN}@github.com/x/y`, FAKE_GH_TOKEN],
+  [`cmd.exe /c redis-cli -u redis://:${FAKE_B64}@host`, FAKE_B64],
+  [`cmd.exe /c deploy X:${FAKE_B64}`, FAKE_B64],
+  [`cmd.exe /c deploy x-access:${FAKE_B64}`, FAKE_B64],
+  [`cmd.exe /c deploy ${FAKE_B64}.txt`, FAKE_B64],
+  [`cmd.exe /c deploy ~${FAKE_B64}`, FAKE_B64],
+  [`cmd.exe /c deploy @${FAKE_B64}`, FAKE_B64],
+  ['cmd.exe /c gpg --batch --passphrase Hunter2! -d x.gpg', 'Hunter2!'],
+  ['tool --passcode 123456', '123456'],
+  ['tool --credentials Pa55g', 'Pa55g'],
+];
+
+// Command lines of the killer itself: the sentinel exists to say who ended the main, so the mask must not erase it.
+const KILLER_LINES: readonly string[] = [
+  'node.exe -p "process.kill(6700)"',
+  '"C:\\Program Files\\nodejs\\node.exe" -p "process.kill(6700)"',
+  'powershell.exe -Command "Stop-Process -PassThru -Id 6700"',
+  'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:/Users/alexandrelentz/AppData/Local/scripts/limpa-processos.ps1',
+  'powershell.exe -File C:\\Users\\alexandrelentz\\seazone\\worktrees\\donel-dev-faixa-preta-internas-1120\\limpa.ps1',
+  'node.exe C:/Users/alexandrelentz/AppData/Roaming/npm/node_modules/@anthropic-ai/claude-code/cli.js',
+  'node.exe C:\\Users\\alexandrelentz\\AppData\\Roaming\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js',
+  'taskkill.exe /F /T /PID 6700',
+  'powershell.exe -Command "Get-ChildItem -Path C:/Users/alexandrelentz/AppData/Roaming/donel-dev"',
+  'node.exe ~/seazone/_scratch/sondas/very-long-script-name/kill.mjs',
+  'node.exe ./node_modules/electron-builder-squirrel-windows/out/x',
 ];
 
 describe('exit sentinel', () => {
@@ -94,10 +149,17 @@ describe('exit sentinel', () => {
     // the log also goes through the ledger's maskSecrets (a short Slack token no command-line mask knows)
     expect(maskCommandLine('cmd /c notify xoxb-12345-abcde')).not.toContain('xoxb-12345-abcde');
 
-    // The PowerShell applies exactly these masks to the command line before writing it.
+    // The PowerShell applies exactly these masks to the command line before writing it, after cutting it to 2 KB
+    // (a long run of word characters makes the .NET engine backtrack for minutes).
     const script = innerScript('C:\\x\\main-exit-1-2.json');
     const chain = COMMAND_LINE_MASKS.map((mask) => ` -replace '${mask.source.replace(/'/g, "''")}', '${mask.to}'`).join('');
-    expect(script).toContain(`$cl = [string]$_.CommandLine${chain} }`);
+    expect(script).toContain(
+      `$cl = [string]$_.CommandLine; if ($cl.Length -gt ${MASK_INPUT_MAX}) { $cl = $cl.Substring(0, ${MASK_INPUT_MAX}) }; $cl = $cl${chain} }`,
+    );
+    expect(MASK_INPUT_MAX).toBe(2048);
+    // the same cut here, so the mirror stays the disk's: what lies past it never reaches the disk
+    const tail = ' --password Senha123';
+    expect(maskForDisk('a '.repeat(MASK_INPUT_MAX) + tail)).toBe('a '.repeat(MASK_INPUT_MAX / 2));
 
     // Only the candidates to killer keep their command line; any other process of the PC keeps only its name.
     expect(script).toContain(`if ($_.Name -match '${KILLER_CANDIDATES}' -or $_.ParentProcessId -eq 6700)`);
@@ -108,6 +170,23 @@ describe('exit sentinel', () => {
     for (const name of ['psql.exe', 'mysql.exe', 'curl.exe', 'git.exe', 'ssh.exe']) {
       expect(candidate.test(name), name).toBe(false);
     }
+  });
+
+  it('keeps the killer readable: node -p, Stop-Process -PassThru and the path of a script', () => {
+    for (const line of KILLER_LINES) {
+      expect(maskForDisk(line), line).toBe(line);
+      expect(maskCommandLine(line), line).toBe(line);
+    }
+    // the killer stays readable even with a secret on the same line, which is still masked
+    const mixed = `node.exe -p "process.kill(6700)" --token ${FAKE_GH_TOKEN}`;
+    expect(maskForDisk(mixed)).toBe('node.exe -p "process.kill(6700)" --token ***');
+    // a flag that only holds a secret keeps its name, and so do the switches after the secret
+    expect(maskForDisk("Connect-X -Password (ConvertTo-SecureString 'Senha123' -AsPlainText -Force)")).toBe(
+      'Connect-X -Password *** *** -AsPlainText -Force)',
+    );
+    expect(maskForDisk("'Senha123' | ConvertTo-SecureString -AsPlainText -Force")).toBe('*** | ConvertTo-SecureString -AsPlainText -Force');
+    // a token in a URL loses only itself, as before the paths were spared
+    expect(maskForDisk(`git clone https://${FAKE_GH_TOKEN}@github.com/x/y`)).toBe('git clone https:***@github.com/x/y');
   });
 
   it('hands over the record of a run once, and only a well formed one', () => {
@@ -172,5 +251,11 @@ describe('exit sentinel', () => {
     // the exit code reaches the disk before the process query, which may hang with WMI
     expect(inner.indexOf('$p.ExitCode')).toBeLessThan(inner.indexOf('Get-CimInstance'));
     expect(inner.indexOf('WriteAllText')).toBeLessThan(inner.indexOf('Get-CimInstance'));
+
+    // Windows refuses a command line past 32767 characters, and the script goes in it encoded twice: every mask makes
+    // it longer, so it must still fit with a long userData (a 200-character record path).
+    const longPath = `C:\\Users\\${'u'.repeat(120)}\\AppData\\Roaming\\donel-dev\\main-exit-6700-1794850936046.json`.padEnd(200, 'x');
+    const { args } = buildExitSentinelCommand({ pid: 4294967, startedAtMs: 1794850936046, recordPath: longPath });
+    expect(['powershell.exe', ...args].join(' ').length).toBeLessThan(32767);
   });
 });
