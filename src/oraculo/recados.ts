@@ -111,7 +111,29 @@ export interface RecadoItem {
    * message is that request (the PC pasted it) gets nothing: the item counts as delivered.
    */
   readonly primeira?: RequestKey;
+  /**
+   * t-49dee38d (T1) — the sid of the successor this item went to after it reached a session renewed with the PC away
+   * (renovar-local.ts): it came in after the handoff, so it is not in it. Set once: it is never forwarded again.
+   */
+  readonly reencaminhado?: string;
 }
+
+/** t-49dee38d (T1) — what came into a renewed session after its handoff, to its successor, before the old one is closed. */
+export interface ForwardCall {
+  /** The old session (folder sid). */
+  readonly de: string;
+  /** The successor (folder sid), alive in this tmux. */
+  readonly para: string;
+  /** The board place both hold (`place:` or `session:`). */
+  readonly lugar: string;
+  /** Since when (ms): the handoff request. What reached the old one from then on is not in its handoff. */
+  readonly desde: number;
+  /** A user message of the old one holding this text is not forwarded (the handoff request itself). */
+  readonly excluir?: string;
+}
+
+/** `ok: false` = nothing can be said of what reached the old one: it must not be closed. */
+export type ForwardOutcome = { readonly ok: true; readonly reencaminhados: number; readonly passados: number } | { readonly ok: false; readonly motivo: string };
 
 /** The tmux of the sessions (`tmux -L donel`, session `donel-<sid>`); injected in the vitest. */
 export interface RecadosTmux {
@@ -177,6 +199,8 @@ export interface GateRecadosDeps {
   readonly placeOf?: (sid: string) => string | undefined;
   /** The text of a transcript's first user message (`null` = none, or unreadable). Default: reads its start. */
   readonly firstUserText?: (path: string) => Promise<string | null>;
+  /** t-49dee38d (T1) — the end of a transcript (`null` = unreadable). Default: its last 512 KB. */
+  readonly readTranscript?: (path: string) => Promise<string | null>;
   readonly now?: () => number;
   readonly log?: (line: string) => void;
 }
@@ -194,6 +218,13 @@ export interface GateRecadosHandle extends GateRecados {
   stateOf(key: string): { readonly estado: RecadoState; readonly sid: string } | undefined;
   /** The transcript of a session of this machine (what its hooks named, else found by its id). */
   transcriptOf(sid: string): Promise<string | undefined>;
+  /**
+   * t-49dee38d (T1) — before a session renewed with the PC away is closed: every recado delivered to it since the
+   * handoff request (this queue, or a "◆ …" in its conversation) and every message the owner typed in it since then
+   * goes to the successor, once, with its original text after a short line saying so; what still waits for it here
+   * passes to the successor. Called again it forwards nothing twice. `ok: false` = do not close the old one.
+   */
+  forwardAfterHandoff(call: ForwardCall): Promise<ForwardOutcome>;
   /** One round of the typing loop (the vitest calls it; `start` runs it every 2 s). */
   tick(): Promise<void>;
   start(): void;
@@ -297,6 +328,7 @@ function parseItem(value: unknown): RecadoItem | null {
     ...(isRecord(value.primeira) && typeof value.primeira.hash === 'string' && typeof value.primeira.hashPlano === 'string'
       ? { primeira: { hash: value.primeira.hash, hashPlano: value.primeira.hashPlano } }
       : {}),
+    ...(typeof value.reencaminhado === 'string' && SID_PATTERN.test(value.reencaminhado) ? { reencaminhado: value.reencaminhado } : {}),
   };
 }
 
@@ -632,6 +664,72 @@ export async function transcriptFirstUserText(path: string): Promise<string | nu
   }
 }
 
+/** The last 512 KB of a transcript (`null` = unreadable). */
+export async function readTranscriptTail(path: string): Promise<string | null> {
+  try {
+    const handle = await fsp.open(path, 'r');
+    try {
+      const { size } = await handle.stat();
+      const length = Math.min(size, 512 * 1024);
+      const buffer = Buffer.alloc(length);
+      await handle.read(buffer, 0, length, size - length);
+      return buffer.toString('utf8');
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+/** A message someone put into a session's conversation (the owner typing, the app or this queue), after a moment. */
+export interface TypedMessage {
+  /** Its entry's uuid, else its time and words (what makes it one). */
+  readonly key: string;
+  readonly at: number;
+  readonly text: string;
+  /** The recado ids its label names ("Recado r-…"). */
+  readonly ids: readonly string[];
+  /** It has the form of a Donel notice or recado ("◆ …", "[Donel Dev · …"); otherwise it is someone typing. */
+  readonly donel: boolean;
+}
+
+const RECADO_ID = /\bRecado (r-[0-9a-f]{8})\b/g;
+const STOP_FEEDBACK = /^Stop hook feedback:\s*/;
+
+/**
+ * Pure — t-49dee38d (T1): the user messages of a transcript's main conversation written at or after `since` (ms): the
+ * owner's typing, the app's "◆ De …", this queue's "◆ Recado r-…" typed or given at a turn end (the CLI's "Stop hook
+ * feedback"). Never a tool's answer, a task notification, a command or other text the CLI adds itself, an interruption,
+ * nor one holding `exclude`.
+ */
+export function typedMessagesSince(tail: string, since: number, exclude?: string): TypedMessage[] {
+  const found: TypedMessage[] = [];
+  for (const line of tail.split('\n')) {
+    const entry = parseObject(line);
+    if (entry.type !== 'user' || entry.isSidechain === true || typeof entry.timestamp !== 'string') continue;
+    const at = Date.parse(entry.timestamp);
+    if (!Number.isFinite(at) || at < since) continue;
+    const message = isRecord(entry.message) ? entry.message : {};
+    const content = message.content;
+    if (Array.isArray(content) && content.some((part) => isRecord(part) && part.type === 'tool_result')) continue;
+    const raw = typeof content === 'string' ? content : Array.isArray(content) ? content.map((part) => (isRecord(part) && part.type === 'text' && typeof part.text === 'string' ? part.text : '')).join('\n') : '';
+    let text = raw.replace(/<\/?pasted_content[^>]*>/g, '').trim();
+    if (entry.isMeta === true) {
+      // Of the CLI's own texts only a turn end's feedback: that is how this queue hands a recado at a turn end.
+      if (!STOP_FEEDBACK.test(text)) continue;
+      text = text.replace(STOP_FEEDBACK, '').trim();
+    }
+    const origin = isRecord(entry.origin) ? entry.origin.kind : undefined;
+    if (!text || (origin !== undefined && origin !== 'human') || /^<(?:task-notification|command-|local-command|system-reminder)/.test(text) || text.startsWith('[Request interrupted')) continue;
+    if (exclude && text.includes(exclude)) continue;
+    const ids = [...text.matchAll(RECADO_ID)].map((match) => match[1]!);
+    const key = typeof entry.uuid === 'string' && entry.uuid ? entry.uuid : createHash('sha256').update(JSON.stringify([entry.timestamp, text])).digest('hex').slice(0, 32);
+    found.push({ key, at, text, ids: [...new Set(ids)], donel: ids.length > 0 || DONEL_FORM.test(text) || text.startsWith('◆') });
+  }
+  return found;
+}
+
 // ---- the queue ---------------------------------------------------------------------------------------------------
 
 type SessionMood = 'parada' | 'ocupada' | 'digitando';
@@ -682,6 +780,7 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
   const transcriptOf = deps.transcriptOf ?? findTranscript;
   const lastTurn = deps.lastTurn ?? transcriptLastTurn;
   const firstUserText = deps.firstUserText ?? transcriptFirstUserText;
+  const readTranscript = deps.readTranscript ?? readTranscriptTail;
   /** What the hooks told of each session (memory only: a session they never spoke of is read on its screen and transcript). */
   const moods = new Map<string, { readonly mood: SessionMood; readonly at: number }>();
   const moodOf = (sid: string): SessionMood | undefined => moods.get(sid)?.mood;
@@ -1580,6 +1679,66 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     }
   }
 
+  /** t-49dee38d (T1) — the words a forwarded message goes with: a short line, then what came in as it came. */
+  function forwardWords(old: string, owner: boolean, original: string, at: number): string {
+    const head = owner
+      ? `[reencaminhado] o dono digitou isto na sessão anterior deste lugar (${old.slice(0, 8)}) depois da passagem de bastão; não está nela. O texto, como veio:`
+      : `[reencaminhado] chegou à sessão anterior deste lugar (${old.slice(0, 8)}) depois da passagem de bastão; não está nela. Como veio:`;
+    const words = `${head} ${original}`;
+    // Past one typing's ceiling (tmux refuses it): the whole of it in a file, read first.
+    if (Buffer.byteLength(typeable(words)) + 80 <= MAX_TYPING_BYTES) return words;
+    const name = `reencaminhado-${createHash('sha256').update(JSON.stringify([old, at, original])).digest('hex').slice(0, 16)}`;
+    const whole = writeLongRequest(dirname(file), name, original);
+    return `${head} longo demais para digitar; o texto inteiro está em ${whole} . Leia o arquivo todo. O começo: ${original.slice(0, FIRST_TYPED_CHARS)} …`;
+  }
+
+  async function forwardAfterHandoff(call: ForwardCall): Promise<ForwardOutcome> {
+    const { de, para, lugar, desde } = call;
+    if (!SID_PATTERN.test(de) || !SID_PATTERN.test(para) || de === para || !lugar) return { ok: false, motivo: 'pedido de reencaminhar inválido' };
+    try {
+      // What the old one's conversation shows since the request: read first, so nothing is forwarded blind.
+      const path = await transcriptPath(de);
+      if (!path) return { ok: false, motivo: `não achei a conversa de ${de.slice(0, 8)}` };
+      const tail = await readTranscript(path);
+      if (tail === null) return { ok: false, motivo: `não li a conversa de ${de.slice(0, 8)}` };
+      const typedInOld = typedMessagesSince(tail, desde, call.excluir);
+      const items = read();
+      const outgoing: { readonly at: number; readonly words: string; readonly key: string; readonly source?: string }[] = [];
+      for (const item of items) {
+        if (item.para.sid !== de || item.reencaminhado) continue;
+        // Delivered to it since the request, or typed into it (whether it came in or not, it goes once, from here).
+        const delivered = item.estado === 'entregue' && (item.entregueEm ?? 0) >= desde;
+        if (!delivered && item.estado !== 'digitado') continue;
+        const at = item.entregueEm ?? item.digitadoEm ?? item.criado;
+        outgoing.push({ at, words: forwardWords(de, false, item.texto, at), key: `reencaminhado:${item.id}`, source: item.id });
+      }
+      for (const message of typedInOld) {
+        // A recado of this queue: the queue says whether it came after the request (it goes from there), never twice.
+        if (message.ids.length > 0 && message.ids.every((id) => items.some((item) => item.id === id))) continue;
+        outgoing.push({ at: message.at, words: forwardWords(de, !message.donel, message.text, message.at), key: `reencaminhado:${de}:${message.key}` });
+      }
+      outgoing.sort((a, b) => a.at - b.at);
+      const oracle = { lugar: '', nome: 'Oráculo' };
+      for (const out of outgoing) enqueue(oracle, { lugar, sid: para }, out.words, out.key);
+      const sources = new Set(outgoing.flatMap((out) => (out.source ? [out.source] : [])));
+      if (sources.size)
+        update(
+          (item) => sources.has(item.id) && item.para.sid === de && !item.reencaminhado,
+          (item) => ({ ...item, reencaminhado: para, ...(item.estado === 'digitado' ? { estado: 'entregue' as const, entregueEm: now() } : {}) }),
+        );
+      // What still waits for the old one never reached it: it is the successor's now.
+      const passed = update(
+        (item) => item.para.sid === de && item.estado === 'fila',
+        (item) => ({ ...item, para: { ...item.para, sid: para } }),
+      );
+      if (outgoing.length || passed.length)
+        log(`renovação de ${de.slice(0, 8)}: ${outgoing.length} recado(s) ou mensagem(ns) que chegaram depois da passagem reencaminhado(s) a ${para.slice(0, 8)}; ${passed.length} da fila passado(s) a ela.`);
+      return { ok: true, reencaminhados: outgoing.length, passados: passed.length };
+    } catch (error) {
+      return { ok: false, motivo: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
   return {
     async deliverLocal(message, localText) {
       // The label already opens with ◆; the message's own one would be a second.
@@ -1601,6 +1760,8 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     },
 
     transcriptOf: transcriptPath,
+
+    forwardAfterHandoff,
 
     async enviar(sid, mine, call: SendCall, pc = 'ligado'): Promise<BrowserToolOutcome | 'repassar'> {
       // With the PC on, what the picture cannot send goes to it: the picture may be minutes old (the probe's), and a

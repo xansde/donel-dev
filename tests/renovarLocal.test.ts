@@ -165,7 +165,7 @@ function fake(options: FakeOptions = {}) {
     forward: async (call) => {
       events.push(`reencaminhou:${call.de.slice(0, 4)}`);
       state.forwardCalls.push(call);
-      return state.forwardAnswer ? state.forwardAnswer(call) : { ok: true, reencaminhados: call.mensagens.length };
+      return state.forwardAnswer ? state.forwardAnswer(call) : { ok: true, reencaminhados: 0, passados: 0 };
     },
     openSuccessor: async (call) => {
       events.push(`abriu:${call.de.slice(0, 4)}`);

@@ -16,9 +16,13 @@
 //      call pending, the transcript quiet for 60 s, and the screen with no turn running, no background work waited
 //      on and an empty input field — read again right before the request is typed.
 //   3. The old session dies only after the NEW one ANSWERED (the last assistant entry after its first message is a real
-//      end of turn with text and no tool call, seen and then seen alive again; an API error the CLI writes itself —
-//      `isApiErrorMessage`, model `<synthetic>` — is no answer and undoes one before it, like the empty thinking a
-//      dropped connection leaves). A new one SILENT for 5 min (no real assistant entry after its first message) is
+//      end of turn with text and no tool call; an API error the CLI writes itself — `isApiErrorMessage`, model
+//      `<synthetic>` — is no answer and undoes one before it, like the empty thinking a dropped connection leaves). T2:
+//      that answer counts only with the new one's SCREEN stopped (as the old one's: no turn, no "esc to interrupt", no
+//      dialog, empty field) and its transcript quiet for 60 s after it, read again at the end: a text cut by the network
+//      gets its "Connection lost" 30 to 250 s later, while the screen shows the turn running. T1: before the old one is
+//      closed, whatever reached it since the handoff request (recados delivered or typed, the owner typing) goes to the
+//      new one (recados.ts `forwardAfterHandoff`); that failing closes nothing. A new one SILENT for 5 min (no real assistant entry after its first message) is
 //      closed: it never worked. A new one with any assistant activity is never closed: it gets up to 30 min to end its
 //      turn; without that, both stay alive ("duas vivas no lugar", lasting) and the Líder is told. The old one dies
 //      only while it is still stopped (screen idle, no new transcript entry since the handoff was ready). Back at work:
@@ -48,7 +52,7 @@ import { buildHandoffInstructions, handoffBaseName, handoffFirstPrompt, handoffR
 import { formatTokensK, parseHandoffHeader, RENEWAL_LIMIT_MAX_TOKENS, RENEWAL_LIMIT_MIN_TOKENS, type SessionRenewalPrefs } from '../shared/sessionRenewal';
 import type { SuccessorCall, SuccessorOutcome } from './abrir-local';
 import type { LocalLeader } from './lider-local';
-import { fieldIsFree, typeable } from './recados';
+import { fieldIsFree, typeable, type ForwardCall, type ForwardOutcome } from './recados';
 
 export type { SuccessorOutcome } from './abrir-local';
 
@@ -315,6 +319,11 @@ export interface LocalRenewalDeps {
   readonly room?: () => string | null;
   /** One line to the Líder único (the entregador's `toLeader`): two alive in the place, lasting give-up, in flight. */
   readonly toLeader?: (message: OwnerMessage) => Promise<unknown>;
+  /**
+   * T1 — what reached the old session since the handoff request, to the successor (recados.ts `forwardAfterHandoff`).
+   * Absent or `ok: false` = the old one is not closed.
+   */
+  readonly forward?: (call: ForwardCall) => Promise<ForwardOutcome>;
   readonly now?: () => number;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly log?: (line: string) => void;
@@ -459,6 +468,16 @@ export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
     return path ? readTail(path) : null;
   };
 
+  /** T1 — the forward, never throwing: absent or failed = `ok: false` (the old one stays). */
+  const forwardTo = async (call: ForwardCall): Promise<ForwardOutcome> => {
+    if (!deps.forward) return { ok: false, motivo: 'este Oráculo não reencaminha recados' };
+    try {
+      return await deps.forward(call);
+    } catch (error) {
+      return { ok: false, motivo: error instanceof Error ? error.message : String(error) };
+    }
+  };
+
   /** The session is past the limit with its turn over; its tokens, or `null` = not now. */
   async function candidate(sid: string, cfg: LocalRenewalConfig, leaderSid: string | undefined): Promise<number | null> {
     if (!SID_PATTERN.test(sid) || sid === leaderSid || markBlocks(sid)) return null;
@@ -475,24 +494,27 @@ export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
   }
 
   /**
-   * The successor answered its first message (seen, then seen alive again), left the tmux, stayed silent 5 min (no
-   * real assistant entry at all), or worked 30 min without ending its first turn (`sem-fim`: never closed).
+   * The successor answered its first message, left the tmux, stayed silent 5 min (no real assistant entry at all), or
+   * worked 30 min without ending its first turn (`sem-fim`: never closed). T2 — an answer counts only with its screen
+   * stopped and its transcript quiet for `QUIET_MS` after it, and once more on a last read: a text the network cut gets
+   * its synthetic "Connection lost" up to minutes later, with the turn still running on the screen meanwhile.
    */
   async function waitAnswer(newSid: string): Promise<'respondeu' | 'saiu' | 'calada' | 'sem-fim'> {
     const startedAt = now();
-    let seen = false;
     let active = false;
     for (;;) {
       if (!(await deps.liveSessions()).has(newSid)) return 'saiu';
       const tail = await transcriptTail(newSid);
       const progress = tail === null ? 'calada' : successorProgress(tail.text);
       if (progress !== 'calada') active = true;
-      const answered = progress === 'respondeu';
-      if (answered && seen) return 'respondeu';
-      seen = answered;
-      const elapsed = now() - startedAt - (seen ? ANSWER_POLL_MS : 0);
+      if (progress === 'respondeu' && tail && now() - tail.mtimeMs >= QUIET_MS && screenIsIdle(await deps.screen(newSid))) {
+        const again = await transcriptTail(newSid);
+        if (again && again.mtimeMs === tail.mtimeMs && successorProgress(again.text) === 'respondeu') return 'respondeu';
+      }
+      const elapsed = now() - startedAt;
       if (!active && elapsed >= ANSWER_WAIT_MS) return 'calada';
-      if (active && elapsed >= TURN_WAIT_MS) return 'sem-fim';
+      // An answer still settling gets its quiet minute past the 30 (never more: a screen that never stops is no answer).
+      if (active && elapsed >= TURN_WAIT_MS && (progress !== 'respondeu' || elapsed >= TURN_WAIT_MS + 2 * QUIET_MS)) return 'sem-fim';
       await sleep(ANSWER_POLL_MS);
     }
   }
@@ -587,6 +609,8 @@ export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
       giveUp('a tela mudou antes do pedido (turno, rascunho ou diálogo); nada foi digitado');
       return;
     }
+    // T1: what reaches the old one from here on is not in its handoff (a recado given at the end of the handoff turn too).
+    const requestedAt = now();
     if (!(await deps.type(sid, typeable(handoffRequestPrompt({ contextTokens: tokens, limitTokens: cfg.limitTokens, instructionsPath }))))) {
       asked = true;
       giveUp('o tmux recusou o pedido de passagem');
@@ -629,7 +653,7 @@ export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
       return;
     }
     const readyMtime = (await transcriptTail(sid))?.mtimeMs ?? null;
-    if (!mark(sid, 'pronta', { passagem: handoffPath, ...carry })) return;
+    if (!mark(sid, 'pronta', { passagem: handoffPath, desde: iso(requestedAt), ...carry })) return;
     say(`pronta a passagem de ${sid8}, sem trabalho vivo.`);
 
     const beforeOpen = stopReason(sid);
@@ -699,10 +723,32 @@ export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
       giveUp(`a sessão nova ${new8} saiu do tmux antes do fechamento; a velha segue viva`, { extra: { sucessora: opened.sid } });
       return;
     }
+    // T1 — what reached the old one since the request goes to the new one BEFORE the kill; failing, nothing is closed.
+    const forwardCall: ForwardCall = { de: sid, para: opened.sid, lugar: placeOfSession(sid) ?? `session:${sid}`, desde: requestedAt, excluir: instructionsPath };
+    const forwarded = await forwardTo(forwardCall);
+    if (!forwarded.ok) {
+      giveUp(`duas vivas no lugar: não reencaminhei a ${new8} o que chegou a ${sid8} depois da passagem (${oneLine(forwarded.motivo).slice(0, 160)}); ${sid8} segue viva; o Líder decide`, {
+        lasting: true,
+        extra: { sucessora: opened.sid },
+      });
+      return;
+    }
+    say(`reencaminhou a ${new8} ${forwarded.reencaminhados} recado(s) ou mensagem(ns) que chegaram a ${sid8} depois da passagem; ${forwarded.passados} da fila passaram a ela.`);
     const killed = await deps.kill(sid);
     mark(sid, killed ? 'fechou' : 'nao-fechou', { sucessora: opened.sid });
     say(killed ? `fechou o tmux de ${sid8} (a pasta fica); ${new8} segue no lugar dela.` : `nao-fechou: o tmux recusou encerrar ${sid8}; ${new8} já está viva no lugar dela.`);
-    if (!killed) tellLeader(sid, `duas vivas no lugar: o tmux recusou encerrar ${sid8}, e ${new8} já respondeu no lugar dela; o Líder decide.`);
+    if (!killed) {
+      tellLeader(sid, `duas vivas no lugar: o tmux recusou encerrar ${sid8}, e ${new8} já respondeu no lugar dela; o Líder decide.`);
+      return;
+    }
+    // Once more after the kill: a recado typed into the old one between the forward and the kill (never twice).
+    const after = await forwardTo(forwardCall);
+    if (!after.ok) {
+      say(`depois de fechar ${sid8}, o 2º reencaminhamento a ${new8} falhou (${oneLine(after.motivo).slice(0, 160)}).`);
+      tellLeader(sid, `fechei ${sid8} e ${new8} segue no lugar dela, mas a conferência final do que chegou a ${sid8} depois da passagem falhou (${oneLine(after.motivo).slice(0, 160)}); confira os recados dela.`);
+    } else if (after.reencaminhados || after.passados) {
+      say(`reencaminhou a ${new8} mais ${after.reencaminhados} que chegaram a ${sid8} antes do fechamento; ${after.passados} da fila passaram a ela.`);
+    }
   }
 
   async function tick(): Promise<void> {
