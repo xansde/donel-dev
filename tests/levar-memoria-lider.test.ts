@@ -3,17 +3,28 @@
 // aqui some da vista do Líder sem ninguém perceber.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { carryMemory, formatReport, mergeMemoryIndex } from '../scripts/levar-memoria-lider.mjs';
+
+/** Every folder a test makes under the system temp dir is removed after the test: each verify run used to leave thousands in /tmp. */
+const tempDirs: string[] = [];
+function tempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 const SCRIPT = fileURLToPath(new URL('../scripts/levar-memoria-lider.mjs', import.meta.url));
 
 function dirs(): { old: string; next: string } {
-  const root = mkdtempSync(join(tmpdir(), 'memoria-lider-'));
+  const root = tempDir('memoria-lider-');
   const old = join(root, 'antiga');
   const next = join(root, 'nova');
   mkdirSync(old);
@@ -457,7 +468,7 @@ describe('Memória do Líder no PC — nada se perde, nada duplica', () => {
   it.skipIf(process.platform === 'win32')('chamado por link simbólico: faz o trabalho e sai 0; sem trabalho, imprime o relatório (nunca sai calado)', () => {
     const { old, next } = dirs();
     writeFileSync(join(old, 'a.md'), 'a\n');
-    const bin = mkdtempSync(join(tmpdir(), 'memoria-lider-bin-'));
+    const bin = tempDir('memoria-lider-bin-');
     const link = join(bin, 'levar.mjs');
     symlinkSync(SCRIPT, link);
 
