@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { RemoteHealthReport } from '../src/shared/health/remote';
-import { applyLedgerOp, closedAlone, emptyLedgerDoc, type LedgerOp } from '../src/shared/ledger/contract';
+import { applyLedgerOp, closedAlone, emptyLedgerDoc, eventNote, lastDelivery, type LedgerOp } from '../src/shared/ledger/contract';
+import { actorLabel } from '../src/shared/ledger/labels';
+import { actorName } from '../src/shared/ledger/mirror';
 import { ownerInbox } from '../src/shared/ledger/inbox';
 import { createLedgerService, nodeLedgerProofFs } from '../src/main/ledger-store';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
@@ -182,7 +184,7 @@ describe('serviço: a trava que passou é registro; a viva e a repetida pedem de
     expect(live).toHaveLength(1);
     expect(live[0]!.task.title).toBe('VPS pessoal fora do ar desde 17/11 07:30');
     const question = live[0]!.task.events.at(-1)!.forOwner!;
-    expect(question.question).toBe('VPS pessoal fora do ar desde 17/11 07:30 (horário de Brasília). Chamo o Líder único para destravar?');
+    expect(question.question).toBe('Chamo o Líder único para destravar a máquina VPS pessoal?');
     expect(question.summary).toContain('Uma sessão está parada nela, com uma tarefa em andamento.');
     expect(JSON.stringify(live[0]!.task.events[0])).toContain('Travas das máquinas');
 
@@ -228,7 +230,7 @@ describe('serviço: a trava que passou é registro; a viva e a repetida pedem de
     const card = inbox[0]!.task;
     expect(card.title).toBe('VPS pessoal caiu 3 vezes em 24 h');
     const forOwner = card.events.at(-1)!.forOwner!;
-    expect(forOwner.question).toContain('Mando investigar?');
+    expect(forOwner.question).toContain('Mando investigar');
     expect(forOwner.summary).toContain('17/11 07:30–07:50 (20 min)');
     expect(forOwner.summary).toContain('17/11 13:30–14:00 (30 min)');
     // A 4th fall the same day does not make a second card.
@@ -242,6 +244,31 @@ describe('serviço: a trava que passou é registro; a viva e a repetida pedem de
     expect(investigation[0]!.request).toContain(card.id);
     await t.at(t.state.clock + 5 * MIN);
     expect(Object.values((await t.ledger.load()).doc.tasks).filter((task) => task.ownerPlaceId === 'lider')).toHaveLength(1);
+  });
+});
+
+describe('o que o dono lê do vigia: a 1ª frase uma vez só e quem entregou com nome (t-f4cd92fb)', () => {
+  it('a carta viva e o registro da queda dizem "VPS pessoal fora do ar" uma vez só, entregues pelo Vigia de travas, nunca "Servico"', async () => {
+    const t = setup();
+    t.state.reached = false;
+    await t.at(QUEDA_VPS);
+    await t.at(QUEDA_VPS + 5 * MIN);
+    t.state.reached = true;
+    await t.at(QUEDA_VPS + 10 * MIN);
+    const tasks = Object.values((await t.ledger.load()).doc.tasks).filter((task) => task.ownerPlaceId === 'servico:vigia');
+    const live = tasks.find((task) => task.risk === 'alto')!;
+    const record = tasks.find((task) => closedAlone(task))!;
+    for (const task of [live, record]) {
+      const delivery = lastDelivery(task)!;
+      // What the PC's card and the phone's Missões show together: the title (the same as forOwner.title), the
+      // question, the summary, the note and the text proof.
+      const read = [task.title, delivery.forOwner?.question, delivery.forOwner?.summary, eventNote(delivery), ...(delivery.proofs ?? []).map((proof) => (proof.kind === 'texto' ? proof.text : ''))].join('\n');
+      expect(read.split('VPS pessoal fora do ar').length - 1).toBe(1);
+      expect(actorName(delivery.by, task.projectPath, undefined, 'Alexandre')).toBe('Vigia de travas');
+      expect(actorLabel(delivery.by, task.projectPath, undefined)).toBe('Vigia de travas');
+    }
+    // The records written before this fix (roleId "servico") are named the same way when read.
+    expect(actorName({ kind: 'lugar', placeId: 'servico:vigia', roleId: 'servico' }, '/projetos/donel', undefined, 'Alexandre')).toBe('Vigia de travas');
   });
 });
 

@@ -8,7 +8,7 @@ import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import type { OwnerMessage } from '../ledger-card-writer';
 import type { RemoteHealthReport } from '../../shared/health/remote';
 import type { VigiaCofrePrefs } from '../../shared/vigia/config';
-import { SERVICE_PLACE_PREFIX, SERVICE_ROLE, VIGIA_SERVICE, type LedgerActor, type LedgerForOwner, type LedgerOp, type LedgerTask } from '../../shared/ledger/contract';
+import { SERVICE_PLACE_PREFIX, VIGIA_ROLE, VIGIA_SERVICE, type LedgerActor, type LedgerForOwner, type LedgerOp, type LedgerTask } from '../../shared/ledger/contract';
 import {
   buildVigiaProbeScript,
   classifySshFailure,
@@ -108,7 +108,7 @@ export interface VigiaService {
 
 /** A service's place: its card never turns orphan, and it may cancel what it opened. */
 const VIGIA_PLACE = `${SERVICE_PLACE_PREFIX}${VIGIA_SERVICE}`;
-const ACTOR: LedgerActor = { kind: 'lugar', placeId: VIGIA_PLACE, roleId: SERVICE_ROLE };
+const ACTOR: LedgerActor = { kind: 'lugar', placeId: VIGIA_PLACE, roleId: VIGIA_ROLE };
 
 const DONE_WHEN = 'A trava passou (o vigia cancela a carta sozinho) ou o dono decidiu.';
 const RECORD_DONE_WHEN = 'Registro de uma trava que passou sozinha: fecha sozinho, não pede decisão.';

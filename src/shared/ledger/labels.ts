@@ -2,7 +2,7 @@
 // ("Dev · painel do Jobu"; without a name, the role: "Dev"). Shared by the phone and the desktop cards.
 
 import { naipeDoTipo, type Naipe } from '../celular';
-import { cardKindOf, doneByOf, eventNote, lastDelivery, type CardKind, type LedgerActor, type LedgerDeliveredTo, type LedgerEvent, type LedgerTask } from './contract';
+import { cardKindOf, doneByOf, eventNote, lastDelivery, servicePlaceName, type CardKind, type LedgerActor, type LedgerDeliveredTo, type LedgerEvent, type LedgerTask } from './contract';
 import type { LedgerCommentResult } from './channels';
 
 const ROLE_LABELS: Readonly<Record<string, string>> = {
@@ -36,6 +36,8 @@ export function deliveryNote(delivery: LedgerEvent | undefined, projectPath: str
 export function actorLabel(actor: LedgerActor | undefined, projectPath: string, placeName: PlaceNameOf | undefined): string {
   if (!actor) return 'alguém';
   if (actor.kind === 'dono') return 'você';
+  const service = servicePlaceName(actor.placeId);
+  if (service) return service;
   const role = roleLabel(actor.roleId);
   const name = placeName?.(projectPath, actor.placeId)?.trim();
   return name ? `${role} · ${name}` : role;

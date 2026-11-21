@@ -309,12 +309,9 @@ export function passedRecord(input: {
   readonly affected: Affected;
 }): PassedRecord {
   const { label, kind, firstSeen, endedAt, cause, affected } = input;
-  const span = `de ${clockBr(firstSeen)} a ${DAY.format(firstSeen) === DAY.format(endedAt) ? hourBr(endedAt) : clockBr(endedAt)}`;
-  const head = `${label} ${KIND_STATE[kind]} ${span} (${durationText(endedAt - firstSeen)}, horário de Brasília).`;
-  const note = `${head} Passou sozinha: fica só no registro. Causa provável: ${cause.name}.`.slice(0, 280);
+  // The title says what happened and when (t-f4cd92fb: said once); the note and the body go on from it.
+  const note = `Passou sozinha e fica só no registro, sem pedir decisão (horário de Brasília). Causa provável: ${cause.name}.`.slice(0, 280);
   const body = [
-    `${head} Passou sozinha; não pede decisão, fica no registro.`,
-    '',
     'O que parou',
     ...affectedLines(affected),
     '',
@@ -349,7 +346,8 @@ export function liveCard(input: { readonly label: string; readonly kind: TravaKi
     title,
     forOwner: {
       title,
-      question: `${label} ${KIND_STATE[kind]} desde ${clockBr(firstSeen)} (horário de Brasília). Chamo o Líder único para destravar?`.slice(0, 160),
+      // The title says what and since when; the question names the place, so it is still answered alone (t-f4cd92fb).
+      question: `Chamo o Líder único para destravar a máquina ${label}?`.slice(0, 160),
       summary: `${stopped.trim() || 'O vigia não tinha leitura das sessões dessa máquina.'} ${WHAT_TO_DO[kind]}`.slice(0, 280),
       options: [
         { label: 'Chamar o Líder único', effect: 'O vigia abre agora uma tarefa ao Líder único para destravar a máquina e retomar o que parou.', closes: 'aceita', recommended: true },
@@ -358,7 +356,7 @@ export function liveCard(input: { readonly label: string; readonly kind: TravaKi
       why: 'Uma trava assim congela o trabalho das sessões até alguém agir.',
       risk: 'Enquanto a trava dura, as sessões dessa máquina ficam paradas ou esperando.',
     },
-    body: [`${input.detail}. Vista pela primeira vez em ${clockBr(firstSeen)} (horário de Brasília), em leituras com 5 min entre elas.`, '', 'O que parou', ...affectedLines(affected)].join('\n'),
+    body: [`${input.detail}, em leituras com 5 min entre elas. Os horários são de Brasília.`, '', 'O que parou', ...affectedLines(affected)].join('\n'),
   };
 }
 
@@ -373,12 +371,11 @@ export function repeatCard(input: {
   const title = repeatTitle(label, kind, passages.length);
   const spans = passages.map((passage) => `${spanBr(passage.firstSeen, passage.endedAt)} (${durationText(passage.endedAt - passage.firstSeen)})`);
   const last = passages[passages.length - 1]!;
-  const verb = kind === 'vps-fora' ? 'caiu' : 'travou';
   return {
     title,
     forOwner: {
       title,
-      question: `${label} ${verb} ${passages.length} vezes em 24 h, a última de ${spanBr(last.firstSeen, last.endedAt)} (horário de Brasília). Mando investigar?`.slice(0, 160),
+      question: `Mando investigar por que a máquina ${label} ${kind === 'vps-fora' ? 'cai' : 'trava'}?`.slice(0, 160),
       summary: `Vezes: ${spans.join('; ')}. Causa provável da última: ${causeName(last.cause)}.`.slice(0, 280),
       options: [
         { label: 'Investigar', effect: 'O vigia abre uma tarefa ao Líder único para achar a causa e propor a correção.', closes: 'aceita', recommended: true },
@@ -388,7 +385,7 @@ export function repeatCard(input: {
       risk: 'Sem investigar, a máquina pode seguir travando e parando as sessões dela.',
     },
     body: [
-      `${label} ${KIND_STATE[kind]} ${passages.length} vezes nas últimas 24 h (horário de Brasília):`,
+      'Cada vez, em horário de Brasília, com a causa provável:',
       ...passages.map((passage, i) => `- ${spans[i]}: ${causeName(passage.cause)}`),
       '',
       'Cada vez tem o seu registro no Oráculo, com o que parou, a leitura da causa e o que o time fez.',

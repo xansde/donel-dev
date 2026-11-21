@@ -36,6 +36,7 @@ import {
   type LedgerTask,
   type LedgerViewState,
   type LedgerVisual,
+  servicePlaceName,
 } from './contract';
 import { CLOSING_LABELS, closingOf, withoutMarks } from './closing';
 import { deliveryNote } from './labels';
@@ -247,6 +248,8 @@ function roleName(roleId: string | undefined): string | undefined {
 /** "Dev · Mindscape de cadeiras": the role, then the name (once, when the name already starts with the role). */
 export function placeLabel(projectPath: string, placeId: string, roleHint: string | undefined, places: PlaceInfoOf | undefined): string {
   if (placeId === LEADER_OF_ALL) return 'Líder único';
+  const service = servicePlaceName(placeId);
+  if (service) return service;
   const info = places?.(projectPath, placeId);
   const role = roleName(info?.roleId ?? roleHint);
   const name = info?.name?.trim();
