@@ -20,7 +20,7 @@ import { parseLedgerToolCall } from '../src/shared/ledger/tools';
 import type { MindscapeBoard } from '../src/shared/mindscape/model';
 import { whoHears } from '../src/shared/mindscape/reach';
 import { callerOf, createOracleApiHandler, type OracleRequest } from '../src/oraculo/api';
-import { createGateToolRoutes, GATE_TOOL_PATH, readGateHashes } from '../src/oraculo/portoes';
+import { createGateToolRoutes, GATE_TOOL_PATH, readGateHashes, type GateToolRoutesDeps } from '../src/oraculo/portoes';
 import { boardFromProbe, createProbe } from '../src/oraculo/sonda';
 import { createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteTaskMemory, SATELLITE_DOWN, type SatellitePost } from '../src/oraculo/satelite';
 import { callerFromPicture, type PictureSession } from '../src/oraculo/portao';
@@ -50,14 +50,14 @@ const MINE: PictureSession = {
   listar: [{ id: ME, papel: 'dev', estado: 'trabalhando' }],
 };
 
-function api() {
+function api(notice?: GateToolRoutesDeps['notice']) {
   const dir = tempDir('oraculo-portao-');
   mkdirSync(join(dir, 'portoes'));
   writeFileSync(join(dir, 'portoes', 'homologacoes.sha256'), `${hash(GATE)}\n`);
   const file = join(dir, 'ledger.json');
   const ledger = createLedgerService({ filePath: file, io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs });
   const gates = (): ReadonlyMap<string, string> => readGateHashes(dir);
-  const handle = createOracleApiHandler({ ledger, ledgerFile: file, tokenHash: () => hash(PC), gates, gateRoutes: createGateToolRoutes({ ledger: () => ledger }) });
+  const handle = createOracleApiHandler({ ledger, ledgerFile: file, tokenHash: () => hash(PC), gates, gateRoutes: createGateToolRoutes({ ledger: () => ledger, ...(notice ? { notice } : {}) }) });
   /** The satellite's POST, straight into this API (no socket). */
   const post = async (url: string, token: string, body: string): Promise<SatellitePost> => {
     const answer = await handle(req({ method: 'POST', url: new URL(url).pathname, body, authorization: `Bearer ${token}` }));
@@ -259,6 +259,45 @@ describe('satélite: aviso para outra máquina', () => {
     await after.flush();
     await after.flush();
     expect(posted).toEqual([expect.objectContaining({ placeId: 'place:lider', key: message.key })]);
+  });
+});
+
+// t-3f32edb1 — the Dalton (top of his board, on the Homologações) writes to the Líder único with the PC off. The
+// answer said "espera o PC" while the personal VPS had put it in the Líder único's queue: the Dalton read "não chegou"
+// and would send it again. It says where it went: his queue there, the PC's relay, or this machine's disk.
+describe('satélite: recado do topo do quadro ao Líder único com o PC fora', () => {
+  const DALTON = 'place:dalton';
+  const SID = '77777777-2222-4333-8444-555555555555';
+  const dalton: PictureSession = {
+    quemSou: { nome: 'Dalton · Homologacao', pasta: PROJECT, lugar: DALTON, papel: 'dalton', papelNome: 'Dalton' },
+    listar: [{ id: DALTON, papel: 'dalton', estado: 'trabalhando' }],
+    board: { projectPath: PROJECT, pan: { x: 0, y: 0 }, zoom: 1, cards: { [DALTON]: { kind: 'session', id: DALTON, roleId: 'dalton', previous: [], x: 0, y: 0 } }, links: [], drawings: [] },
+  };
+
+  /** The personal VPS's `aviso` route answers as `deliverLocalFirst` does there: the Líder único's queue, or the relay. */
+  async function send(vps: 'lider-vivo' | 'lider-fora' | 'fora-do-ar'): Promise<{ entregue: string; para: string }> {
+    const g = api(async () => (vps === 'lider-vivo' ? 'lider' : null));
+    const io = createSystemConfigIoDeps();
+    const notices = createSatelliteNotice({ url: 'http://vps-pessoal:47816', token: () => GATE, post: vps === 'fora-do-ar' ? async () => 'sem-conexao' : g.post, file: join(tempDir('avisos-sat-'), 'avisos-pendentes.json'), io, log: () => undefined });
+    const recados = createGateRecados({
+      file: join(tempDir('recados-sat-'), 'recados.json'),
+      io,
+      ledger: () => null,
+      picture: () => ({ at: Date.now(), sessoes: { [SID]: dalton } }),
+      localSessions: async () => new Set([SID]),
+      tmux: { screen: async () => ({ inMode: false, text: 'esc to interrupt' }), type: async () => true, enter: async () => true, clear: async () => true },
+      relay: notices.deliver,
+      log: () => undefined,
+    });
+    const sent = await recados.enviar(SID, dalton, { tool: 'sessao_enviar', para: 'lider', texto: 'terminei', motivo: 'tarefa-completa' }, 'desligado');
+    if (sent === 'repassar' || sent.kind !== 'text') throw new Error(`resposta inesperada: ${JSON.stringify(sent)}`);
+    return JSON.parse(sent.text) as { entregue: string; para: string };
+  }
+
+  it('Líder único vivo na VPS pessoal: na fila dele; fora dela, ou a VPS fora do ar: guardado, e nunca "na fila"', async () => {
+    expect(await send('lider-vivo')).toMatchObject({ entregue: 'na-fila', para: 'lider' });
+    expect(await send('lider-fora')).toMatchObject({ entregue: 'pelo-relay', para: 'lider' });
+    expect(await send('fora-do-ar')).toMatchObject({ entregue: 'pelo-relay', para: 'lider' });
   });
 });
 

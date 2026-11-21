@@ -111,7 +111,7 @@ async function runSatellite(dir: string, url: string): Promise<void> {
     taskOf: tasks.taskOf,
     reviewLinked: createSatelliteReviewLink(remote),
     picture: localPicture.get,
-    relay: notices.send,
+    relay: notices.deliver,
     firstMessages: join(dir, FIRST_MESSAGES_FILE),
     placeOf: placeOfSessionIn(sessionsDir),
   });

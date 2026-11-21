@@ -492,7 +492,7 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
       picture,
       remote: createRemoteQueueClient({ ...remote, view: remoteView }),
       remoteScreen: createRemoteScreenClient({ ...remote, view: remoteView }),
-      relay: notices.send,
+      relay: notices.deliver,
       leader: localLeader,
       transcriptOf,
       localSessions: liveSessions,
