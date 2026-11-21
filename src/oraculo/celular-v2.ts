@@ -11,7 +11,7 @@
 
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { isClosed, lastDelivery, type LedgerDoc, type LedgerTask } from '../shared/ledger/contract';
+import { isClosed, lastDelivery, SERVICE_PLACE_PREFIX, VIGIA_SERVICE, type LedgerDoc, type LedgerEvent, type LedgerTask } from '../shared/ledger/contract';
 import { deliveryNote } from '../shared/ledger/labels';
 import { actorName, cartaRow, cartaRows, maskSecrets, tarefaRow, tarefaRows, type CartaProvaRef, type PlaceInfoOf, type TarefaRow } from '../shared/ledger/mirror';
 import { localFlagOn } from '../main/local-flags';
@@ -247,6 +247,15 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     }
   }
 
+  /**
+   * r-6df6986e (Líder único) — the proof is people's text, marked at the source and never guessed from the words: the
+   * ledger has no field for it on a proof, so the mark is who wrote the delivery. Today only the vigia de travas
+   * (`servico:vigia`) writes its proof for the owner to read (what stopped, the likely cause, what the team did).
+   */
+  function provaLegivel(delivery: LedgerEvent): boolean {
+    return delivery.by.kind === 'lugar' && delivery.by.placeId === `${SERVICE_PLACE_PREFIX}${VIGIA_SERVICE}`;
+  }
+
   async function entregaOf(task: LedgerTask, row: TarefaRow, places: PlaceInfoOf | undefined): Promise<Record<string, unknown> | null> {
     const delivery = lastDelivery(task);
     if (!delivery) return null;
@@ -262,6 +271,7 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
       nota: note === undefined ? null : masked(note.trim(), MAX_RESULTADO_NOTA),
       links,
       prova_texto: row.prova_texto,
+      prova_legivel: provaLegivel(delivery),
       provas: await Promise.all(cartaRow(task, []).provas.map(provaMeta)),
     };
   }
