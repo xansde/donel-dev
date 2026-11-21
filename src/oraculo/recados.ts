@@ -1291,15 +1291,17 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     const task = taskOf(taskId);
     const signature = `${nameOf(mine.quemSou)} (${caller.placeId})`;
     const notes = new Map<string, string>();
-    // As on the PC: the Líder único's own "travada" or delivery is no urgent notice (it would come back to him).
-    const urgent = caller.placeId === LEADER_OF_ALL ? null : urgentLedgerNotice(call, answerText);
-    if (urgent) notes.set(whoHears(board, caller.placeId, isLive), `${signature} ${urgent}`);
-    // The Revisores out of the chain hear a delivery for acceptance (their words replace the generic one). t-c292d9a4:
-    // with the PC away, only one whose session runs (`reviewerLive`): a request to a closed one went stale in the relay.
+    // t-c292d9a4 — with the PC away, only a place whose session runs hears (`reviewerLive`): a notice to a closed one
+    // went stale in the PC's relay. Else (PC on, or unknown), the list.
     const reviewerLive = caller.reviewerLive;
-    const isLiveReviewer = (id: string): boolean => reviewerLive?.(caller.projectPath, id) ?? isLive(id);
+    const runs = (id: string): boolean => reviewerLive?.(caller.projectPath, id) ?? isLive(id);
+    // As on the PC: the Líder único's own "travada" or delivery is no urgent notice (it would come back to him). The
+    // first place above that runs, else the board's Líder that runs, else the Líder único (`whoHears`).
+    const urgent = caller.placeId === LEADER_OF_ALL ? null : urgentLedgerNotice(call, answerText);
+    if (urgent) notes.set(whoHears(board, caller.placeId, runs), `${signature} ${urgent}`);
+    // The Revisores out of the chain hear a delivery for acceptance (their words replace the generic one).
     if (call.tool === 'tarefa_entregar' && answer.entregue === true && task?.state === 'entregue' && board)
-      for (const reviewer of reviewersOutsideChain(board, isLiveReviewer, deliverersOf(task))) notes.set(reviewer, reviewRequestNotice(signature, task));
+      for (const reviewer of reviewersOutsideChain(board, runs, deliverersOf(task))) notes.set(reviewer, reviewRequestNotice(signature, task));
     const accepted = call.tool === 'tarefa_aceitar' && answer.aceita === true;
     if (task && (accepted || (call.tool === 'tarefa_rejeitar' && answer.rejeitada === true)))
       for (const target of verdictTargets(task, caller.placeId)) notes.set(target, verdictNotice(signature, accepted, task, call.tool === 'tarefa_rejeitar' ? call.motivo : undefined));

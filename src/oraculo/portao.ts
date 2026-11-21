@@ -595,7 +595,8 @@ export function relayedTaskNotice(mine: PictureSession, caller: LedgerCaller, ca
   }
   if (typeof answer.id !== 'string' || answer.repetida === true) return null;
   const live = hearingPlaceIds(placeStatesOf(mine.listar));
-  const target = whoHears(mine.board, caller.placeId, (id) => live.has(id));
+  // t-c292d9a4 — with the PC away, only a place whose session runs (`reviewerLive`), never a closed one by the old list.
+  const target = whoHears(mine.board, caller.placeId, (id) => caller.reviewerLive?.(caller.projectPath, id) ?? live.has(id));
   const em = answer.tarefa?.ultimoEvento?.em;
   const eventAt = typeof em === 'string' && Number.isFinite(Date.parse(em)) ? Date.parse(em) : Date.now();
   const words = `${nameOf(mine.quemSou)} (${caller.placeId}) ${urgent}`;
