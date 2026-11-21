@@ -372,7 +372,7 @@ import { FAXINEIRO_CHANNELS, type FaxineiroRoundAnswer } from '../shared/faxinei
 import type { FaxineiroLogEntry, SessionView } from '../shared/faxineiro/triggers';
 import { createFaxinaRunner, type FaxinaRunner } from './rotinas/oraculo-faxina';
 import type { PrRef, PrState } from '../shared/ledger/faxina';
-import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
+import { ROTINAS_CHANNELS, type RoutineRunStats, type ShadowEntry } from '../shared/rotinas/contract';
 import type { LiveSessionSignal } from '../shared/rotinas/stalledSessions';
 // B33 — atualizar para a versão nova de dentro do app.
 import { autoUpdater } from 'electron-updater';
@@ -3590,6 +3590,7 @@ function registerRotinasIpcHandlers(): void {
   });
   routineRunner.start();
   ipcMain.handle(ROTINAS_CHANNELS.today, (): ShadowEntry[] => routineRunner?.today() ?? []);
+  ipcMain.handle(ROTINAS_CHANNELS.stats, (): RoutineRunStats => routineRunner?.stats() ?? { rounds: 0, quiet: 0 });
 }
 
 /** Faxineiro com gatilhos (t-b3b26e60); `null` until whenReady. */
