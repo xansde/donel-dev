@@ -258,12 +258,13 @@ describe('entregador à parte: portão local por HTTP e entrega de volta', () =>
     const aviso = (key: string) => ({ aviso: { projectPath: '/p', placeId: 'place:dev', text: `◆ ${key}`, leaderText: `◆ ${key}`, key } });
     // The entregador is down: nothing listens where it said its gate was.
     writeFileSync(join(dir, 'portao'), '9\n');
-    expect((await call('/v1/portao/aviso', aviso('decisao:1'), GATE_TOKEN)).body).toEqual({ ok: true });
+    // t-3f32edb1 — the route says where it went: the PC's relay (null) here, the place's queue below.
+    expect((await call('/v1/portao/aviso', aviso('decisao:1'), GATE_TOKEN)).body).toEqual({ ok: true, entregue: null });
     const live = { liveSessions: async () => new Set([SID]), liveNow: () => new Set([SID]) };
     const entregador = await runEntregador({ dir, home, gatePort: 0, ...live });
     try {
-      expect((await call('/v1/portao/aviso', aviso('decisao:1'), GATE_TOKEN)).body).toEqual({ ok: true });
-      expect((await call('/v1/portao/aviso', aviso('decisao:2'), GATE_TOKEN)).body).toEqual({ ok: true });
+      expect((await call('/v1/portao/aviso', aviso('decisao:1'), GATE_TOKEN)).body).toEqual({ ok: true, entregue: null });
+      expect((await call('/v1/portao/aviso', aviso('decisao:2'), GATE_TOKEN)).body).toEqual({ ok: true, entregue: { placeId: 'place:dev' } });
     } finally {
       await entregador.stop();
       await daemon.stop();
