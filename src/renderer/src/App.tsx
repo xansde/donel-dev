@@ -101,7 +101,7 @@ import { SpawnAskPanel, type SpawnAsk } from './Mindscape/SpawnAskPanel';
 import { adoptSessionOpenedWithoutPc, appendConversation, findSessionBoard, placeHolding, placeSessionCards, roleOfSession, setBoardView, setPlaceConversation, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
 import type { SessionRole } from '../../shared/roles';
 // Sessão renovada em voo (B36) — limit crossed at the end of a turn → handoff → new session in the same tab.
-import { DEFAULT_SESSION_RENEWAL_PREFS, RENEWAL_HANDOFF_WAIT_MS, renewalEligible, renewalHandoffDeliveryNotice, renewalHandoffSend, renewalLaunchArgs, type SessionRenewalPrefs } from '../../shared/sessionRenewal';
+import { DEFAULT_SESSION_RENEWAL_PREFS, RENEWAL_HANDOFF_UPTAKE_WAIT_MS, RENEWAL_HANDOFF_WAIT_MS, renewalEligible, renewalHandoffDeliveryNotice, renewalHandoffSend, renewalHandoffUptakeNotice, renewalLaunchArgs, type SessionRenewalPrefs } from '../../shared/sessionRenewal';
 import { useSessionRenewal, type RenewalTabInput } from './sessionRenewal/useSessionRenewal';
 import { RenewalDeliveryStrip, RenewalStrip } from './sessionRenewal/RenewalStrip';
 import type { BoardView } from '../../shared/mindscape/view';
@@ -590,6 +590,8 @@ export function App(): React.JSX.Element {
   const [devModeToast, setDevModeToast] = useState<string | null>(null);
   /** B36 — tabs whose new session did not confirm it got the handoff (until the owner dismisses it). */
   const [renewalDeliveryNotices, setRenewalDeliveryNotices] = useState<Record<string, string>>({});
+  /** B36 (OpenRig 08c21c7) — per tab, the stop of the watch "did the new session open the handoff?". */
+  const renewalUptakeWatchersRef = useRef<Record<string, () => void>>({});
   // "Isolar em worktree" — a aba fechou e a worktree ficou por ter trabalho não enviado: aviso discreto com "Abrir pasta".
   const [worktreeKept, setWorktreeKept] = useState<WorktreeKeptPayload | null>(null);
   /** Cleanup do watcher de prontidão em voo por aba (mesmo padrão de `pendingInjectionWatchersRef`). */
@@ -2507,13 +2509,58 @@ export function App(): React.JSX.Element {
       delete next[tabId];
       return next;
     });
+    renewalUptakeWatchersRef.current[tabId]?.();
     // Nobody watches the new session's box: its Enter is insisted on, and its text never cleared (19/11, a loaded place).
     void sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, renewalHandoffSend(firstPrompt), RENEWAL_HANDOFF_WAIT_MS).then((outcome) => {
+      if (!tabsRef.current.some((candidate) => candidate.id === tabId)) return;
       const notice = renewalHandoffDeliveryNotice(outcome, handoffPath);
-      if (notice === null || !tabsRef.current.some((candidate) => candidate.id === tabId)) return;
-      setRenewalDeliveryNotices((prev) => ({ ...prev, [tabId]: notice }));
+      if (notice === null) watchRenewalHandoffUptake(tabId, handoffPath);
+      else setRenewalDeliveryNotices((prev) => ({ ...prev, [tabId]: notice }));
     });
   };
+  /**
+   * B36 (OpenRig 08c21c7) — the handoff message went in, but "went in" does not prove the new session opened the file.
+   * Until the end of its first turn (or 30 min) the tab watches its tool calls (`LiveState.handoffRead`); without a
+   * read, one notice that it cannot tell, never resent. Stops at the read, when the tab closes or a new renewal starts.
+   */
+  const watchRenewalHandoffUptake = (tabId: string, handoffPath: string): void => {
+    renewalUptakeWatchersRef.current[tabId]?.();
+    const ptyId = terminalRefs.current[tabId]?.ptyId;
+    if (!ptyId) return;
+    const store = getChatStore();
+    const startedAt = Date.now();
+    let sawWork = false;
+    let stopped = false;
+    let unsubscribe: (() => void) | null = null;
+    let timer: number | null = null;
+    const stop = (): void => {
+      stopped = true;
+      unsubscribe?.();
+      if (timer !== null) window.clearTimeout(timer);
+      if (renewalUptakeWatchersRef.current[tabId] === stop) delete renewalUptakeWatchersRef.current[tabId];
+    };
+    const check = (): void => {
+      if (stopped) return;
+      if (!tabsRef.current.some((candidate) => candidate.id === tabId)) return stop();
+      const live = store.getState(ptyId).live;
+      if (live?.status === 'ended' || live?.handoffRead === true) return stop();
+      if (live?.status === 'working') sawWork = true;
+      const notice = renewalHandoffUptakeNotice({ handoffPath, read: false, turnEnded: sawWork && live?.status === 'idle', elapsedMs: Date.now() - startedAt });
+      if (notice === null) return;
+      stop();
+      setRenewalDeliveryNotices((prev) => ({ ...prev, [tabId]: notice }));
+    };
+    renewalUptakeWatchersRef.current[tabId] = stop;
+    unsubscribe = store.subscribe(ptyId, check);
+    timer = window.setTimeout(check, RENEWAL_HANDOFF_UPTAKE_WAIT_MS);
+    check();
+  };
+  // A closed tab ends its watch (it also holds the tab's chat attached).
+  useEffect(() => {
+    for (const [tabId, stop] of Object.entries(renewalUptakeWatchersRef.current)) {
+      if (!tabs.some((tab) => tab.id === tabId)) stop();
+    }
+  }, [tabs]);
   // t-1a3f7150 — a session the place opened while the PC was off gets its place `session:<sid>` (made by a session)
   // on the live document, before the placement below; it only adds, never over what the owner arranged.
   useEffect(() => {

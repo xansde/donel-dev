@@ -51,6 +51,7 @@ import { classifyLine } from '../../shared/chat/transcriptEntry';
 import type { BridgeEvent, PendingDecisionHandle } from '../hook-bridge';
 import { autoApprovalVerdict, closePending, NO_CLASSIFIER_BLOCKS, pendingFromRequest, toHookDecision } from '../../shared/chat/pendingQueue';
 import { summarizeTool } from '../../shared/chat/toolSummary';
+import { toolTouchesHandoff } from '../../shared/sessionRenewal';
 import { createSubmitRing, lookupAck, signalsFromEntries, type PromptSignal } from './prompt-signals';
 import { buildRowDetail } from './row-detail';
 import { TranscriptFollower, type FollowBatch, type FollowedLine } from './transcript-follower';
@@ -229,6 +230,8 @@ interface Rec {
   hookTerminalNeeded: TerminalNeededReason | null;
   screenTerminalNeeded: TerminalNeededReason | null;
   currentAction: LiveAction | null;
+  /** B36 — a tool call of this conversation opened the handoff of the renewal it continues (`toolTouchesHandoff`). */
+  handoffRead: boolean;
   readonly activeSubagents: Set<string>;
   /** When the hub first heard of this PTY (~ its CLI process start): background launches older than this belong to a dead process. */
   readonly bornAt: number;
@@ -308,6 +311,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
         hookTerminalNeeded: null,
         screenTerminalNeeded: null,
         currentAction: null,
+        handoffRead: false,
         activeSubagents: new Set(),
         bornAt: now(),
         bgCache: null,
@@ -369,12 +373,13 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       activeSubagents: [...rec.activeSubagents],
       terminalNeeded: reason === null ? null : { reason },
       background: backgroundOf(rec),
+      ...(sourceOf(rec)?.predecessor !== undefined ? { handoffRead: rec.handoffRead } : {}),
     };
   }
 
   function emitLiveIfChanged(rec: Rec): void {
     const live = liveOf(rec);
-    const key = `${live.status}|${live.currentAction?.toolUseId ?? ''}|${live.activeSubagents.join(',')}|${live.terminalNeeded?.reason ?? ''}|${live.pendings.map((p) => p.id).join(',')}|${backgroundKey(live.background)}`;
+    const key = `${live.status}|${live.currentAction?.toolUseId ?? ''}|${live.activeSubagents.join(',')}|${live.terminalNeeded?.reason ?? ''}|${live.pendings.map((p) => p.id).join(',')}|${backgroundKey(live.background)}|${live.handoffRead === true ? 'h' : ''}`;
     if (key === rec.lastLiveKey) return;
     rec.lastLiveKey = key;
     deps.events.live({ ptyId: rec.ptyId, live });
@@ -742,6 +747,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       rec.compactingSince = 0;
       rec.signals = [];
       rec.currentAction = null;
+      rec.handoffRead = false;
       rec.activeSubagents.clear();
       rec.hookTerminalNeeded = null;
       closeAllPendings(rec, 'cancelled');
@@ -782,6 +788,9 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     } else if (name === 'PostToolUse' && agentId === undefined) {
       const id = text(payload.tool_use_id);
       if (id === undefined || rec.currentAction?.toolUseId === id) rec.currentAction = null;
+      // B36 (OpenRig 08c21c7) — did the renewed session open its handoff? The tab asks at the end of the first turn.
+      const handoffPath = rec.handoffRead ? undefined : sourceOf(rec)?.predecessor?.handoffPath;
+      if (handoffPath !== undefined && toolTouchesHandoff(text(payload.tool_name) ?? '', payload.tool_input, handoffPath)) rec.handoffRead = true;
     } else if (name === 'Stop' || name === 'StopFailure' || name === 'UserPromptSubmit' || name === 'SessionStart') {
       rec.currentAction = null;
     } else if (name === 'SubagentStart' && agentId !== undefined) {
