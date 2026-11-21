@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { carryLargestTranscript, carryTranscriptLocally } from '../src/main/lider/carry-transcript';
 import { fetchTranscriptFromRemote, sendTranscriptToRemote, type RemoteCommand } from '../src/main/lider/transfer';
 import { remoteAliveFromMeta, type RemoteSessionMeta } from '../src/main/remote-session';
@@ -11,6 +11,17 @@ import { isValidLiderCarryPayload } from '../src/shared/lider/ipc';
 import { liveLeaderOfAllTab } from '../src/shared/mindscape/leader';
 import { leaderCwd, leaderMoveCwd, leaderMoves, leaderRemoteId, sameFolder, sanitizeLeaderPrefs } from '../src/shared/leaderPrefs';
 import { leaderComebackCwd, leaderFolderMoveKey, leaderLineRoute, planLeaderDelivery, startLeaderMove, type LeaderMoveDeps } from '../src/shared/lider/move';
+
+/** Every folder a test makes under the system temp dir is removed after the test: each verify run used to leave ~57 MB in /tmp. */
+const tempDirs: string[] = [];
+function tempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 // Líder único na VPS (docs/planos/lider-na-vps.md): o que faria o Líder sumir ou perder a conversa sem o dono ver.
 const sid = '11111111-2222-4333-8444-555555555555';
@@ -29,7 +40,7 @@ const meta: RemoteSessionMeta = {
 
 /** A "remote place" that is a folder here: the command runs in `sh`, with `home` as `$HOME` and a fake `tmux`. */
 function fakePlace(): { home: string; run: RemoteCommand; tmuxLog: string; target: string } {
-  const home = mkdtempSync(join(tmpdir(), 'lider-home-'));
+  const home = tempDir('lider-home-');
   mkdirSync(join(home, 'seazone'));
   const bin = join(home, 'bin');
   mkdirSync(bin);
@@ -120,7 +131,7 @@ describe('Líder único na VPS', () => {
   });
 
   it('a conversa vai da pasta antiga para a da orquestradora neste computador: a maior cópia, sem perder a de lá', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'lider-pasta-'));
+    const dir = tempDir('lider-pasta-');
     const old = join(dir, 'projects', '-home-a-seazone', `${sid}.jsonl`);
     const mirror = join(dir, 'espelho.jsonl');
     const dest = join(dir, 'projects', '-home-a-seazone--orquestradora', `${sid}.jsonl`);
@@ -173,7 +184,7 @@ describe('Líder único na VPS', () => {
   });
 
   it('na volta ao PC, a conversa maior substitui a antiga, que fica guardada; a menor nunca sobrescreve', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'lider-carry-'));
+    const dir = tempDir('lider-carry-');
     const source = join(dir, 'espelho.jsonl');
     const dest = join(dir, 'projects', 'x', `${sid}.jsonl`);
     writeFileSync(source, 'a\nb\n');
@@ -194,7 +205,7 @@ describe('Líder único na VPS', () => {
 describe.skipIf(process.platform === 'win32')('Líder único na VPS — a conversa viaja por stream e é conferida', () => {
   it('ida: uma conversa de 19 MB chega inteira (mesmo sha256) em poucos segundos, sem travar o app', async () => {
     const place = fakePlace();
-    const source = join(mkdtempSync(join(tmpdir(), 'lider-src-')), `${sid}.jsonl`);
+    const source = join(tempDir('lider-src-'), `${sid}.jsonl`);
     const content = bigTranscript(source, 19 * 1024 * 1024);
 
     // The main keeps running while the copy goes (it is a stream, not a 19 MB string built on the main thread).
@@ -218,7 +229,7 @@ describe.skipIf(process.platform === 'win32')('Líder único na VPS — a conver
     const place = fakePlace();
     mkdirSync(join(place.target, '..'), { recursive: true });
     writeFileSync(place.target, 'antiga\n');
-    const source = join(mkdtempSync(join(tmpdir(), 'lider-src-')), `${sid}.jsonl`);
+    const source = join(tempDir('lider-src-'), `${sid}.jsonl`);
     bigTranscript(source, 200_000);
     // The "network" drops all but the first 1000 bytes.
     const cut: RemoteCommand = (command) => place.run(`head -c 1000 | ${command}`);
@@ -232,7 +243,7 @@ describe.skipIf(process.platform === 'win32')('Líder único na VPS — a conver
 
   it('ida: o Líder velho que ficou vivo lá (a volta não conseguiu encerrar) é encerrado antes, para ninguém se ligar a ele', async () => {
     const place = fakePlace();
-    const source = join(mkdtempSync(join(tmpdir(), 'lider-src-')), `${sid}.jsonl`);
+    const source = join(tempDir('lider-src-'), `${sid}.jsonl`);
     writeFileSync(source, '{"a":1}\n');
 
     expect(await sendTranscriptToRemote(place.run, 'seazone', sid, source)).toEqual({ ok: true, outcome: 'carried' });
@@ -242,7 +253,7 @@ describe.skipIf(process.platform === 'win32')('Líder único na VPS — a conver
   it('ida no mesmo lugar (só a pasta muda): o Líder vivo lá não é encerrado durante a cópia', async () => {
     const place = fakePlace();
     mkdirSync(join(place.home, 'seazone', '_orquestradora'));
-    const source = join(mkdtempSync(join(tmpdir(), 'lider-src-')), `${sid}.jsonl`);
+    const source = join(tempDir('lider-src-'), `${sid}.jsonl`);
     writeFileSync(source, '{"a":1}\n');
 
     expect(await sendTranscriptToRemote(place.run, 'seazone/_orquestradora', sid, source, { keepSession: true })).toEqual({ ok: true, outcome: 'carried' });
@@ -253,7 +264,7 @@ describe.skipIf(process.platform === 'win32')('Líder único na VPS — a conver
 
   it('ida: a pasta nova que não existe no lugar é dita pelo nome, sem criar pasta vazia nem encerrar o Líder', async () => {
     const place = fakePlace();
-    const source = join(mkdtempSync(join(tmpdir(), 'lider-src-')), `${sid}.jsonl`);
+    const source = join(tempDir('lider-src-'), `${sid}.jsonl`);
     writeFileSync(source, '{"a":1}\n');
 
     const result = await sendTranscriptToRemote(place.run, 'seazone/_orquestradora', sid, source, { keepSession: true });
@@ -266,7 +277,7 @@ describe.skipIf(process.platform === 'win32')('Líder único na VPS — a conver
     const place = fakePlace();
     mkdirSync(join(place.target, '..'), { recursive: true });
     writeFileSync(place.target, '{"a":1}\n{"b":2}\n');
-    const source = join(mkdtempSync(join(tmpdir(), 'lider-src-')), `${sid}.jsonl`);
+    const source = join(tempDir('lider-src-'), `${sid}.jsonl`);
     writeFileSync(source, '{"a":1}\n');
 
     expect(await sendTranscriptToRemote(place.run, 'seazone', sid, source)).toEqual({ ok: true, outcome: 'kept' });
@@ -277,7 +288,7 @@ describe.skipIf(process.platform === 'win32')('Líder único na VPS — a conver
     const place = fakePlace();
     mkdirSync(join(place.target, '..'), { recursive: true });
     const content = bigTranscript(place.target, 19 * 1024 * 1024);
-    const dest = join(mkdtempSync(join(tmpdir(), 'lider-dest-')), 'veio.jsonl');
+    const dest = join(tempDir('lider-dest-'), 'veio.jsonl');
 
     const started = Date.now();
     const result = await fetchTranscriptFromRemote(place.run, 'seazone', sid, dest);
@@ -288,7 +299,7 @@ describe.skipIf(process.platform === 'win32')('Líder único na VPS — a conver
   }, 60_000);
 
   it('volta: VPS que não responde dá erro e não deixa arquivo pela metade', async () => {
-    const dest = join(mkdtempSync(join(tmpdir(), 'lider-dest-')), 'veio.jsonl');
+    const dest = join(tempDir('lider-dest-'), 'veio.jsonl');
     const down: RemoteCommand = () => spawn('sh', ['-c', 'echo "ssh: connect to host vps port 22: Connection timed out" >&2; exit 255']);
 
     const result = await fetchTranscriptFromRemote(down, 'seazone', sid, dest);
