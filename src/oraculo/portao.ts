@@ -400,6 +400,11 @@ export interface LiveOwnerSource {
   readonly tmux: () => ReadonlySet<string> | null;
   /** The other machine whose fresh picture has `placeId` on `projectPath` (retrato-satelite.ts); absent = none. */
   readonly machineOf?: (projectPath: string, placeId: string) => string | undefined;
+  /**
+   * t-c292d9a4 — the PC has not answered for long (retrato-local.ts `pcAway`): its last list is old, so which Revisor is
+   * alive is this source's word (`LedgerCaller.reviewerLive`), not the list's. Absent = never away.
+   */
+  readonly pcAway?: () => boolean;
 }
 
 /**
@@ -411,16 +416,18 @@ export interface LiveOwnerSource {
 export function withLiveOwner(caller: LedgerCaller, source: LiveOwnerSource | undefined): LedgerCaller {
   if (!source) return caller;
   let live: ReadonlySet<string> | null | undefined;
-  return {
-    ...caller,
-    ownerLive: (projectPath, placeId) => {
-      if (source.machineOf?.(projectPath, placeId) !== undefined) return true;
-      if (live === undefined) live = source.tmux();
-      if (live === null) return null;
-      const sid = placeId.startsWith(SESSION_PLACE_PREFIX) ? placeId.slice(SESSION_PLACE_PREFIX.length) : caller.sessionOf?.(projectPath, placeId);
-      return sid !== undefined && live.has(sid);
-    },
+  const runs = (projectPath: string, placeId: string): boolean | null => {
+    if (source.machineOf?.(projectPath, placeId) !== undefined) return true;
+    if (live === undefined) live = source.tmux();
+    if (live === null) return null;
+    // A `session:<sid>` place renewed here: its card carries the successor's sid (retrato-local `boardWith`).
+    const own = placeId.startsWith(SESSION_PLACE_PREFIX) ? placeId.slice(SESSION_PLACE_PREFIX.length) : undefined;
+    const card = caller.sessionOf?.(projectPath, placeId);
+    return (own !== undefined && live.has(own)) || (card !== undefined && live.has(card));
   };
+  // t-c292d9a4 (20/11) — with the PC away its last list keeps every session it saw "trabalhando", closed or not: a
+  // delivery named 14 Revisores, most of them closed, and the request to each closed one went stale in the PC's relay.
+  return { ...caller, ownerLive: runs, ...(source.pcAway?.() === true ? { reviewerLive: runs } : {}) };
 }
 
 const SESSION_PLACE_PREFIX = 'session:';

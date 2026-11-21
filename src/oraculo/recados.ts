@@ -1294,9 +1294,12 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     // As on the PC: the Líder único's own "travada" or delivery is no urgent notice (it would come back to him).
     const urgent = caller.placeId === LEADER_OF_ALL ? null : urgentLedgerNotice(call, answerText);
     if (urgent) notes.set(whoHears(board, caller.placeId, isLive), `${signature} ${urgent}`);
-    // The Revisores out of the chain hear a delivery for acceptance (their words replace the generic one).
+    // The Revisores out of the chain hear a delivery for acceptance (their words replace the generic one). t-c292d9a4:
+    // with the PC away, only one whose session runs (`reviewerLive`): a request to a closed one went stale in the relay.
+    const reviewerLive = caller.reviewerLive;
+    const isLiveReviewer = (id: string): boolean => reviewerLive?.(caller.projectPath, id) ?? isLive(id);
     if (call.tool === 'tarefa_entregar' && answer.entregue === true && task?.state === 'entregue' && board)
-      for (const reviewer of reviewersOutsideChain(board, isLive, deliverersOf(task))) notes.set(reviewer, reviewRequestNotice(signature, task));
+      for (const reviewer of reviewersOutsideChain(board, isLiveReviewer, deliverersOf(task))) notes.set(reviewer, reviewRequestNotice(signature, task));
     const accepted = call.tool === 'tarefa_aceitar' && answer.aceita === true;
     if (task && (accepted || (call.tool === 'tarefa_rejeitar' && answer.rejeitada === true)))
       for (const target of verdictTargets(task, caller.placeId)) notes.set(target, verdictNotice(signature, accepted, task, call.tool === 'tarefa_rejeitar' ? call.motivo : undefined));
