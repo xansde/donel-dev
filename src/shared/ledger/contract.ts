@@ -757,6 +757,11 @@ export function repeatedWrite(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
   }
   const task = doc.tasks[op.id];
   if (!task) return null;
+  // t-27340b98 — any other service's key names one line of its own task (a cron routine's "date + line"): the same key
+  // with the same text is that line, whenever it was written and whatever came after it (a rerun, a resend after a
+  // timeout); the same key with another text is `serviceKeyTaken`'s refusal.
+  if (op.op === 'andamento' && key !== undefined && isOwnService(actor))
+    return task.events.some((event) => serviceKeyed(event, actor, key) && event.text === progressText(op.progress)) ? task : null;
   if (op.op === 'assumir' || op.op === 'entregar' || op.op === 'aceitar' || op.op === 'rejeitar' || op.op === 'frente') return keyedRepeat(task, actor, op, key, now);
   if (op.op === 'andamento') {
     const last = latest(task, (event) => event.kind === 'comentada' && sameActor(event.by, actor));
@@ -772,6 +777,15 @@ export function repeatedWrite(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
     return matches(latest(task, isTransfer), (event) => (event.text ?? '').includes(` para ${to}⟧`), () => true) ? task : null;
   }
   return null;
+}
+
+/** t-27340b98 — a service other than the limiter (whose key is a series, with rules of its own). */
+function isOwnService(actor: LedgerActor): boolean {
+  return actor.kind === 'lugar' && actor.placeId.startsWith(SERVICE_PLACE_PREFIX) && actor.placeId !== `${SERVICE_PLACE_PREFIX}${LIMITER_SERVICE}`;
+}
+
+function serviceKeyed(event: LedgerEvent, actor: LedgerActor, key: string): boolean {
+  return event.kind === 'comentada' && event.requestId === key && sameActor(event.by, actor);
 }
 
 /**
@@ -1043,6 +1057,10 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       if (isClosed(task) || task.slack) return fail('A tarefa já fechou: o andamento vai numa tarefa viva.');
       const why = progressRefusal(op.progress);
       if (why) return fail(why);
+      // t-27340b98 — the same text with this key was answered as written above (`repeatedWrite`); another text is refused.
+      const key = isRequestId(op.requestId) ? op.requestId : undefined;
+      if (key !== undefined && isOwnService(actor) && task.events.some((event) => serviceKeyed(event, actor, key)))
+        return fail(`A chave "${key}" já gravou outra linha nesta tarefa; nada foi gravado agora. Uma chave vale para uma linha só.`);
       return done(step(task, task.state, { kind: 'comentada', at: ctx.now, by: actor, text: progressText(op.progress), ...requestOf(op) }));
     }
 
