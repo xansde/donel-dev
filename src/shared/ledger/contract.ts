@@ -560,6 +560,19 @@ export const LIMITER_SERVICE = 'limitador';
  */
 export const VIGIA_SERVICE = 'vigia';
 
+/**
+ * t-f4cd92fb — the vigia signs its steps with a role of its own (never the generic `servico`, which the owner read as
+ * "entregue por Servico"), and its place is named to the owner as a person would name it. The name comes from the
+ * place, so the records written before the role existed read the same way.
+ */
+export const VIGIA_ROLE = 'vigia';
+export const VIGIA_NAME = 'Vigia de travas';
+
+/** The name the owner reads for a service place that has one; `undefined` = no name of its own. */
+export function servicePlaceName(placeId: string): string | undefined {
+  return placeId === `${SERVICE_PLACE_PREFIX}${VIGIA_SERVICE}` ? VIGIA_NAME : undefined;
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Operations — the ONE place the rules live. Pure: the caller gives the clock and the new id.
 
