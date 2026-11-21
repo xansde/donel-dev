@@ -15,7 +15,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { MindscapeDoc } from '../../shared/mindscape/model';
-import type { Finding, ShadowEntry } from '../../shared/rotinas/contract';
+import type { Finding, RoutineRunStats, ShadowEntry } from '../../shared/rotinas/contract';
 import { emptySourceFilterState, filterRound, isSourceOff, type SourceFilterState } from '../../shared/rotinas/filter';
 import {
   DEFAULT_STALLED_SESSIONS_CONFIG,
@@ -37,7 +37,7 @@ export interface RoutineRunnerDeps {
   listLive(): LiveSessionSignal[];
   /** The boards (`mindscape.json`, read only). Throws when unreadable: the round is skipped. */
   loadDoc(): MindscapeDoc;
-  /** Something new went to the shadow log. */
+  /** A round ended (something may have gone to the shadow log, or the stats moved). */
   onChanged(): void;
   readonly now?: () => number;
 }
@@ -47,6 +47,8 @@ export interface RoutineRunner {
   stop(): void;
   /** The shadow entries of today (local day), oldest first. */
   today(): ShadowEntry[];
+  /** What ran since `createRoutineRunner` (memory only, zeroed when the app opens). */
+  stats(): RoutineRunStats;
 }
 
 interface RunnerState {
@@ -87,6 +89,7 @@ export function createRoutineRunner(deps: RoutineRunnerDeps): RoutineRunner {
   const logPath = join(deps.dir, 'sombra.log');
   let firstTimer: ReturnType<typeof setTimeout> | null = null;
   let roundTimer: ReturnType<typeof setInterval> | null = null;
+  let stats: RoutineRunStats = { rounds: 0, quiet: 0 };
 
   const readConfig = (): StalledSessionsConfig => {
     const raw = readJson(configPath);
@@ -131,15 +134,27 @@ export function createRoutineRunner(deps: RoutineRunnerDeps): RoutineRunner {
     wake: finding.wake,
   });
 
+  /** The round ended without evaluating: the stats say why (not a quiet round, not a failure). */
+  const skipped = (reason: string): void => {
+    stats = { rounds: stats.rounds, quiet: stats.quiet, lastRoundAt: now(), lastSkipped: reason };
+    deps.onChanged();
+  };
+
   const round = (): void => {
     try {
       if (!existsSync(deps.dir)) mkdirSync(deps.dir, { recursive: true });
       const state = readState();
-      if (state === null) return;
+      if (state === null) {
+        skipped('um canal mais novo do app cuida da memória das rotinas');
+        return;
+      }
       const at = now();
       const routineId = STALLED_SESSIONS_ROUTINE_ID;
       const previous = state.sources[routineId] ?? emptySourceFilterState();
-      if (isSourceOff(previous, at)) return;
+      if (isSourceOff(previous, at)) {
+        skipped('rotina desligada por 7 dias (ruído demais)');
+        return;
+      }
       const doc = deps.loadDoc();
       const findings = findStalledSessions(doc, deps.listLive(), at, readConfig());
       const byKey = new Map(findings.map((finding) => [finding.key, finding]));
@@ -162,9 +177,14 @@ export function createRoutineRunner(deps: RoutineRunnerDeps): RoutineRunner {
       }
       writeJsonAtomic(statePath, { ...state, sources: { ...state.sources, [routineId]: result.state } });
       appendLog(entries);
-      if (entries.length > 0) deps.onChanged();
+      stats = { rounds: stats.rounds + 1, quiet: stats.quiet + (entries.length === 0 ? 1 : 0), lastRoundAt: now() };
+      deps.onChanged();
     } catch (error) {
-      console.error('[donel-dev] rotina em sombra falhou nesta rodada:', error);
+      // Logged once per failure streak: a routine that keeps breaking does not flood the console every 5 min.
+      if (!stats.lastFailure) console.error('[donel-dev] rotina em sombra falhou nesta rodada:', error);
+      const at = now();
+      stats = { rounds: stats.rounds, quiet: stats.quiet, lastRoundAt: at, lastFailure: { at, message: error instanceof Error ? error.message : String(error) } };
+      deps.onChanged();
     }
   };
 
@@ -205,6 +225,9 @@ export function createRoutineRunner(deps: RoutineRunnerDeps): RoutineRunner {
       midnight.setHours(0, 0, 0, 0);
       const start = midnight.getTime();
       return [...readLogFile(`${logPath}.1`), ...readLogFile(logPath)].filter((entry) => typeof entry.at === 'number' && entry.at >= start);
+    },
+    stats() {
+      return stats;
     },
   };
 }

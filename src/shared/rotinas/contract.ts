@@ -54,12 +54,32 @@ export interface ShadowEntry {
 export const ROTINAS_CHANNELS = {
   /** Renderer → main: the shadow entries of today (local day). */
   today: 'rotinas:today',
-  /** Main → renderer: a round wrote something to the shadow log. */
+  /** Renderer → main: how many rounds ran since the app opened (memory only). */
+  stats: 'rotinas:stats',
+  /** Main → renderer: a round ended (it may or may not have written to the shadow log). */
   changed: 'rotinas:changed',
 } as const;
+
+/**
+ * What the runner did since the app opened, kept in memory only (zeroed on every start). It separates "ran and found
+ * nothing" (quiet rounds) from "did not run" (no round yet, or the last one failed).
+ */
+export interface RoutineRunStats {
+  /** Rounds that evaluated the routine (skipped and failed rounds are not counted). */
+  readonly rounds: number;
+  /** Evaluated rounds that wrote nothing to the shadow log. */
+  readonly quiet: number;
+  /** Epoch ms of the last round that ended, evaluated or not; absent = no round yet. */
+  readonly lastRoundAt?: number;
+  /** Why the last round did not evaluate, in pt-BR; absent when it evaluated. */
+  readonly lastSkipped?: string;
+  /** The last round threw: when and the message. Cleared by the next round that ends well. */
+  readonly lastFailure?: { readonly at: number; readonly message: string };
+}
 
 /** `window.donel.rotinas`. */
 export interface DonelRotinasApi {
   today(): Promise<ShadowEntry[]>;
+  stats(): Promise<RoutineRunStats>;
   onChanged(listener: () => void): () => void;
 }

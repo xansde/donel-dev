@@ -182,7 +182,7 @@ import {
   type CelularState,
   type CelularTailnet,
 } from '../shared/celular';
-import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
+import { ROTINAS_CHANNELS, type RoutineRunStats, type ShadowEntry } from '../shared/rotinas/contract';
 import { FAXINEIRO_CHANNELS, type FaxineiroRoundAnswer } from '../shared/faxineiro/ipc';
 import type { FaxineiroLogEntry, SessionView } from '../shared/faxineiro/triggers';
 import { LIDER_CHANNELS, type LiderCarryPayload, type LiderReport, type LiderSendPayload, type LiderSendResult, type LiderState } from '../shared/lider/ipc';
@@ -996,6 +996,7 @@ const donelApi: DonelApi = {
   // Item 20 — the routines in shadow: what they would have woken today (read only).
   rotinas: {
     today: () => ipcRenderer.invoke(ROTINAS_CHANNELS.today) as Promise<ShadowEntry[]>,
+    stats: () => ipcRenderer.invoke(ROTINAS_CHANNELS.stats) as Promise<RoutineRunStats>,
     onChanged: (listener: () => void) => subscribeChannel(ipcRenderer, ROTINAS_CHANNELS.changed, () => listener()),
   },
 
