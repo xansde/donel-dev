@@ -6,9 +6,15 @@
 //   reference time wakes its session; a deadline gone charges it, every CHARGE_EVERY_MS, CHARGE_MAX times; one interval
 //   after the last charge the lane's Líder hears it, once per stage. A session not open on this machine goes straight
 //   to the Líder (charging it would never land).
-// - vigia: only a card in Fazendo with NO justification whose session had no turn for STALL_MS (`isStalled`). A live
+// - vigia: only a card in Fazendo with NO justification whose session had no turn for STALL_MS (`isStalled`), never one
+//   whose open session is only slow (a background Bash, a subagent, CPU) or has no `card_*` tools. A live
 //   session is woken (at most VIGIA_MAX_PER_DAY in 24 h, with a growing pause); a closed one, or one past the cap,
-//   goes to the lane's Líder, who reopens it. Every other stage is left alone.
+//   goes to the lane's Líder, who reopens it (`sessao_retomar`): the cron does not reopen a session itself, since the
+//   only ways to open one without the app live inside the daemon (abrir-local.ts) and a third one is not made here.
+//   A card whose task waits for its acceptance on the owner's desk (`desk`: entregue in the Oráculo) is not stopped,
+//   it is waiting for the Revisor; one whose task closed there (accepted, cancelled) is not stopped either: the round
+//   moves it to Feito itself before the vigia (task-follow.ts, r-a01b8ca6), so nobody is told to. Every other stage is
+//   left alone.
 // - leader: the PC asked for a lane's Líder (board.leader_requests): wake it if its session is alive, else say why not.
 
 import { isStalled, isValidJustification, STAGE_LABELS, type BoardCard } from './rules';
@@ -32,6 +38,8 @@ export interface CronCard extends BoardCard {
   readonly leaderNoticedAt: number | null;
   /** When the current justification was given (a justification in the same stage does not move `stageSince`). */
   readonly justifiedAt: number | null;
+  /** The card's task on the owner's desk (the Oráculo, read-only), when it has one and it was read. */
+  readonly desk?: { readonly state: string; readonly closed: boolean };
 }
 
 /** What the runner knows of a conversation on this machine. */
@@ -43,6 +51,13 @@ export interface SessionState {
    * (a tool call running, a turn not finished) or unknown: the vigia never wakes those.
    */
   readonly idleSince: number | null;
+  /**
+   * t-8406f473 — why it is only slow, not stopped (the despertador's filter): a background Bash of its claude still
+   * running, a subagent that wrote in the last minutes, or its claude using CPU. Absent = none seen.
+   */
+  readonly busy?: string;
+  /** It was served the `card_*` tools (the gate's mark) or already called one: it can move its card. */
+  readonly cards: boolean;
 }
 
 export type LinkKind =
@@ -59,8 +74,11 @@ export function linkKind(link: string): LinkKind {
 
 export type CronAction =
   | { readonly do: 'wake'; readonly card: string; readonly session: string; readonly mark: 'woken' | 'charged'; readonly text: string }
-  /** `via: 'busy'`: the session's field stayed busy; this notice keeps its own mark, never the card's (`leader_noticed_at`). */
-  | { readonly do: 'leader'; readonly card: string; readonly text: string; readonly via?: 'busy' }
+  /**
+   * `via: 'busy'`: the session's field stayed busy; this notice keeps its own mark, never the card's (`leader_noticed_at`).
+   * `closed`: the card's session, not open on this machine (the Líder reopens it). `why`: the reason, for the log.
+   */
+  | { readonly do: 'leader'; readonly card: string; readonly text: string; readonly via?: 'busy'; readonly closed?: string; readonly why?: string }
   | { readonly do: 'skip'; readonly card: string; readonly why: string };
 
 const minutes = (ms: number): number => Math.round(ms / 60_000);
@@ -81,7 +99,7 @@ export function planJustify(card: CronCard, responded: boolean | null, session: 
   if (!isValidJustification(card.justification, now)) {
     if (card.chargedAt !== null && now - card.chargedAt < CHARGE_EVERY_MS) return { do: 'skip', card: card.id, why: 'cobrado há pouco' };
     if (card.chargeCount < CHARGE_MAX) {
-      if (!reachable) return leaderOnce(card, now, `o prazo da justificativa venceu e a sessão do cartão não está aberta nesta máquina`, 'once');
+      if (!reachable) return leaderOnce(card, now, `o prazo da justificativa venceu e a sessão do cartão não está aberta nesta máquina`, 'once', card.sessionId);
       return {
         do: 'wake',
         card: card.id,
@@ -93,7 +111,7 @@ export function planJustify(card: CronCard, responded: boolean | null, session: 
     return leaderOnce(card, now, `o prazo venceu e a sessão foi cobrada ${CHARGE_MAX} vezes sem mexer no cartão`, 'once');
   }
   if (!responded) return { do: 'skip', card: card.id, why: responded === null ? 'link sem leitura; espera o prazo' : 'sem resposta nova' };
-  if (!reachable) return leaderOnce(card, now, `chegou resposta em ${link}, mas a sessão do cartão não está aberta nesta máquina`, 'every');
+  if (!reachable) return leaderOnce(card, now, `chegou resposta em ${link}, mas a sessão do cartão não está aberta nesta máquina`, 'every', card.sessionId);
   return {
     do: 'wake',
     card: card.id,
@@ -104,12 +122,14 @@ export function planJustify(card: CronCard, responded: boolean | null, session: 
 }
 
 /** `once`: the Líder hears it once in this stage (`leader_noticed_at` is cleared when the card moves); `every`: again every LEADER_NOTICE_EVERY_MS. */
-function leaderOnce(card: CronCard, now: number, why: string, repeat: 'once' | 'every'): CronAction {
+function leaderOnce(card: CronCard, now: number, why: string, repeat: 'once' | 'every', closed?: string | null): CronAction {
   if (card.leaderNoticedAt !== null && (repeat === 'once' || now - card.leaderNoticedAt < LEADER_NOTICE_EVERY_MS)) return { do: 'skip', card: card.id, why: 'Líder já avisado' };
   return {
     do: 'leader',
     card: card.id,
-    text: `${LABEL} Cartão ${card.id} ("${card.title}", ${STAGE_LABELS[card.stage]}, lugar ${card.placeId ?? 'sem lugar'}): ${why}. Retome a sessão (sessao_retomar) ou mova o cartão.`,
+    text: `${LABEL} Cartão ${card.id} ("${card.title}", ${STAGE_LABELS[card.stage]}, lugar ${card.placeId ?? 'sem lugar'}${closed ? `, sessão ${closed}` : ''}): ${why}. Retome a sessão (sessao_retomar) ou mova o cartão.`,
+    ...(closed ? { closed } : {}),
+    why,
   };
 }
 
@@ -149,14 +169,23 @@ export function withShadowNotice(card: CronCard, notice: ShadowNotice | undefine
 export type WakeLog = readonly number[];
 
 export function planVigia(card: CronCard, session: SessionState | null, wakes: WakeLog, now: number): CronAction {
+  if (card.stage === 'doing' && card.desk?.state === 'entregue' && !card.desk.closed) return { do: 'skip', card: card.id, why: 'entregue no Oráculo, esperando o aceite' };
+  // Its task closed on the owner's desk (accepted or cancelled): not stopped work. The round's follow of the Oráculo
+  // (task-follow.ts) moves it to Feito before the vigia; one still here lost that move's race and goes next round.
+  if (card.stage === 'doing' && card.desk?.closed) return { do: 'skip', card: card.id, why: 'fechada no Oráculo; a ronda leva o cartão a Feito' };
   const open = Boolean(card.sessionId && session?.alive);
   // An open session that is working (a long tool call) or whose transcript says nothing is never woken.
   if (open && session!.idleSince === null) return { do: 'skip', card: card.id, why: 'sessão trabalhando' };
+  // t-8406f473 — a turn ended while a background job works is only slow; a session with no card_* cannot move its card,
+  // so waking it (or telling the Líder it stopped) only nags. Both as the despertador: nothing typed, nothing escalated.
+  if (open && session!.busy) return { do: 'skip', card: card.id, why: `só lenta: ${session!.busy}` };
+  if (open && !session!.cards) return { do: 'skip', card: card.id, why: 'sessão sem card_*' };
   const lastTurn = open ? session!.idleSince! : card.stageSince;
   if (!isStalled(card, lastTurn, now)) return { do: 'skip', card: card.id, why: 'não está parado sem justificativa' };
   const idle = minutes(now - Math.max(lastTurn, card.stageSince));
   if (!open) {
-    return leaderOnce(card, now, `está em Fazendo, parado há ${idle} min, sem justificativa, e a sessão dele não está aberta nesta máquina`, 'every');
+    const why = card.sessionId ? 'a sessão dele está fechada nesta máquina' : 'o cartão não diz a sessão dele';
+    return leaderOnce(card, now, `está em Fazendo, parado há ${idle} min, sem justificativa, e ${why}`, 'every', card.sessionId);
   }
   const recent = wakes.filter((at) => now - at < 24 * 60 * 60 * 1000);
   if (recent.length >= VIGIA_MAX_PER_DAY) {
@@ -171,6 +200,144 @@ export function planVigia(card: CronCard, session: SessionState | null, wakes: W
     mark: 'woken',
     text: `${LABEL} O cartão ${card.id} ("${card.title}") está em Fazendo, parado há ${idle} min, sem justificativa. Continue de onde parou. Se estiver esperando alguém, diga por quê, onde e até quando com card_justify (ou mova para Travado).`,
   };
+}
+
+/** Who hears what goes to a lane's Líder: its Líder alive here, else the Líder único alive here (he reaches every board). */
+export type LeaderPick =
+  | { readonly kind: 'lane'; readonly session: string; readonly place: string }
+  | { readonly kind: 'reserve'; readonly session: string; readonly why: string }
+  | { readonly kind: 'none'; readonly why: string };
+
+export function pickLeader(lane: { readonly leader_place: string | null; readonly leader_session: string | null } | undefined, alive: (session: string) => boolean, leaderOfAll: string | null): LeaderPick {
+  const place = lane?.leader_place ?? null;
+  const session = lane?.leader_session ?? null;
+  if (place && session && alive(session)) return { kind: 'lane', session, place };
+  const why = !place ? 'a raia não tem Líder registrado' : !session ? `o Líder ${place} da raia não tem sessão registrada` : `a sessão ${session} do Líder ${place} da raia está fechada`;
+  if (leaderOfAll && leaderOfAll !== session && alive(leaderOfAll)) return { kind: 'reserve', session: leaderOfAll, why };
+  return { kind: 'none', why };
+}
+
+/** A lane whose Líder now runs in another session than the one the board has (`followLaneLeaders`). */
+export interface LaneFollow {
+  readonly project: string;
+  readonly place: string;
+  readonly session: string;
+  readonly was: string | null;
+}
+
+/**
+ * The lanes' Líder follows its place (devolução do Revisor, 20/11): the board kept the session it was given, and a
+ * Líder that reopened or ran `/clear` left it pointing at a closed session, so every notice of the lane fell to the
+ * reserve. `sessionOf` answers which session alive here holds a place on a project (the seed's resolver, with the
+ * liveness test), `leaderOfAll` the Líder único alive here (the lane `lider`); a lane neither resolves keeps its
+ * session (the reserve, as before). Only the lanes that change come back.
+ */
+export function followLaneLeaders(
+  lanes: readonly { readonly project_id: string; readonly leader_place: string | null; readonly leader_session: string | null }[],
+  sessionOf: (projectId: string, placeId: string) => string | undefined,
+  leaderOfAll: () => string | null,
+): LaneFollow[] {
+  const out: LaneFollow[] = [];
+  for (const lane of lanes) {
+    const place = lane.leader_place;
+    if (!place) continue;
+    const session = place === 'lider' ? leaderOfAll() : sessionOf(lane.project_id, place);
+    if (session && session !== lane.leader_session) out.push({ project: lane.project_id, place, session, was: lane.leader_session });
+  }
+  return out;
+}
+
+/**
+ * The card follows its place (sobra da t-1e354d15, 20/11): `session_id` is the session that last moved the card, and a
+ * place renewed (or reopened, or `/clear`) leaves it pointing at a closed one; the seed only fills an empty one. The
+ * round resolves the card's place to the session alive here that holds it now (`sessionOf`, the lanes' resolver) and
+ * uses that one; nothing alive holds the place = the card keeps its own (the Líder hears it is closed). Nothing is
+ * written: who to wake is not a step of the card.
+ */
+export function followCardSession(card: CronCard, sessionOf: (projectId: string, placeId: string) => string | undefined): CronCard {
+  if (!card.placeId) return card;
+  const session = sessionOf(card.projectId, card.placeId);
+  return session && session !== card.sessionId ? { ...card, sessionId: session } : card;
+}
+
+/** One notice per session in a round: the texts of all its cards in one, in the order they came. */
+export interface NoticeGroup<T> {
+  readonly session: string;
+  readonly items: readonly T[];
+  readonly text: string;
+}
+
+/**
+ * The fieldIsFree check only sees whether the field holds text, so a session with three cards got three notices in a
+ * row in one round (devolução de 20/11). Grouped, it gets one: a single card keeps its own text; more join under one
+ * label, numbered.
+ */
+export function groupNotices<T>(items: readonly T[], sessionOf: (item: T) => string, textOf: (item: T) => string): NoticeGroup<T>[] {
+  const bySession = new Map<string, T[]>();
+  for (const item of items) bySession.set(sessionOf(item), [...(bySession.get(sessionOf(item)) ?? []), item]);
+  const bare = (text: string): string => (text.startsWith(LABEL) ? text.slice(LABEL.length).trim() : text);
+  return [...bySession].map(([session, list]) => ({
+    session,
+    items: list,
+    text: list.length === 1 ? textOf(list[0]!) : `${LABEL} ${list.length} avisos nesta ronda: ${list.map((item, i) => `(${i + 1}) ${bare(textOf(item))}`).join(' ')}`,
+  }));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// A response on the card's link is someone else's (design §5: "mensagem de outra pessoa"). The sessions comment with
+// the same GitHub and Slack accounts the cron reads with, so what that account wrote never counts.
+
+/** A GitHub account: `type` is "Bot" for an app (its login ends in "[bot]"). */
+interface GithubAccount {
+  readonly login?: string;
+  readonly type?: string;
+}
+
+interface GithubAuthored {
+  readonly user?: GithubAccount | null;
+}
+
+export interface GithubReading {
+  readonly comments: readonly (GithubAuthored & { readonly created_at?: string })[];
+  readonly reviews?: readonly (GithubAuthored & { readonly submitted_at?: string })[];
+  /** issues/<n>: closed_at and closed_by (a PR is an issue there too). */
+  readonly issue?: { readonly closed_at?: string | null; readonly closed_by?: GithubAccount | null };
+  /** pulls/<n>: merged_at and merged_by. */
+  readonly pull?: { readonly merged_at?: string | null; readonly merged_by?: GithubAccount | null };
+}
+
+const newer = (iso: string | null | undefined, since: number): boolean => typeof iso === 'string' && Date.parse(iso) > since;
+
+/**
+ * Something on a GitHub link after `since` that `self` (the gh account of this machine) did not do. A bot (CI, preview,
+ * dependabot, a review app) is nobody's response: its comment would wake the session for nothing.
+ */
+export function othersOnGithub(reading: GithubReading, self: string, since: number): boolean {
+  const other = (who: GithubAccount | null | undefined): boolean => {
+    const login = (who?.login ?? '').toLowerCase();
+    return login !== self.toLowerCase() && !login.endsWith('[bot]') && who?.type !== 'Bot';
+  };
+  if (reading.comments.some((c) => newer(c.created_at, since) && other(c.user))) return true;
+  if ((reading.reviews ?? []).some((r) => newer(r.submitted_at, since) && other(r.user))) return true;
+  if (reading.pull && newer(reading.pull.merged_at, since) && other(reading.pull.merged_by)) return true;
+  if (reading.issue && newer(reading.issue.closed_at, since) && !(reading.pull && newer(reading.pull.merged_at, since)) && other(reading.issue.closed_by)) return true;
+  return false;
+}
+
+/**
+ * A message in a Slack thread as the thread reader prints it (`--- dd/mm HH:MM <author> (ts <epoch>)`, ler_fio.py) after
+ * `since`, whose author is none of `self` (the names and ids of the account the sessions write with). The reader gives
+ * the author's name (or its id when the name is not known); the owner writes with that same account, so a reply of his
+ * in the thread does not count either.
+ */
+export function othersOnSlack(output: string, self: readonly string[], since: number): boolean {
+  const mine = new Set(self.map((name) => name.trim().toLowerCase()).filter(Boolean));
+  for (const line of output.split('\n')) {
+    const m = /^--- \S+ \S+ (.*) \(ts (\d+(?:\.\d+)?)\)(?: \[mensagem do link\])?\s*$/.exec(line);
+    if (!m) continue;
+    if (Number(m[2]) * 1000 > since && !mine.has(m[1]!.trim().toLowerCase())) return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------------------------------------------

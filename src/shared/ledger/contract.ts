@@ -554,6 +554,25 @@ export function isServicePlace(placeId: string): boolean {
  */
 export const LIMITER_SERVICE = 'limitador';
 
+/**
+ * t-0358187b — the vigia de travas (src/main/vigia/vigia-service.ts, src/oraculo/vigia.ts). Its record of a lock that
+ * passed by itself closes alone (low risk, no card): the owner sees it in the record and is never asked about it.
+ */
+export const VIGIA_SERVICE = 'vigia';
+
+/**
+ * t-f4cd92fb — the vigia signs its steps with a role of its own (never the generic `servico`, which the owner read as
+ * "entregue por Servico"), and its place is named to the owner as a person would name it. The name comes from the
+ * place, so the records written before the role existed read the same way.
+ */
+export const VIGIA_ROLE = 'vigia';
+export const VIGIA_NAME = 'Vigia de travas';
+
+/** The name the owner reads for a service place that has one; `undefined` = no name of its own. */
+export function servicePlaceName(placeId: string): string | undefined {
+  return placeId === `${SERVICE_PLACE_PREFIX}${VIGIA_SERVICE}` ? VIGIA_NAME : undefined;
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Operations — the ONE place the rules live. Pure: the caller gives the clock and the new id.
 
@@ -738,6 +757,11 @@ export function repeatedWrite(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
   }
   const task = doc.tasks[op.id];
   if (!task) return null;
+  // t-27340b98 — any other service's key names one line of its own task (a cron routine's "date + line"): the same key
+  // with the same text is that line, whenever it was written and whatever came after it (a rerun, a resend after a
+  // timeout); the same key with another text is `serviceKeyTaken`'s refusal.
+  if (op.op === 'andamento' && key !== undefined && isOwnService(actor))
+    return task.events.some((event) => serviceKeyed(event, actor, key) && event.text === progressText(op.progress)) ? task : null;
   if (op.op === 'assumir' || op.op === 'entregar' || op.op === 'aceitar' || op.op === 'rejeitar' || op.op === 'frente') return keyedRepeat(task, actor, op, key, now);
   if (op.op === 'andamento') {
     const last = latest(task, (event) => event.kind === 'comentada' && sameActor(event.by, actor));
@@ -753,6 +777,15 @@ export function repeatedWrite(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
     return matches(latest(task, isTransfer), (event) => (event.text ?? '').includes(` para ${to}⟧`), () => true) ? task : null;
   }
   return null;
+}
+
+/** t-27340b98 — a service other than the limiter (whose key is a series, with rules of its own). */
+function isOwnService(actor: LedgerActor): boolean {
+  return actor.kind === 'lugar' && actor.placeId.startsWith(SERVICE_PLACE_PREFIX) && actor.placeId !== `${SERVICE_PLACE_PREFIX}${LIMITER_SERVICE}`;
+}
+
+function serviceKeyed(event: LedgerEvent, actor: LedgerActor, key: string): boolean {
+  return event.kind === 'comentada' && event.requestId === key && sameActor(event.by, actor);
 }
 
 /**
@@ -971,8 +1004,11 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
         const why = forOwnerRefusal(op.forOwner, op.proofs);
         if (why) return fail(`"paraODono" recusado: ${why}`);
       }
-      if (op.closeAlone && (task.risk !== 'baixo' || op.forOwner || task.slack || actor.kind !== 'lugar' || isServicePlace(actor.placeId) || (doneBy && doneBy !== actor.placeId)))
-        return fail('Só fecha sozinha a entrega de risco baixo, sem carta ao dono, feita e entregue pelo mesmo lugar do quadro (serviço nunca).');
+      // t-0358187b — the one service that closes its own delivery: the vigia's record of a lock that passed by itself
+      // (dono, 17/11: a lock that passed asks nothing; it is a record). Still low risk, no card, its own work.
+      const vigiaRecord = actor.kind === 'lugar' && actor.placeId === `${SERVICE_PLACE_PREFIX}${VIGIA_SERVICE}` && task.ownerPlaceId === actor.placeId;
+      if (op.closeAlone && (task.risk !== 'baixo' || op.forOwner || task.slack || actor.kind !== 'lugar' || (isServicePlace(actor.placeId) && !vigiaRecord) || (doneBy && doneBy !== actor.placeId)))
+        return fail('Só fecha sozinha a entrega de risco baixo, sem carta ao dono, feita e entregue pelo mesmo lugar do quadro (serviço nunca, fora o registro do vigia de travas).');
       const delivered = step(task, 'entregue', {
         kind: 'entregue',
         at: ctx.now,
@@ -983,7 +1019,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
         ...(op.forOwner ? { forOwner: op.forOwner } : {}),
       });
       if (!op.closeAlone) return done(delivered);
-      const why = op.closeAloneBy === 'cetico' ? 'veredito aprovado do revisor cético na prova; não espera outro Revisor.' : 'nenhum Revisor vivo de fora da cadeia de quem entregou; fechou com a prova.';
+      const why = vigiaRecord ? 'registro do vigia de travas: a trava passou sozinha e não pede decisão.' : op.closeAloneBy === 'cetico' ? 'veredito aprovado do revisor cético na prova; não espera outro Revisor.' : 'nenhum Revisor vivo de fora da cadeia de quem entregou; fechou com a prova.';
       return done(step(delivered, 'aceita', { kind: 'aceita', at: ctx.now, by: actor, text: withMark(CLOSED_ALONE, why) }));
 
     case 'aceitar': {
@@ -1021,6 +1057,10 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       if (isClosed(task) || task.slack) return fail('A tarefa já fechou: o andamento vai numa tarefa viva.');
       const why = progressRefusal(op.progress);
       if (why) return fail(why);
+      // t-27340b98 — the same text with this key was answered as written above (`repeatedWrite`); another text is refused.
+      const key = isRequestId(op.requestId) ? op.requestId : undefined;
+      if (key !== undefined && isOwnService(actor) && task.events.some((event) => serviceKeyed(event, actor, key)))
+        return fail(`A chave "${key}" já gravou outra linha nesta tarefa; nada foi gravado agora. Uma chave vale para uma linha só.`);
       return done(step(task, task.state, { kind: 'comentada', at: ctx.now, by: actor, text: progressText(op.progress), ...requestOf(op) }));
     }
 

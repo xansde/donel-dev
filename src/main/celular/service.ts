@@ -25,9 +25,10 @@ import { createMobileHandler, MOBILE_PORT, startMobileServer, type MobileRequest
 import { createHash } from 'node:crypto';
 import { pickTailscaleAddress } from './tailscale';
 import { createMobilePedidosPort, createPedidoRouter, createPedidosStore, type MobilePedidosPort, type PedidoTarefa } from './pedidos';
-import { createTranscriptionJobs, DEFAULT_WHISPER_URL, whisperServerTranscriber } from './transcrever';
+import { createTranscriptionJobs, DEFAULT_WHISPER_URL, whisperServerTranscriber, type Transcribe } from './transcrever';
 import { createPushStore, isPushSubscription, newlyWaiting, pushMessageFor, sendPush, type PushFetch } from './webpush';
 import type { LedgerDoc } from '../../shared/ledger/contract';
+import type { OwnerInboxItem } from '../../shared/ledger/inbox';
 
 /** What the phone's server needs, without Electron: the PC's app and the Oráculo's daemon on the VPS both run it. */
 export interface CelularCoreDeps {
@@ -51,6 +52,10 @@ export interface CelularCoreDeps {
   readonly suspended?: () => boolean;
   /** Pedido por áudio: o whisper do PC (ausente = sem transcrição, o celular manda texto). */
   readonly whisperUrl?: string | null;
+  /** t-0eb91241 — the daemon on the VPS: the VPS transcriber (`daemonWhisper`), its message and its longer wait. */
+  readonly whisper?: { readonly url: string; readonly where: 'pc' | 'vps'; readonly timeoutMs: number };
+  /** t-0eb91241 — the PC: the VPS transcriber over ssh (`sshVpsTranscriber`); wins over `whisper` and `whisperUrl`. */
+  readonly transcribe?: Transcribe;
   /** Saída iii (18/11): the phone app's routes under `/api/v2/` (the daemon only). */
   readonly v2?: () => ((request: MobileRequest) => Promise<MobileResponse>) | null;
   /**
@@ -59,6 +64,11 @@ export interface CelularCoreDeps {
    */
   readonly port?: number;
   readonly publicPort?: number;
+  /**
+   * t-b07b50ff — the items that started waiting for the owner, each time some do: called before any push check (the
+   * phone app has no push subscription; the registro writes them for its native warnings). Only the daemon passes it.
+   */
+  readonly onFresh?: (fresh: readonly OwnerInboxItem[], doc: LedgerDoc) => void;
 }
 
 export interface CelularCore extends CelularService {
@@ -107,7 +117,8 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
   const ledger: MobileLedgerPort = createLedgerMobilePort(deps.ledger, deps.placeName, deps.cardWriter);
   const push = createPushStore(join(deps.userDataDir, 'celular-push.json'), deps.io);
   const pushFetch: PushFetch = deps.pushFetch ?? ((url, init) => fetch(url, init));
-  // Pedir pelo Oráculo: a fila no disco, o áudio numa pasta, a transcrição pelo whisper.cpp local do OpenWhispr.
+  // Pedir pelo Oráculo: a fila no disco, o áudio numa pasta, a transcrição pelo whisper.cpp local do OpenWhispr (no PC)
+  // ou pelo transcritor residente da VPS (no daemon do Oráculo, t-0eb91241).
   const audioDir = join(deps.userDataDir, 'pedidos-audio');
   const pedidosStore = createPedidosStore({ filePath: join(deps.userDataDir, 'pedidos-do-dono.json'), io: deps.io });
   const audioJobs = createTranscriptionJobs({
@@ -117,7 +128,7 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
       writeFileSync(path, bytes);
     },
     exists: existsSync,
-    transcribe: whisperServerTranscriber({ url: deps.whisperUrl ?? (process.env.DONEL_WHISPER_URL || DEFAULT_WHISPER_URL) }),
+    transcribe: deps.transcribe ?? whisperServerTranscriber(deps.whisper ?? { url: deps.whisperUrl ?? (process.env.DONEL_WHISPER_URL || DEFAULT_WHISPER_URL) }),
   });
   const router = createPedidoRouter({
     store: pedidosStore,
@@ -231,6 +242,13 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
   function warnNewItems(doc: LedgerDoc): void {
     const { fresh, next } = newlyWaiting(waiting, doc, Date.now());
     waiting = next;
+    if (fresh.length > 0 && deps.onFresh) {
+      try {
+        deps.onFresh(fresh, doc);
+      } catch (error) {
+        console.error('[donel-dev] celular: os avisos do app não foram gravados:', error);
+      }
+    }
     if (!auth.enabled || deps.suspended?.() || fresh.length === 0) return;
     const paired = new Set(auth.devices().map((device) => device.id));
     let keys;

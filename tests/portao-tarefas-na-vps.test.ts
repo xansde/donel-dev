@@ -8,10 +8,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
-import { createLedgerService, nodeLedgerProofFs } from '../src/main/ledger-store';
+import { createLedgerService, nodeLedgerProofFs, runLedgerTool, type LedgerCaller } from '../src/main/ledger-store';
 import { progressOf } from '../src/shared/ledger/andamento';
 import { createGateHandler, createTunnelForward, type GateForward } from '../src/oraculo/portao';
 import type { GateRecados } from '../src/oraculo/gate-recados';
+import type { BoardStore, CardRow } from '../src/oraculo/board-client';
+import { renewBeforeCard } from '../src/oraculo/recados';
+import { createGateToolRoutes, GATE_RENEW_PATH } from '../src/oraculo/portoes';
 import type { OwnerMessage } from '../src/main/ledger-card-writer';
 import type { MindscapeBoard } from '../src/shared/mindscape/model';
 import { createThrottle } from '../src/oraculo/server';
@@ -329,5 +332,91 @@ describe('SSE do Oráculo agrupado', () => {
     throttle.fire();
     expect(sent).toBe(3);
     throttle.dispose();
+  });
+});
+
+describe('card_move renova a posse da tarefa (t-8406f473)', () => {
+  const OLD = 'place:dev-velho';
+  const LIDER = 'place:lider';
+  const board: MindscapeBoard = {
+    ...BOARD,
+    cards: { ...BOARD.cards, [OLD]: { kind: 'session', id: OLD, previous: [], roleId: 'dev', x: 0, y: 0, by: 'session' } },
+    links: [...BOARD.links, { id: 'l>v', from: LIDER, to: OLD, arrow: true, by: 'session', opened: true }],
+  };
+  const listar = [
+    { id: ME, papel: 'dev', estado: 'trabalhando', abertaPor: LIDER },
+    { id: OLD, papel: 'dev', estado: 'fechada', abertaPor: LIDER },
+    { id: LIDER, papel: 'lider', estado: 'parada' },
+  ];
+  const mine = { quemSou: { nome: 'Dev · atlas', projeto: 'atlas', pasta: PROJECT, lugar: ME, papel: 'dev', roda: 'VPS' }, listar, board };
+
+  /**
+   * A task the closed place took; the cards that carry it (`c-tarefa`) and that do not (`c-solto`), already in A fazer
+   * of the successor (the card's rule lets only its place or the Líder move it).
+   */
+  async function world() {
+    const dir = mkdtempSync(join(tmpdir(), 'portao-cartao-'));
+    dirs.push(dir);
+    const sessions = join(dir, 's');
+    mkdirSync(join(sessions, SID), { recursive: true });
+    writeFileSync(join(sessions, SID, 'meta.json'), JSON.stringify({ sid: SID, mcpToken: TOKEN, mcpPort: 25710 }));
+    const ledger = createLedgerService({ filePath: join(dir, 'ledger.json'), io, proofFs: nodeLedgerProofFs });
+    const old: LedgerCaller = { projectPath: PROJECT, placeId: OLD, roleId: 'dev', boardPlaceIds: Object.keys(board.cards), board };
+    const created = await runLedgerTool(ledger, old, { tool: 'tarefa_criar', pedido: 'faz', criterio: 'feito', prazo: '2026-11-21', risco: 'baixo' });
+    const id = (JSON.parse(created.text) as { id: string }).id;
+    expect((await runLedgerTool(ledger, old, { tool: 'tarefa_assumir', id })).ok).toBe(true);
+    const row = (cardId: string, oraculoId: string | null): CardRow => ({
+      id: cardId, project_id: 'atlas', front: null, title: 'Quadro', owner_request: 'faz', criterion: null, requested_by: 'dono', stage: 'todo',
+      stage_since: '2026-11-20T10:00:00Z', note: null, place_id: ME, session_id: null, justification: null, justification_link: null,
+      justification_due: null, owner_reason: null, done_summary: null, version: 1, oraculo_id: oraculoId,
+    });
+    const rows = new Map([['c-tarefa', row('c-tarefa', id)], ['c-solto', row('c-solto', null)]]);
+    const moves: string[] = [];
+    const store: BoardStore = {
+      projectOf: async () => 'atlas',
+      getCard: async (cardId) => rows.get(cardId) ?? null,
+      listCards: async () => [...rows.values()],
+      cardByClientRef: async () => null,
+      createCard: async () => {
+        throw new Error('não cria');
+      },
+      moveCard: async (args) => {
+        moves.push(args.p_card_id);
+        return { ...rows.get(args.p_card_id)!, version: 2 };
+      },
+      touchLane: async () => undefined,
+    };
+    const recados: GateRecados = {
+      ...stubRecados([]),
+      antesDoCartao: (caller, session, taskId) => renewBeforeCard(ledger, caller, session, taskId, () => undefined),
+    };
+    const handle = createGateHandler({ sessionsDir: sessions, ledger: () => ledger, picture: () => ({ at: Date.UTC(2026, 10, 20, 11), sessoes: { [SID]: mine } }), forward: HUNG, serverVersion: 'teste', cards: () => store, recados });
+    const move = async (cardId: string) => {
+      const res = await handle({ method: 'POST', path: `/s/${SID}/mcp`, authorization: `Bearer ${TOKEN}`, headers: {}, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'card_move', arguments: { id: cardId, para: 'doing', nota: 'sigo' } } }) });
+      return JSON.parse(res.body) as { result: { isError?: boolean } };
+    };
+    return { ledger, id, move, moves };
+  }
+
+  it('o card_move da sucessora de um lugar fechado passa a tarefa do cartão a ela; cartão sem oraculo_id não mexe na tarefa', async () => {
+    const w = await world();
+    expect((await w.move('c-solto')).result.isError).toBeUndefined();
+    expect(w.ledger.load().doc.tasks[w.id]!.ownerPlaceId).toBe(OLD);
+    expect((await w.move('c-tarefa')).result.isError).toBeUndefined();
+    const task = w.ledger.load().doc.tasks[w.id]!;
+    expect(task.ownerPlaceId).toBe(ME);
+    expect(JSON.stringify(task.events.at(-1))).toContain('renovação');
+    expect(w.moves).toEqual(['c-solto', 'c-tarefa']);
+  });
+
+  it('com o entregador separado, a rota renovar do registro faz a mesma passagem', async () => {
+    const w = await world();
+    const routes = createGateToolRoutes({
+      ledger: () => w.ledger,
+      recados: { antesDaTarefa: async () => undefined, antesDoCartao: (caller, session, taskId) => renewBeforeCard(w.ledger, caller, session, taskId, () => undefined) },
+    });
+    const answer = await routes('vps-pessoal', { method: 'POST', path: GATE_RENEW_PATH, headers: {}, body: JSON.stringify({ sessao: mine, tarefa: w.id }) } as never, GATE_RENEW_PATH);
+    expect(answer?.status).toBe(200);
+    expect(w.ledger.load().doc.tasks[w.id]!.ownerPlaceId).toBe(ME);
   });
 });

@@ -202,10 +202,11 @@ não):
   `*/15 * * * * /home/<usuário>/.donel/board/bin/quadro-ronda.sh >> /home/<usuário>/.donel/board/cron-stdout.log 2>&1`
   e `* * * * * /home/<usuário>/.donel/board/bin/quadro-lider.sh >> /home/<usuário>/.donel/board/cron-stdout.log 2>&1`.
   Volta: tirar as duas linhas e o `supabase.json`.
-- Limite conhecido: a conta do `gh` e a do Slack são as mesmas das sessões; um comentário que a própria sessão faz no
-  link DEPOIS de justificar conta como resposta. Faça a pergunta antes de justificar.
-- Reabrir sessão fechada sem o app ainda não existe: o cron leva ao Líder do quadro (que usa `sessao_retomar`), e o
-  pedido de Líder com a sessão fechada sai `failed` com o motivo.
+- A conta do `gh` e a do Slack são as mesmas das sessões: o que essa conta escreve no link não conta como resposta
+  (reentrega de 20/11, [`quadro-de-tarefas-sqlite.md`](quadro-de-tarefas-sqlite.md)). Limite: o dono escreve no Slack
+  com a mesma conta, e a resposta dele no fio também não acorda.
+- Reabrir sessão fechada sem o app não existe fora do daemon: o cron leva ao Líder da raia (ou ao Líder único, quando
+  o da raia está fechado), que usa `sessao_retomar`, e o pedido de Líder com a sessão fechada sai `failed` com o motivo.
 
 ## 7. Tela (prova do critério 1)
 

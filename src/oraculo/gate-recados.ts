@@ -37,8 +37,13 @@ export interface GateRecados {
   fechar?(sid: string, call: CloseCall): Promise<BrowserToolOutcome>;
   /** Before a tarefa_* answered here (item 13: a task of a closed place follows its successor). */
   antesDaTarefa(caller: LedgerCaller, mine: PictureSession, call: LedgerToolCall): Promise<void>;
+  /**
+   * t-8406f473 — before a `card_move`/`card_justify` of a card that carries an Oráculo task (`taskId`, its `oraculo_id`):
+   * the same renewal (a closed place's task follows its successor), since moving the card works the task.
+   */
+  antesDoCartao?(caller: LedgerCaller, mine: PictureSession, taskId: string): Promise<void>;
   /** After a tarefa_* answered here: the notices the PC used to give (delivery, travada/precisa-do-dono, verdict). */
   depoisDaTarefa(sid: string, mine: PictureSession, caller: LedgerCaller, call: LedgerToolCall, answerText: string): void;
-  /** POST /recados/<evento> from the VPS user-level hooks (loopback only, no MCP token). */
+  /** POST /recados/<evento> from the VPS user-level hooks (loopback only; the gate checked the session's hook token). */
   hook(evento: string, headers: Readonly<Record<string, string>>, body: string): Promise<GateHookResponse>;
 }

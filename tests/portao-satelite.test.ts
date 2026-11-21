@@ -20,7 +20,7 @@ import { parseLedgerToolCall } from '../src/shared/ledger/tools';
 import type { MindscapeBoard } from '../src/shared/mindscape/model';
 import { whoHears } from '../src/shared/mindscape/reach';
 import { callerOf, createOracleApiHandler, type OracleRequest } from '../src/oraculo/api';
-import { createGateToolRoutes, GATE_TOOL_PATH, readGateHashes } from '../src/oraculo/portoes';
+import { createGateToolRoutes, GATE_TOOL_PATH, readGateHashes, type GateToolRoutesDeps } from '../src/oraculo/portoes';
 import { boardFromProbe, createProbe } from '../src/oraculo/sonda';
 import { createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteTaskMemory, SATELLITE_DOWN, type SatellitePost } from '../src/oraculo/satelite';
 import { callerFromPicture, type PictureSession } from '../src/oraculo/portao';
@@ -50,14 +50,14 @@ const MINE: PictureSession = {
   listar: [{ id: ME, papel: 'dev', estado: 'trabalhando' }],
 };
 
-function api() {
+function api(notice?: GateToolRoutesDeps['notice']) {
   const dir = tempDir('oraculo-portao-');
   mkdirSync(join(dir, 'portoes'));
   writeFileSync(join(dir, 'portoes', 'homologacoes.sha256'), `${hash(GATE)}\n`);
   const file = join(dir, 'ledger.json');
   const ledger = createLedgerService({ filePath: file, io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs });
   const gates = (): ReadonlyMap<string, string> => readGateHashes(dir);
-  const handle = createOracleApiHandler({ ledger, ledgerFile: file, tokenHash: () => hash(PC), gates, gateRoutes: createGateToolRoutes({ ledger: () => ledger }) });
+  const handle = createOracleApiHandler({ ledger, ledgerFile: file, tokenHash: () => hash(PC), gates, gateRoutes: createGateToolRoutes({ ledger: () => ledger, ...(notice ? { notice } : {}) }) });
   /** The satellite's POST, straight into this API (no socket). */
   const post = async (url: string, token: string, body: string): Promise<SatellitePost> => {
     const answer = await handle(req({ method: 'POST', url: new URL(url).pathname, body, authorization: `Bearer ${token}` }));
@@ -262,6 +262,45 @@ describe('satélite: aviso para outra máquina', () => {
   });
 });
 
+// t-3f32edb1 — the Dalton (top of his board, on the Homologações) writes to the Líder único with the PC off. The
+// answer said "espera o PC" while the personal VPS had put it in the Líder único's queue: the Dalton read "não chegou"
+// and would send it again. It says where it went: his queue there, the PC's relay, or this machine's disk.
+describe('satélite: recado do topo do quadro ao Líder único com o PC fora', () => {
+  const DALTON = 'place:dalton';
+  const SID = '77777777-2222-4333-8444-555555555555';
+  const dalton: PictureSession = {
+    quemSou: { nome: 'Dalton · Homologacao', pasta: PROJECT, lugar: DALTON, papel: 'dalton', papelNome: 'Dalton' },
+    listar: [{ id: DALTON, papel: 'dalton', estado: 'trabalhando' }],
+    board: { projectPath: PROJECT, pan: { x: 0, y: 0 }, zoom: 1, cards: { [DALTON]: { kind: 'session', id: DALTON, roleId: 'dalton', previous: [], x: 0, y: 0 } }, links: [], drawings: [] },
+  };
+
+  /** The personal VPS's `aviso` route answers as `deliverLocalFirst` does there: the Líder único's queue, or the relay. */
+  async function send(vps: 'lider-vivo' | 'lider-fora' | 'fora-do-ar'): Promise<{ entregue: string; para: string }> {
+    const g = api(async () => (vps === 'lider-vivo' ? 'lider' : null));
+    const io = createSystemConfigIoDeps();
+    const notices = createSatelliteNotice({ url: 'http://vps-pessoal:47816', token: () => GATE, post: vps === 'fora-do-ar' ? async () => 'sem-conexao' : g.post, file: join(tempDir('avisos-sat-'), 'avisos-pendentes.json'), io, log: () => undefined });
+    const recados = createGateRecados({
+      file: join(tempDir('recados-sat-'), 'recados.json'),
+      io,
+      ledger: () => null,
+      picture: () => ({ at: Date.now(), sessoes: { [SID]: dalton } }),
+      localSessions: async () => new Set([SID]),
+      tmux: { screen: async () => ({ inMode: false, text: 'esc to interrupt' }), type: async () => true, enter: async () => true, clear: async () => true },
+      relay: notices.deliver,
+      log: () => undefined,
+    });
+    const sent = await recados.enviar(SID, dalton, { tool: 'sessao_enviar', para: 'lider', texto: 'terminei', motivo: 'tarefa-completa' }, 'desligado');
+    if (sent === 'repassar' || sent.kind !== 'text') throw new Error(`resposta inesperada: ${JSON.stringify(sent)}`);
+    return JSON.parse(sent.text) as { entregue: string; para: string };
+  }
+
+  it('Líder único vivo na VPS pessoal: na fila dele; fora dela, ou a VPS fora do ar: guardado, e nunca "na fila"', async () => {
+    expect(await send('lider-vivo')).toMatchObject({ entregue: 'na-fila', para: 'lider' });
+    expect(await send('lider-fora')).toMatchObject({ entregue: 'pelo-relay', para: 'lider' });
+    expect(await send('fora-do-ar')).toMatchObject({ entregue: 'pelo-relay', para: 'lider' });
+  });
+});
+
 describe('sonda do retrato', () => {
   const LIDER = 'place:lider';
   const quadro = {
@@ -454,6 +493,118 @@ describe('sonda do retrato', () => {
     now += 60_000;
     await probe.round();
     expect(asked).toHaveLength(8);
+  });
+
+  describe('sessão nova (renovação, t-d97a4bfd)', () => {
+    // 19/11: the Dalton renewed (new sid) with the PC slow; its first probe failed, the backoff made it wait 4 min, and
+    // with no picture the gate answered it as session:<sid>, with no arrows.
+    const OLD = '00000000-0000-4000-8000-000000000001';
+    const NEW = '00000000-0000-4000-8000-000000000002';
+    function setup(): { home: string; kept: Record<string, PictureSession> } {
+      const home = tempDir('sonda-nova-');
+      [OLD, NEW].forEach((sid, i) => {
+        mkdirSync(join(home, sid), { recursive: true });
+        writeFileSync(join(home, sid, 'meta.json'), JSON.stringify({ sid, mcpPort: 42000 + i, mcpToken: 't'.repeat(43) }));
+      });
+      return { home, kept: {} };
+    }
+    const answer = (tool: string): unknown => (tool === 'sessao_quem_sou' ? { pasta: PROJECT, lugar: ME } : tool === 'sessao_listar' ? listar : quadro);
+
+    it('falhou uma vez: é sondada de novo entre 15 e 30 s depois (não 4 min), e o retrato entra', async () => {
+      const { home, kept } = setup();
+      let now = 20_000_000;
+      let up = false;
+      const asked: number[] = [];
+      const probe = createProbe({
+        sessionsDir: home,
+        liveSessions: async () => new Set([NEW]),
+        picture: () => ({ at: 0, sessoes: kept }),
+        setSession: (folder, session) => void (kept[folder] = session),
+        call: async (_port, _token, tool) => {
+          if (tool === 'sessao_quem_sou') asked.push(now);
+          return up ? answer(tool) : null;
+        },
+        now: () => now,
+        gapMs: 0,
+        log: () => undefined,
+      });
+      await probe.round();
+      expect(asked).toHaveLength(1);
+      up = true;
+      now += 15_000;
+      await probe.round();
+      expect(asked).toHaveLength(1);
+      now += 15_000;
+      await probe.round();
+      expect(asked).toHaveLength(2);
+      expect(kept[NEW]).toMatchObject({ quemSou: { lugar: ME }, at: now });
+    });
+
+    it('com a sonda em pausa pelo PC lento, a sessão nova ainda é sondada e uma velha devida, não', async () => {
+      const { home, kept } = setup();
+      let now = 30_000_000;
+      let slowMs = 1_500;
+      const live = new Set([OLD]);
+      const asked: number[] = [];
+      kept[OLD] = { quemSou: { pasta: PROJECT, lugar: 'x' }, listar: [], at: now - 600_000 };
+      const probe = createProbe({
+        sessionsDir: home,
+        liveSessions: async () => live,
+        picture: () => ({ at: 0, sessoes: kept }),
+        setSession: (folder, session) => void (kept[folder] = session),
+        call: async (port, _token, tool) => {
+          now += slowMs;
+          if (tool === 'sessao_quem_sou') asked.push(port);
+          return answer(tool);
+        },
+        now: () => now,
+        gapMs: 0,
+        log: () => undefined,
+      });
+      // The old one answered slowly: the probe pauses 2 min.
+      await probe.round();
+      expect(asked).toEqual([42000]);
+      // The renewal: a new sid alive, and the old one already due again (its picture made stale).
+      slowMs = 0;
+      live.add(NEW);
+      now += 15_000;
+      kept[OLD] = { ...kept[OLD]!, at: now - 600_000 };
+      await probe.round();
+      expect(asked).toEqual([42000, 42001]);
+      expect(kept[NEW]).toMatchObject({ quemSou: { lugar: ME } });
+    });
+
+    it('muda: não segura as outras na mesma rodada, e passados 5 min volta ao backoff', async () => {
+      const { home, kept } = setup();
+      const t0 = 40_000_000;
+      let now = t0;
+      const newAsks: number[] = [];
+      const oldAsks: number[] = [];
+      kept[OLD] = { quemSou: { pasta: PROJECT, lugar: 'x' }, listar: [], at: now - 600_000 };
+      const probe = createProbe({
+        sessionsDir: home,
+        liveSessions: async () => new Set([OLD, NEW]),
+        picture: () => ({ at: 0, sessoes: kept }),
+        setSession: (folder, session) => void (kept[folder] = session),
+        call: async (port, _token, tool) => {
+          if (tool === 'sessao_quem_sou') (port === 42001 ? newAsks : oldAsks).push(now - t0);
+          return port === 42001 ? null : answer(tool);
+        },
+        now: () => now,
+        gapMs: 0,
+        log: () => undefined,
+      });
+      await probe.round();
+      // The new one failed first, and the old one due in the same round was still asked.
+      expect(newAsks).toEqual([0]);
+      expect(oldAsks).toEqual([0]);
+      for (let step = 1; step * 15_000 <= 615_000; step += 1) {
+        now = t0 + step * 15_000;
+        await probe.round();
+      }
+      // Every 30 s (rounds of 15 s, retry after 20 s) for 5 min; then the normal wait (2 min, then 4 min).
+      expect(newAsks).toEqual([0, 30_000, 60_000, 90_000, 120_000, 150_000, 180_000, 210_000, 240_000, 270_000, 390_000]);
+    });
   });
 
   it('o Líder único (sem quadro) entra no retrato com o aviso do PC no listar e no quadro; sessão comum com o aviso, não', async () => {

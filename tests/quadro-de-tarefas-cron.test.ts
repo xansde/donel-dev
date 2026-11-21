@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { afterBusyField, BUSY_MAX, CHARGE_EVERY_MS, CHARGE_MAX, fieldHoldsOnlyNotice, fieldIsFree, linkKind, planJustify, planVigia, responseSince, VIGIA_MAX_PER_DAY, withShadowNotice, type CronCard } from '../src/shared/board/cron';
+import { afterBusyField, BUSY_MAX, CHARGE_EVERY_MS, CHARGE_MAX, fieldHoldsOnlyNotice, fieldIsFree, followCardSession, followLaneLeaders, groupNotices, LABEL, linkKind, othersOnGithub, othersOnSlack, pickLeader, planJustify, planVigia, responseSince, VIGIA_MAX_PER_DAY, withShadowNotice, type CronCard } from '../src/shared/board/cron';
 import { STALL_MS } from '../src/shared/board/rules';
 import { renderBoardPage } from '../src/shared/board/page';
+import { sessionResolver } from '../src/board-cron/semente';
+import { exitAfterFlush } from '../src/board-cron/exit';
+import type { BoardPicture } from '../src/oraculo/portao';
 
 // Quadro de tarefas (t-1e354d15), PR 3 — the cron's decisions. What breaks without the owner seeing it: the vigia
 // waking a session that said why it is parked (or one that is typing), a deadline nobody ever charges, a response on
@@ -29,18 +32,30 @@ function card(over: Partial<CronCard> = {}): CronCard {
   };
 }
 
-const idle = { alive: true, idleSince: NOW - STALL_MS - 60_000 };
-const closed = { alive: false, idleSince: null };
+const idle = { alive: true, idleSince: NOW - STALL_MS - 60_000, cards: true };
+const closed = { alive: false, idleSince: null, cards: false };
 const justification = (due: number) => ({ text: 'esperando o Fazolin', link: 'https://seazone.slack.com/archives/C1/p1700000000000100', due });
 
 describe('vigia', () => {
   it('acorda Fazendo parado sem justificativa; justificado, ocupado ou em outra coluna fica quieto', () => {
     expect(planVigia(card(), idle, [], NOW)).toMatchObject({ do: 'wake', session: SESSION, mark: 'woken' });
     expect(planVigia(card({ justification: justification(NOW + 3600_000) }), idle, [], NOW).do).toBe('skip');
-    expect(planVigia(card(), { alive: true, idleSince: NOW - 60_000 }, [], NOW).do).toBe('skip');
+    expect(planVigia(card(), { ...idle, idleSince: NOW - 60_000 }, [], NOW).do).toBe('skip');
     // a long tool call (no finished turn) is working, not stopped
-    expect(planVigia(card(), { alive: true, idleSince: null }, [], NOW).do).toBe('skip');
+    expect(planVigia(card(), { ...idle, idleSince: null }, [], NOW).do).toBe('skip');
     expect(planVigia(card({ stage: 'blocked', justification: justification(NOW + 1) }), idle, [], NOW).do).toBe('skip');
+  });
+
+  it('sessão só lenta (Bash de fundo, subagente, CPU) ou sem card_* não é acordada nem vai ao Líder; a parada com card_* segue acordada', () => {
+    // t-8406f473 — the same filter as the despertador: a turn ended while a background job or a subagent still works
+    expect(planVigia(card(), { ...idle, busy: 'comando do Bash ainda rodando' }, [], NOW)).toMatchObject({ do: 'skip', why: 'só lenta: comando do Bash ainda rodando' });
+    expect(planVigia(card(), { ...idle, busy: 'subagente em segundo plano escreveu há 2 min' }, [], NOW).do).toBe('skip');
+    // a session that cannot move its card would only be nagged: never woken, never sent to the Líder as stopped
+    expect(planVigia(card(), { ...idle, cards: false }, [], NOW)).toMatchObject({ do: 'skip', why: 'sessão sem card_*' });
+    const capped = Array.from({ length: VIGIA_MAX_PER_DAY }, (_, i) => NOW - (i + 1) * 3600_000).reverse();
+    expect(planVigia(card(), { ...idle, cards: false }, capped, NOW).do).toBe('skip');
+    expect(planVigia(card(), { ...idle, busy: 'usando CPU (40%)' }, capped, NOW).do).toBe('skip');
+    expect(planVigia(card(), idle, [], NOW)).toMatchObject({ do: 'wake', session: SESSION });
   });
 
   it('campo ocupado em 3 rondas seguidas chega ao Líder, sem calar o aviso de cobrança esgotada', () => {
@@ -70,10 +85,169 @@ describe('vigia', () => {
   });
 
   it('sessão fechada ou no teto do dia vai ao Líder, uma vez a cada 2 h', () => {
-    expect(planVigia(card(), closed, [], NOW).do).toBe('leader');
+    expect(planVigia(card(), closed, [], NOW)).toMatchObject({ do: 'leader', closed: SESSION });
     const wakes = Array.from({ length: VIGIA_MAX_PER_DAY }, (_, i) => NOW - (i + 1) * 3600_000).reverse();
     expect(planVigia(card(), idle, wakes, NOW).do).toBe('leader');
     expect(planVigia(card({ leaderNoticedAt: NOW - 60_000 }), idle, wakes, NOW).do).toBe('skip');
+  });
+
+  it('entregue no Oráculo esperando o aceite não é parado; rejeitada volta a ser; aceita não vai ao Líder (a ronda fecha o cartão)', () => {
+    expect(planVigia(card({ desk: { state: 'entregue', closed: false } }), idle, [], NOW).do).toBe('skip');
+    expect(planVigia(card({ desk: { state: 'rejeitada', closed: false } }), idle, [], NOW).do).toBe('wake');
+    expect(planVigia(card({ desk: { state: 'entregue', closed: false } }), closed, [], NOW).do).toBe('skip');
+    // accepted on the desk and still in Fazendo: the round's follow of the Oráculo moves it to Feito (r-a01b8ca6)
+    expect(planVigia(card({ desk: { state: 'aceita', closed: true } }), idle, [], NOW).do).toBe('skip');
+  });
+
+  it('o aviso vai ao Líder da raia vivo; sem ele, ao Líder único vivo; sem nenhum, diz por quê', () => {
+    const lane = { leader_place: 'place:lider', leader_session: 'aaaaaaaa-1111' };
+    const alive = (live: string[]) => (sid: string) => live.includes(sid);
+    expect(pickLeader(lane, alive(['aaaaaaaa-1111']), 'bbbbbbbb-2222')).toEqual({ kind: 'lane', session: 'aaaaaaaa-1111', place: 'place:lider' });
+    expect(pickLeader(lane, alive(['bbbbbbbb-2222']), 'bbbbbbbb-2222')).toMatchObject({ kind: 'reserve', session: 'bbbbbbbb-2222' });
+    expect(pickLeader(undefined, alive([]), 'bbbbbbbb-2222')).toMatchObject({ kind: 'none', why: 'a raia não tem Líder registrado' });
+  });
+});
+
+describe('raia segue o Líder e um aviso por sessão (devolução de 20/11)', () => {
+  it('a raia passa à sessão viva aqui que segura o lugar; a do Líder único, à escolha do daemon; de outra máquina, não', () => {
+    const bizops = 'C:\\Users\\dono\\seazone\\BizOps';
+    const STALE = '757511b0-6326-414c-8ed5-5417c83c36b4';
+    const LIVE = '0af17ef9-93a7-4e25-9d2e-19537600c285';
+    const ALL_OLD = 'd908a6ae-0720-4365-b775-f973d88e9d7b';
+    const ALL_NOW = 'eeeeeeee-0720-4365-b775-f973d88e9d7b';
+    const REMOTE = 'bbbbbbbb-1111-4222-8333-444444444444';
+    const leaderCard = { kind: 'session', id: 'place:e8e2842d', sessionId: LIVE, previous: [], x: 0, y: 0, roleId: 'lider' };
+    // the stale holder (closed, never renewed) is still in the picture; the freshest board says the place's conversation
+    const picture = {
+      at: NOW,
+      sessoes: {
+        [STALE]: { quemSou: { lugar: 'place:e8e2842d', pasta: bizops }, listar: [], at: NOW - 3600_000 },
+        'cccccccc-1111-4222-8333-444444444444': { quemSou: { lugar: 'place:dev', pasta: bizops }, listar: [], at: NOW, board: { cards: { 'place:e8e2842d': leaderCard } } },
+      },
+    } as unknown as BoardPicture;
+    // another machine's picture (portoes-retrato): its Líder is not in this tmux
+    const satellite = { at: NOW, sessoes: { [REMOTE]: { quemSou: { lugar: 'place:remoto', pasta: '/home/u/seazone/Teamzone' }, listar: [], at: NOW, maquina: 'homologacoes' } } } as unknown as BoardPicture;
+    const here = new Set([LIVE, ALL_NOW]);
+    const sessionOf = sessionResolver([picture, satellite], (sid) => here.has(sid));
+    const lane = (project_id: string, leader_place: string, leader_session: string) => ({ project_id, leader_place, leader_session, leader_seen_at: null });
+    const lanes = [lane('bizops', 'place:e8e2842d', STALE), lane('donel-dev', 'lider', ALL_OLD), lane('teamzone', 'place:remoto', ALL_OLD), lane('atlas', 'lider', ALL_NOW)];
+    expect(followLaneLeaders(lanes, sessionOf, () => ALL_NOW)).toEqual([
+      { project: 'bizops', place: 'place:e8e2842d', session: LIVE, was: STALE },
+      { project: 'donel-dev', place: 'lider', session: ALL_NOW, was: ALL_OLD },
+    ]);
+    // nothing alive resolves: the lane keeps what it has (the reserve, as before)
+    expect(followLaneLeaders(lanes, sessionResolver([picture, satellite], () => false), () => null)).toEqual([]);
+    // the seed's reading (no liveness) follows the freshest too: the board pictured now beats the holder of an hour ago
+    expect(sessionResolver([picture])('bizops', 'place:e8e2842d')).toBe(LIVE);
+  });
+
+  it('o lugar resolve para a sessão mais nova: o detentor antigo retomado no tmux não volta a vencer, e entre cartões retratados vale o mais novo', () => {
+    const bizops = 'C:\\Users\\dono\\seazone\\BizOps';
+    const STALE = '757511b0-6326-414c-8ed5-5417c83c36b4';
+    const LIVE = '0af17ef9-93a7-4e25-9d2e-19537600c285';
+    const OLDER = 'aaaaaaaa-0720-4365-b775-f973d88e9d7b';
+    const leaderCard = (sessionId: string) => ({ kind: 'session', id: 'place:lider', sessionId, previous: [], x: 0, y: 0, roleId: 'lider' });
+    // the stale holder was resumed in tmux (alive again), but the board pictured after it names the place's new session
+    const picture = {
+      at: NOW,
+      sessoes: {
+        [STALE]: { quemSou: { lugar: 'place:lider', pasta: bizops }, listar: [], at: NOW - 3600_000 },
+        'cccccccc-1111-4222-8333-444444444444': { quemSou: { lugar: 'place:dev', pasta: bizops }, listar: [], at: NOW - 60_000, board: { cards: { 'place:lider': leaderCard(LIVE) } } },
+      },
+    } as unknown as BoardPicture;
+    const alive = new Set([STALE, LIVE, OLDER]);
+    expect(sessionResolver([picture], (sid) => alive.has(sid))('bizops', 'place:lider')).toBe(LIVE);
+    // a holder pictured after the board still wins (it took the place after the board was saved)
+    const renewed = { ...picture, sessoes: { ...picture.sessoes, [STALE]: { ...picture.sessoes[STALE]!, at: NOW } } } as BoardPicture;
+    expect(sessionResolver([renewed], (sid) => alive.has(sid))('bizops', 'place:lider')).toBe(STALE);
+    // two pictured boards name the place: the older one, read first, does not win
+    const older = { at: NOW - 2 * 3600_000, sessoes: { 'dddddddd-1111-4222-8333-444444444444': { quemSou: { lugar: 'place:dev', pasta: '/home/u/seazone/BizOps' }, listar: [], board: { cards: { 'place:lider': leaderCard(OLDER) } } } } } as unknown as BoardPicture;
+    const onlyBoards = { at: NOW, sessoes: { 'cccccccc-1111-4222-8333-444444444444': picture.sessoes['cccccccc-1111-4222-8333-444444444444']! } } as BoardPicture;
+    expect(sessionResolver([older, onlyBoards], (sid) => alive.has(sid))('bizops', 'place:lider')).toBe(LIVE);
+    // a tie (the stale holder resumed and probed now, its own entry pictures the board): the board's card wins
+    const resumed = { at: NOW, sessoes: { [STALE]: { quemSou: { lugar: 'place:lider', pasta: bizops }, listar: [], at: NOW, board: { cards: { 'place:lider': leaderCard(LIVE) } } } } } as unknown as BoardPicture;
+    expect(sessionResolver([resumed], (sid) => alive.has(sid))('bizops', 'place:lider')).toBe(LIVE);
+  });
+
+  it('com o PC ligado, cada sessão empurrada vale pela hora do último retrato que a trouxe (pcAt), não pela do retrato', () => {
+    const bizops = 'C:\\Users\\dono\\seazone\\BizOps';
+    const STALE = '757511b0-6326-414c-8ed5-5417c83c36b4';
+    const LIVE = '0af17ef9-93a7-4e25-9d2e-19537600c285';
+    const leaderCard = { kind: 'session', id: 'place:lider', sessionId: LIVE, previous: [], x: 0, y: 0, roleId: 'lider' };
+    // the PC stopped sending the stale holder an hour ago; the merge kept its entry (pcAt old, no probe `at`)
+    const pushed = {
+      at: NOW,
+      sessoes: {
+        [STALE]: { quemSou: { lugar: 'place:lider', pasta: bizops }, listar: [], pcAt: NOW - 3600_000 },
+        'cccccccc-1111-4222-8333-444444444444': { quemSou: { lugar: 'place:dev', pasta: bizops }, listar: [], pcAt: NOW, board: { cards: { 'place:lider': leaderCard } } },
+      },
+    } as unknown as BoardPicture;
+    expect(sessionResolver([pushed], () => true)('bizops', 'place:lider')).toBe(LIVE);
+    // both entries hold the place: the one the PC sent now wins, whatever order they were inserted
+    const both = { ...pushed, sessoes: { ...pushed.sessoes, [LIVE]: { quemSou: { lugar: 'place:lider', pasta: bizops }, listar: [], pcAt: NOW } } } as unknown as BoardPicture;
+    expect(sessionResolver([both], () => true)('bizops', 'place:lider')).toBe(LIVE);
+  });
+
+  it('o cartão segue a sessão viva que segura o lugar dele agora (a renovada passa à sucessora)', () => {
+    const OLD = '11111111-2222-4333-8444-555555555555';
+    const NEXT = '99999999-2222-4333-8444-555555555555';
+    const sessionOf = (project: string, place: string) => (project === 'donel-dev' && place === 'place:dev' ? NEXT : undefined);
+    expect(followCardSession(card({ sessionId: OLD }), sessionOf).sessionId).toBe(NEXT);
+    expect(followCardSession(card({ sessionId: null }), sessionOf).sessionId).toBe(NEXT);
+    // nothing alive holds the place: the card keeps its session (the Líder hears it is closed)
+    expect(followCardSession(card({ sessionId: OLD, placeId: 'place:outro' }), sessionOf).sessionId).toBe(OLD);
+    expect(followCardSession(card({ sessionId: OLD, placeId: null }), sessionOf).sessionId).toBe(OLD);
+  });
+
+  it('a mesma sessão recebe um aviso só na ronda, com todos os cartões; um cartão só segue com o texto dele', () => {
+    const A = 'aaaaaaaa-1111';
+    const B = 'bbbbbbbb-2222';
+    const notices = [
+      { session: A, card: 'c-1', text: `${LABEL} O cartão c-1 está parado.` },
+      { session: B, card: 'c-9', text: `${LABEL} O cartão c-9 está parado.` },
+      { session: A, card: 'c-2', text: `${LABEL} O cartão c-2 está parado.` },
+      { session: A, card: 'c-3', text: `${LABEL} O prazo do cartão c-3 venceu.` },
+    ];
+    const groups = groupNotices(notices, (n) => n.session, (n) => n.text);
+    expect(groups.map((g) => [g.session, g.items.map((n) => n.card)])).toEqual([
+      [A, ['c-1', 'c-2', 'c-3']],
+      [B, ['c-9']],
+    ]);
+    expect(groups[0]!.text.split(LABEL).length - 1).toBe(1);
+    for (const id of ['c-1', 'c-2', 'c-3']) expect(groups[0]!.text).toContain(`cartão ${id}`);
+    expect(groups[1]!.text).toBe(notices[1]!.text);
+  });
+});
+
+describe('a resposta no link é de outra pessoa', () => {
+  const since = NOW - 3600_000;
+  const at = new Date(NOW - 60_000).toISOString();
+  it('GitHub: comentário, review, merge ou fechamento da própria conta não conta', () => {
+    expect(othersOnGithub({ comments: [{ user: { login: 'xande-seazone' }, created_at: at }] }, 'xande-seazone', since)).toBe(false);
+    expect(othersOnGithub({ comments: [{ user: { login: 'fazolin' }, created_at: at }] }, 'xande-seazone', since)).toBe(true);
+    expect(othersOnGithub({ comments: [], reviews: [{ user: { login: 'Xande-Seazone' }, submitted_at: at }] }, 'xande-seazone', since)).toBe(false);
+    expect(othersOnGithub({ comments: [], pull: { merged_at: at, merged_by: { login: 'xande-seazone' } }, issue: { closed_at: at, closed_by: { login: 'xande-seazone' } } }, 'xande-seazone', since)).toBe(false);
+    expect(othersOnGithub({ comments: [], issue: { closed_at: at, closed_by: { login: 'dono' } } }, 'xande-seazone', since)).toBe(true);
+    // older than the justification: never
+    expect(othersOnGithub({ comments: [{ user: { login: 'fazolin' }, created_at: new Date(since - 1).toISOString() }] }, 'xande-seazone', since)).toBe(false);
+    // a bot is nobody's response (CI, preview, dependabot)
+    expect(othersOnGithub({ comments: [{ user: { login: 'vercel[bot]' }, created_at: at }] }, 'xande-seazone', since)).toBe(false);
+    expect(othersOnGithub({ comments: [], reviews: [{ user: { login: 'copilot-pull-request-reviewer', type: 'Bot' }, submitted_at: at }] }, 'xande-seazone', since)).toBe(false);
+    expect(othersOnGithub({ comments: [], pull: { merged_at: at, merged_by: { login: 'mergify[bot]' } }, issue: { closed_at: at, closed_by: { login: 'mergify[bot]' } } }, 'xande-seazone', since)).toBe(false);
+  });
+
+  it('Slack: só mensagem nova de outro autor do fio acorda', () => {
+    const ts = (ms: number) => (ms / 1000).toFixed(6);
+    const fio = [
+      `--- 20/11 09:00 Alexandre Heckert Lentz (ts ${ts(since - 60_000)})`,
+      'pergunta ao Fazolin',
+      `--- 20/11 10:58 Alexandre Heckert Lentz (ts ${ts(NOW - 60_000)})`,
+      'cobrando de novo (ts 9999999999.000000)',
+    ].join('\n');
+    const self = ['Alexandre Heckert Lentz', 'U0102UQT77A'];
+    expect(othersOnSlack(fio, self, since)).toBe(false);
+    expect(othersOnSlack(`${fio}\n--- 20/11 10:59 Pedro Fazolin (ts ${ts(NOW - 30_000)}) [mensagem do link]\nfeito`, self, since)).toBe(true);
+    expect(othersOnSlack(`--- 20/11 10:59 U0102UQT77A (ts ${ts(NOW - 30_000)})`, self, since)).toBe(false);
   });
 });
 
@@ -145,5 +319,19 @@ describe('página do quadro', () => {
     expect(html).not.toContain('<script>alert');
     expect(html).not.toContain('<b>x</b>');
     expect(html).not.toContain('href="javascript:');
+  });
+});
+
+describe('saída do board-cron', () => {
+  it('sai só depois de a saída esvaziar (semear --seco | tee não perde o fim)', async () => {
+    const pending: Array<() => void> = [];
+    const stream = { write: (_chunk: string, done: () => void) => (pending.push(done), false) };
+    const exits: number[] = [];
+    const finished = exitAfterFlush(3, [stream, stream], (code) => void exits.push(code));
+    await Promise.resolve();
+    expect(exits).toEqual([]);
+    for (const done of pending.splice(0)) done();
+    await finished;
+    expect(exits).toEqual([3]);
   });
 });

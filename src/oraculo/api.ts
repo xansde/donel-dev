@@ -6,10 +6,23 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
-import { MAX_PROOF_FILE_BYTES, PROOF_FILE_TYPES, isProofFileName, maxProofBytes, type LedgerActor, type LedgerOp } from '../shared/ledger/contract';
+import { MAX_PROOF_FILE_BYTES, PROOF_FILE_TYPES, isProofFileName, LIMITER_SERVICE, maxProofBytes, type LedgerActor, type LedgerOp } from '../shared/ledger/contract';
 import { checkLedgerImport, ledgerCount, ledgerProofFiles, sameLedger } from '../shared/ledger/remote-import';
 import { ledgerProofsDir, type LedgerService } from '../main/ledger-store';
-import { checkNotice, limiterTaskOf, NOTICE_OP, SERVICE_PATH, serviceActor, serviceOpRefusal, type LimiterProgressOp, type ServiceOp } from './servicos';
+import {
+  checkNotice,
+  checkOpenReviewer,
+  limiterTaskOf,
+  NOTICE_OP,
+  OPEN_REVIEWER_OP,
+  SERVICE_PATH,
+  serviceActor,
+  serviceOpRefusal,
+  type LimiterProgressOp,
+  type OpenReviewerOrder,
+  type OpenReviewerOutcome,
+  type ServiceOp,
+} from './servicos';
 import type { Relay } from './relay';
 import { LIVRO_PATH, parseRascunho, type LivroStore } from './livro';
 import { GATE_PATH_PREFIX, type GateRoutes } from './portoes';
@@ -120,6 +133,12 @@ export interface OracleApiDeps {
   readonly gateRoutes?: GateRoutes;
   /** t-cddc62fc — queues the reconciliador's notice for the Líder único (the relay, no wait); absent = refused. */
   readonly avisarLider?: (texto: string, chave: string) => ReturnType<Relay['send']>;
+  /**
+   * t-3b258224 — the reconciliador's opening of the board's elastic Revisor: the entregador's openLocal (in this
+   * process, or through its gate on the loopback); absent = refused (404).
+   */
+  readonly abrirRevisor?: (order: OpenReviewerOrder) => Promise<OpenReviewerOutcome>;
+  readonly log?: (line: string) => void;
 }
 
 /** What a service may append to the journal: the same as its op route (create, take, deliver), by the same rule. */
@@ -203,12 +222,27 @@ export function createOracleApiHandler(deps: OracleApiDeps): OracleApiHandler {
         return json(500, { error: 'o aviso não entrou na fila do PC' });
       }
     }
+    if (isRecord(op) && op.op === OPEN_REVIEWER_OP) {
+      const order = checkOpenReviewer(op, name);
+      if (!order.ok) return json(order.status, { error: order.error });
+      if (!deps.abrirRevisor) return json(404, { error: 'rota' });
+      const { ok: _ok, ...ask } = order;
+      try {
+        const outcome = await deps.abrirRevisor(ask);
+        (deps.log ?? ((line: string) => console.log(line)))(
+          `[oraculo] abrir-revisor pelo reconciliador (ordem permanente do Líder único, r-0b7e4683) no quadro ${ask.quadro}: ${outcome.resultado}${outcome.lugar ? ` ${outcome.lugar}` : ''}`,
+        );
+        return json(200, { ok: true, ...outcome });
+      } catch {
+        return json(502, { error: 'o entregador não respondeu à abertura' });
+      }
+    }
     const why = serviceOpRefusal(op, name);
     if (why) return json(400, { error: why });
     try {
       let ledgerOp = op as ServiceOp;
       // t-e1e992ab — the limiter names the place (or none); the task is picked here, on the ledger as it is now.
-      if (isRecord(op) && op.op === 'andamento') {
+      if (isRecord(op) && op.op === 'andamento' && name === LIMITER_SERVICE) {
         const line = op as unknown as LimiterProgressOp;
         const id = limiterTaskOf(ledger.load().doc, line.lugar, line.reserva);
         ledgerOp = { op: 'andamento', id, progress: line.progress, ...(line.requestId ? { requestId: line.requestId } : {}) };
@@ -266,7 +300,7 @@ export function createOracleApiHandler(deps: OracleApiDeps): OracleApiHandler {
     if (path.startsWith(GATE_PATH_PREFIX)) return json(403, { error: 'só a credencial de um portão chama /v1/portao/*' });
     if (path === LIVRO_PATH) return deps.livro ? livroRoute(deps.livro, caller, method, url, request.body) : json(404, { error: 'rota' });
     if (caller.kind === 'servico') {
-      if (method !== 'POST' || path !== SERVICE_PATH) return json(403, { error: 'credencial de serviço só cria, assume e entrega tarefas (e o limitador registra andamento)' });
+      if (method !== 'POST' || path !== SERVICE_PATH) return json(403, { error: 'credencial de serviço só cria, assume e entrega tarefas, e registra andamento na própria' });
       return serviceApply(caller.name, request.body);
     }
 

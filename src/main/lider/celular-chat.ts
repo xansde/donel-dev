@@ -21,6 +21,20 @@ export function phoneMarker(id: string): string {
   return `[celular #${id.slice(0, 8)}]`;
 }
 
+/**
+ * How a correction names the audio it corrects (t-753e8199): the audio's own marker, so the Líder sees which message it
+ * is, read as a reference and never as the audio read again (`answersIn` skips it; otherwise the answer to the
+ * correction would replace the audio's).
+ */
+export function phoneReference(id: string): string {
+  return `correção da transcrição de ${phoneMarker(id)}`;
+}
+
+/** The text with every reference to an earlier message taken out: what is left says which messages it brings. */
+function withoutReferences(text: string, ids: readonly string[]): string {
+  return ids.reduce((rest, id) => rest.split(phoneReference(id)).join(''), text);
+}
+
 const DELIVERED_NOTE = 'entregue ao Líder no desktop';
 const JOINED_REPLY = '↳ respondi junto com a mensagem seguinte.';
 /** `celular.lider_mensagens.texto` holds up to 4000 characters. */
@@ -184,6 +198,7 @@ export function answersIn(transcriptTail: string, ids: readonly string[], option
   }
   const answers = new Map<string, string>();
   const phoneMarkers = ids.map(phoneMarker);
+  for (const event of events) if (event.kind === 'read') event.text = withoutReferences(event.text, ids);
   for (const id of ids) {
     const marker = phoneMarker(id);
     let readAt = -1;

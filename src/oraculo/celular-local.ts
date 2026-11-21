@@ -28,6 +28,8 @@
 // OWN id and marker. The marker is what brings the Líder's answer back to the phone (answersIn reads the last time a
 // marker was read): under the audio's marker, the correction would take the audio's answer, or lose its own to an
 // audio already answered. His answer is kept against the correction and shown on the phone as an answer to the audio.
+// The text also names the audio by its marker (`phoneReference`), which `answersIn` reads as a reference, never as the
+// audio read again.
 
 import { createHash } from 'node:crypto';
 import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -35,7 +37,7 @@ import { dirname, join } from 'node:path';
 import type { DecisaoRow, DecisoesQueue, Lado } from './decisoes';
 import type { TarefaPedidaRow, TarefasPedidasQueue } from './tarefas-pedidas';
 import { CHAT_MAX_TEXT, type ChatCelularQueue, type ChatCelularRow } from './chat-celular';
-import { phoneMarker } from '../main/lider/celular-chat';
+import { phoneMarker, phoneReference } from '../main/lider/celular-chat';
 import { CHAT_ARQUIVO_DIR, nomeLimpo, tamanhoTexto } from './chat-arquivo';
 import { abreComCabecalho, audioHeader } from './chat-audio-longo';
 
@@ -565,7 +567,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
   /** Contract v1.3: under the correction's own marker (see the head of this file). */
   const correcaoRow = (row: CorrecaoLocal): ChatCelularRow => ({
     id: row.id,
-    texto: `✏️ O dono corrigiu a transcrição do áudio ${phoneMarker(row.id)}: ${row.texto}`,
+    texto: `✏️ ${phoneMarker(row.id)} O dono fez a ${phoneReference(row.audio)}: ${row.texto}`,
     criada_em: row.criada_em,
     inteiro: true,
   });

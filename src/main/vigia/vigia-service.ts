@@ -5,9 +5,10 @@
 // a card nor its push. No password is read or sent: curing the vault is the owner's decision (phase 2).
 
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import type { OwnerMessage } from '../ledger-card-writer';
 import type { RemoteHealthReport } from '../../shared/health/remote';
 import type { VigiaCofrePrefs } from '../../shared/vigia/config';
-import { SERVICE_PLACE_PREFIX, SERVICE_ROLE, type LedgerActor, type LedgerForOwner, type LedgerOp, type LedgerTask } from '../../shared/ledger/contract';
+import { SERVICE_PLACE_PREFIX, VIGIA_ROLE, VIGIA_SERVICE, type LedgerActor, type LedgerForOwner, type LedgerOp, type LedgerTask } from '../../shared/ledger/contract';
 import {
   buildVigiaProbeScript,
   classifySshFailure,
@@ -16,11 +17,34 @@ import {
   parseVigiaState,
   planRound,
   VIGIA_ROUND_MS,
+  type KnownSessions,
+  type Passage,
+  type PassedLock,
+  type PendingRecord,
   type PlaceProbe,
+  type RepeatCard,
   type Trava,
   type VigiaEntry,
   type VigiaState,
 } from '../../shared/vigia/travas';
+import {
+  buildPostMortemScript,
+  clockBr,
+  investigationTask,
+  unlockTask,
+  KIND_STATE,
+  liveCard,
+  liveTitle,
+  NO_AFFECTED,
+  parsePostMortem,
+  passedRecord,
+  probableCause,
+  REPEAT_TIMES,
+  REPEAT_WINDOW_MS,
+  repeatCard,
+  LATE_LINE,
+  type Affected,
+} from '../../shared/vigia/aviso';
 
 /** The probe's own budget: the vault command's `status` may take up to 25 s on a slow vault, plus the ssh. */
 export const VIGIA_PROBE_TIMEOUT_MS = 45_000;
@@ -50,6 +74,13 @@ export interface VigiaServiceDeps {
   readonly projectPath: () => string | null;
   /** The board (its name) of a session, for the card of a loop. */
   readonly boardOfSession?: (sid: string) => string | undefined;
+  /** Tells the Líder único of a task the owner asked for on a card (the board's delivery; absent = nobody told). */
+  readonly avisarLider?: (message: OwnerMessage) => Promise<unknown>;
+  /**
+   * The place (on its board) of a session, to tell which work in the Oráculo stopped with it (t-0358187b). Absent =
+   * the warning names the sessions only.
+   */
+  readonly placeOfSession?: (sid: string) => { readonly projectPath: string; readonly placeId: string } | undefined;
   /** The optional vault adapter (`vigia.cofre` in the config); `null` = no vault check at all. */
   readonly cofre: () => VigiaCofrePrefs | null;
   /**
@@ -76,10 +107,21 @@ export interface VigiaService {
 }
 
 /** A service's place: its card never turns orphan, and it may cancel what it opened. */
-const VIGIA_PLACE = `${SERVICE_PLACE_PREFIX}vigia`;
-const ACTOR: LedgerActor = { kind: 'lugar', placeId: VIGIA_PLACE, roleId: SERVICE_ROLE };
+const VIGIA_PLACE = `${SERVICE_PLACE_PREFIX}${VIGIA_SERVICE}`;
+const ACTOR: LedgerActor = { kind: 'lugar', placeId: VIGIA_PLACE, roleId: VIGIA_ROLE };
 
 const DONE_WHEN = 'A trava passou (o vigia cancela a carta sozinho) ou o dono decidiu.';
+const RECORD_DONE_WHEN = 'Registro de uma trava que passou sozinha: fecha sozinho, não pede decisão.';
+const REPEAT_DONE_WHEN = 'O dono decidiu se a trava que se repete vai ser investigada.';
+/** Every task the vigia makes goes under this front: the owner finds the records in the app's missions (t-0358187b). */
+export const VIGIA_FRENTE = 'Travas das máquinas';
+
+function isCancelledTask(task: LedgerTask): boolean {
+  const last = task.events[task.events.length - 1];
+  return task.state === 'rejeitada' && last?.kind === 'rejeitada' && (last.text ?? '').startsWith('⟦cancelada⟧');
+}
+
+const REQUEST = 'vc tem que saber quando isso acontece e, travamentos assim que congelam tudo, deve ser avisado no oráculo ou com máxima prioridade (dono, 06/11)';
 const KEY_OF_DONE_WHEN = /\(chave da trava: ([^()\n]+)\)$/;
 
 /** The criterion of a live lock's card carries the lock's key, so the PC and the daemon find the same card. */
@@ -156,53 +198,16 @@ function today(now: number): string {
   return new Date(now).toISOString().slice(0, 10);
 }
 
-const CLOCK = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-/** "08/11, 14:32" — when the lock was first seen (the card may be made later, when the Oráculo answers again). */
+/** "17/11 14:32" in Brasília time — when the lock was first seen (the card may be made later, when the Oráculo answers). */
 export function vigiaClock(at: number): string {
-  return CLOCK.format(at);
+  return clockBr(at);
 }
 
-const KIND_TITLE: Record<Trava['kind'], string> = {
-  'vps-fora': 'VPS fora do ar',
-  'vps-login': 'VPS pedindo login',
-  cofre: 'Cofre de senhas travado',
-  sessoes: 'Sessões paradas em laço',
-};
-
-const KIND_WHAT_TO_DO: Record<Trava['kind'], string> = {
-  'vps-fora': 'Confira se a máquina está ligada e na rede; o app volta a ler sozinho.',
-  'vps-login': 'Faça a verificação pedida no ssh (por exemplo, a do Tailscale) no PC.',
-  cofre: 'Destranque o cofre à mão; o app não guarda nem envia a senha.',
-  sessoes: 'Abra as sessões no quadro e veja o motivo de cada uma.',
-};
-
-/** The owner's card: only the kind and the place's name, never a session's name (it may carry a code the card refuses). */
-export function vigiaCard(trava: Pick<Trava, 'kind' | 'label'>, firstSeen: number, endedAt: number | null = null): LedgerForOwner {
-  if (endedAt !== null) {
-    return {
-      title: `Trava que passou: ${KIND_TITLE[trava.kind]}`.slice(0, 60),
-      question: `${KIND_TITLE[trava.kind]} em ${trava.label}, de ${vigiaClock(firstSeen)} a ${vigiaClock(endedAt)}. Já viu?`.slice(0, 160),
-      summary: `A trava passou sozinha. A carta não pôde sair na hora, porque o Oráculo não respondia; o aviso foi só no PC.`,
-      options: [
-        { label: 'Já vi', effect: 'A carta fecha; fica no registro do Oráculo.', closes: 'aceita', recommended: true },
-        { label: 'Quero entender', effect: 'A carta volta como pendência para alguém investigar.', closes: 'rejeitada' },
-      ],
-      why: 'A trava já passou; a carta só registra quando aconteceu.',
-      risk: 'Se voltar a acontecer, chega outra carta.',
-    };
-  }
-  return {
-    title: `Trava: ${KIND_TITLE[trava.kind]}`.slice(0, 60),
-    question: `${KIND_TITLE[trava.kind]}. Já resolveu?`,
-    summary: `${KIND_TITLE[trava.kind]} em ${trava.label}, desde ${vigiaClock(firstSeen)}. ${KIND_WHAT_TO_DO[trava.kind]}`.slice(0, 280),
-    options: [
-      { label: 'Já resolvi', effect: 'A carta fecha; se a trava voltar, chega outra.', closes: 'aceita', recommended: true },
-      { label: 'Deixar assim', effect: 'A carta fecha sem mudar nada; se a trava seguir, ela some só quando passar.', closes: 'rejeitada' },
-    ],
-    why: 'Uma trava assim congela o trabalho das sessões até alguém agir.',
-    risk: 'Enquanto a trava dura, as sessões dessa máquina ficam paradas ou esperando.',
-  };
-}
+/** The post-mortem's own budget: `sar` and the kernel log answer in seconds. */
+export const VIGIA_POST_MORTEM_TIMEOUT_MS = 30_000;
+/** The queue of records waiting for the Oráculo never grows past this (the oldest go first). */
+const MAX_PENDING_RECORDS = 50;
+const MAX_KNOWN_SESSIONS = 30;
 
 export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
   const now = deps.now ?? Date.now;
@@ -237,46 +242,143 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
     }
   }
 
-  async function openCard(trava: Trava, projectPath: string, at: number, firstSeen: number, endedAt: number | null = null): Promise<string | null> {
-    const created = await deps.apply(ACTOR, {
-      op: 'criar',
-      projectPath,
-      title: `Trava: ${KIND_TITLE[trava.kind]}`.slice(0, 60),
-      request: `vc tem que saber quando isso acontece e, travamentos assim que congelam tudo, deve ser avisado no oráculo ou com máxima prioridade (dono, 06/11)`,
-      // A record (the lock already passed) is no live card: nobody adopts it.
-      doneWhen: doneWhenOf(endedAt === null ? trava.key : null),
-      due: today(at),
-      ownerPlaceId: VIGIA_PLACE,
-      risk: 'alto',
-      requestedBy: 'vigia de travas',
-    });
-    if (!created.ok) {
-      log(`[vigia] o Oráculo recusou a carta (${trava.kind}): ${created.reason}`);
-      return null;
+  /** create → take → deliver; a delivery the Oráculo refuses is cancelled (a card nobody sees is no warning). */
+  async function deliverTask(input: {
+    readonly what: string;
+    readonly projectPath: string;
+    readonly at: number;
+    readonly title: string;
+    readonly doneWhen: string;
+    readonly risk: 'alto' | 'baixo';
+    readonly body: string;
+    readonly note?: string;
+    readonly forOwner?: LedgerForOwner;
+    readonly closeAlone?: true;
+    /** The criterion is unique to this warning: a task of it already in the Oráculo (a lost answer) is continued. */
+    readonly unique?: true;
+  }): Promise<string | null> {
+    let found: LedgerTask | undefined;
+    if (input.unique) {
+      try {
+        found = deps.tasks?.().find((task) => task.ownerPlaceId === VIGIA_PLACE && task.doneWhen === input.doneWhen && !isCancelledTask(task));
+      } catch {
+        found = undefined;
+      }
     }
-    const id = created.task.id;
-    const taken = await deps.apply(ACTOR, { op: 'assumir', id });
+    if (found && found.state !== 'aberta' && found.state !== 'em-execucao') return found.id;
+    let id = found?.id ?? null;
+    if (id === null) {
+      const created = await deps.apply(ACTOR, {
+        op: 'criar',
+        projectPath: input.projectPath,
+        title: input.title,
+        request: REQUEST,
+        doneWhen: input.doneWhen,
+        due: today(input.at),
+        ownerPlaceId: VIGIA_PLACE,
+        risk: input.risk,
+        requestedBy: 'vigia de travas',
+        frente: VIGIA_FRENTE,
+      });
+      if (!created.ok) {
+        log(`[vigia] o Oráculo recusou ${input.what}: ${created.reason}`);
+        return null;
+      }
+      id = created.task.id;
+    }
+    const taken = found?.state === 'em-execucao' ? ({ ok: true } as const) : await deps.apply(ACTOR, { op: 'assumir', id });
     if (!taken.ok) {
-      log(`[vigia] o Oráculo recusou assumir a carta (${trava.kind}): ${taken.reason}`);
+      log(`[vigia] o Oráculo recusou assumir ${input.what}: ${taken.reason}`);
       await deps.apply(ACTOR, { op: 'cancelar', id, reason: 'a carta do vigia não pôde ser entregue' });
       return null;
     }
-    const delivered = await deps.apply(ACTOR, {
-      op: 'entregar',
+    const delivery = {
+      op: 'entregar' as const,
       id,
-      proofs: [
-        {
-          kind: 'texto',
-          text: `${trava.detail}. Vista pela primeira vez em ${vigiaClock(firstSeen)}${endedAt === null ? '' : `; passou em ${vigiaClock(endedAt)}`}, em leituras com 5 min entre elas.`,
-        },
-      ],
-      forOwner: vigiaCard(trava, firstSeen, endedAt),
-    });
+      proofs: [{ kind: 'texto' as const, text: input.body }],
+      ...(input.note ? { note: input.note } : {}),
+      ...(input.forOwner ? { forOwner: input.forOwner } : {}),
+    };
+    let delivered = await deps.apply(ACTOR, input.closeAlone ? { ...delivery, closeAlone: true } : delivery);
+    if (!delivered.ok && input.closeAlone) {
+      // An Oráculo older than this rule refuses a service closing its own delivery: the record still goes, closed as
+      // a cancelled record, so it never waits for anybody.
+      log(`[vigia] o Oráculo não fechou o registro sozinho (${delivered.reason}); entrego e encerro como registro.`);
+      delivered = await deps.apply(ACTOR, delivery);
+      if (delivered.ok) await deps.apply(ACTOR, { op: 'cancelar', id, reason: `concluída: registro do vigia (${id}); a trava passou sozinha e não pede decisão` });
+    }
     if (delivered.ok) return id;
-    // A card the owner cannot see is no warning: drop it and try again next round.
-    log(`[vigia] o Oráculo recusou a entrega da carta (${trava.kind}): ${delivered.reason}`);
+    log(`[vigia] o Oráculo recusou a entrega de ${input.what}: ${delivered.reason}`);
     await deps.apply(ACTOR, { op: 'cancelar', id, reason: 'a carta do vigia não pôde ser entregue' });
     return null;
+  }
+
+  /**
+   * A task for the Líder único that the owner asked for on a card (investigate, or unlock now). Its criterion carries the
+   * card's id: one already in the Oráculo (an answer lost on the way) is the same task, never a second one. The Líder
+   * único is told at once, with a key per card, so a repeat is one notice (ressalvas do #555).
+   */
+  async function askLeader(projectPath: string, at: number, cardId: string, what: { readonly title: string; readonly request: string; readonly doneWhen: string }): Promise<{ ok: boolean; reason?: string }> {
+    let id: string | null = null;
+    try {
+      id = deps.tasks?.().find((task) => task.ownerPlaceId === 'lider' && task.doneWhen === what.doneWhen && !isCancelledTask(task))?.id ?? null;
+    } catch {
+      id = null;
+    }
+    if (id === null) {
+      const made = await deps.apply(ACTOR, { op: 'criar', projectPath, title: what.title, request: what.request, doneWhen: what.doneWhen, due: today(at), ownerPlaceId: 'lider', risk: 'baixo', requestedBy: 'vigia de travas, a pedido do dono na carta', frente: VIGIA_FRENTE });
+      if (!made.ok) return made;
+      id = made.task.id;
+    }
+    const text = `◆ O vigia de travas abriu para você a tarefa ${id} «${what.title}», a pedido do dono na carta ${cardId}. Faça ou passe a quem vai fazer (tarefa_transferir).`;
+    try {
+      await deps.avisarLider?.({ projectPath, placeId: '', text, leaderText: text, key: `vigia-lider:${cardId}` });
+    } catch (error) {
+      log(`[vigia] o aviso ao Líder único não saiu: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return { ok: true };
+  }
+
+  /** The place's sessions before the lock and their work in the Oráculo that was running. */
+  function affectedOf(placeId: string, known: Readonly<Record<string, KnownSessions>>, tasks: readonly LedgerTask[] | null): Affected {
+    const seen = known[placeId];
+    if (!seen) return NO_AFFECTED;
+    const places = new Set<string>();
+    let mapped = 0;
+    for (const session of seen.sessions) {
+      const place = deps.placeOfSession?.(session.sid);
+      if (place) {
+        mapped += 1;
+        places.add(`${place.projectPath}\u0000${place.placeId}`);
+      }
+    }
+    const running = (tasks ?? []).filter((task) => task.state === 'em-execucao' && places.has(`${task.projectPath}\u0000${task.ownerPlaceId}`));
+    return {
+      sessions: seen.sessions.map((session) => session.name || session.sid),
+      tasks: running.map((task) => ({ id: task.id, title: task.title ?? task.request.split('\n')[0]!.slice(0, 60) })),
+      readAt: seen.at,
+      // Read only when every session was tied to its place and the Oráculo answered (no session read = nothing to tie).
+      tasksRead: tasks !== null && deps.placeOfSession !== undefined && seen.sessions.length > 0 && mapped === seen.sessions.length,
+    };
+  }
+
+  /** The record of a lock that passed: the cause measured on the place now that it answers again. */
+  async function recordOf(lock: PassedLock, input: { readonly known: Readonly<Record<string, KnownSessions>>; readonly tasks: readonly LedgerTask[] | null; readonly downTogether: readonly string[] }): Promise<{ record: PendingRecord; cause: string }> {
+    const { trava, firstSeen, endedAt } = lock;
+    let pm = null;
+    if (trava.kind === 'vps-fora' || trava.kind === 'vps-login') {
+      const place = deps.places().find((candidate) => candidate.id === trava.placeId);
+      if (place) {
+        try {
+          pm = parsePostMortem((await deps.run(place.sshTarget, buildPostMortemScript(firstSeen, endedAt), VIGIA_POST_MORTEM_TIMEOUT_MS)).stdout);
+        } catch {
+          pm = null;
+        }
+      }
+    }
+    const cause = probableCause({ kind: trava.kind, detail: trava.detail, start: firstSeen, end: endedAt, pm, downTogether: input.downTogether });
+    const words = passedRecord({ label: trava.label, kind: trava.kind, firstSeen, endedAt, cause, affected: affectedOf(trava.placeId, input.known, input.tasks) });
+    return { record: { key: lock.key, trava, firstSeen, endedAt, ...words, late: false }, cause: cause.kind };
   }
 
   async function round(): Promise<void> {
@@ -288,17 +390,18 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
         const at = now();
         const delegated = deps.delegated?.() ?? null;
         const isDelegated = (trava: Trava): boolean => trava.placeId === delegated && (trava.kind === 'cofre' || trava.kind === 'sessoes');
-        const detected = detectTravas({ probes, reports: deps.reports(), now: at, ...(deps.boardOfSession ? { boardOfSession: deps.boardOfSession } : {}) });
+        const reports = deps.reports();
+        const detected = detectTravas({ probes, reports, now: at, ...(deps.boardOfSession ? { boardOfSession: deps.boardOfSession } : {}) });
         // A lock that is still there but now belongs to the daemon is handed over, not closed: its card stays alive
         // for the daemon to adopt. Only a lock that is gone is closed ("a trava passou sozinha"). The PC still sees
         // the handed-over lock, so it keeps when it first saw it (with no card): if the lock comes back to it, it can
-        // tell the owner's decision on this same lock from an older one.
+        // tell the owner's decision on this same lock from an older one. Its passage is the daemon's to record.
         const { state: stored, existed } = readState();
         const handedOver: Record<string, VigiaEntry> = Object.fromEntries(
           detected.filter(isDelegated).map((trava) => {
             const before = stored.open[trava.key];
             const firstSeen = before && before.endedAt === null ? before.firstSeen : at;
-            return [trava.key, { firstSeen, rounds: (before?.rounds ?? 0) + 1, cartaId: null, notified: false, endedAt: null, trava }];
+            return [trava.key, { firstSeen, rounds: (before?.rounds ?? 0) + 1, cartaId: null, notified: false, endedAt: null, handedOver: true as const, trava }];
           }),
         );
         const kept = Object.fromEntries(Object.entries(stored.open).filter(([key]) => !(key in handedOver)));
@@ -319,6 +422,16 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
             if (decided) open[key] = { ...entry, cartaId: decided.id };
           }
         }
+
+        // What each place had running, read while it has no lock (a lock freezes the picture of before it).
+        const locked = new Set([...detected.map((trava) => trava.placeId), ...Object.values(stored.open).filter((entry) => entry.endedAt === null).map((entry) => entry.trava.placeId)]);
+        const known: Record<string, KnownSessions> = { ...(stored.sessions ?? {}) };
+        for (const report of reports) {
+          const reading = report.status === 'ok' ? report.reading : null;
+          if (locked.has(report.id) || !reading?.sessionDetails || reading.readAt === null || reading.readAt === undefined) continue;
+          known[report.id] = { at: reading.readAt, sessions: reading.sessionDetails.slice(0, MAX_KNOWN_SESSIONS).map((session) => ({ sid: session.sid, name: session.name })) };
+        }
+
         const projectPath = deps.projectPath();
         for (const { trava, firstSeen } of plan.toOpen) {
           if (open[trava.key]!.cartaId !== null) continue;
@@ -326,18 +439,29 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
           // A card made after this vigia began seeing the lock is of this same lock (it never saw the lock pass since).
           const decidedHere = decided !== null && decided.createdAt >= firstSeen - CLOCK_SKEW_MS ? decided.id : null;
           const adopted = tasks ? (liveVigiaCard(tasks, trava.key) ?? decidedHere) : null;
-          const id = adopted ?? (projectPath === null ? null : await openCard(trava, projectPath, at, firstSeen));
+          const card = liveCard({ label: trava.label, kind: trava.kind, firstSeen, affected: affectedOf(trava.placeId, known, tasks), detail: trava.detail });
+          const id =
+            adopted ??
+            (projectPath === null
+              ? null
+              : await deliverTask({ what: `a carta (${trava.kind})`, projectPath, at, title: card.title, doneWhen: doneWhenOf(trava.key), risk: 'alto', body: card.body, forOwner: card.forOwner }));
           if (id !== null) {
             open[trava.key] = { ...open[trava.key]!, cartaId: id };
           } else if (!open[trava.key]!.notified) {
             // No card (the Oráculo did not answer): the PC itself warns, once; the card follows when it answers.
-            deps.notify(`Trava: ${KIND_TITLE[trava.kind]}`, `${KIND_TITLE[trava.kind]} em ${trava.label}, desde ${vigiaClock(firstSeen)}. O Oráculo não respondeu; a carta sai quando ele voltar.`);
+            deps.notify(liveTitle(trava.label, trava.kind, firstSeen), `${trava.label} ${KIND_STATE[trava.kind]} desde ${clockBr(firstSeen)} (horário de Brasília). O Oráculo não respondeu; o aviso sai quando ele voltar, com este horário.`);
             open[trava.key] = { ...open[trava.key]!, notified: true };
           }
         }
-        for (const { key, trava, firstSeen, endedAt } of plan.toRecord) {
-          const id = projectPath === null ? null : await openCard(trava, projectPath, at, firstSeen, endedAt);
-          if (id !== null) delete open[key];
+        // The owner's answer to a live card: "Chamar o Líder único" opens the task to unlock it, once per lock.
+        for (const [key, entry] of Object.entries(open)) {
+          if (entry.cartaId === null || entry.acted || !tasks || projectPath === null) continue;
+          const task = tasks.find((candidate) => candidate.id === entry.cartaId);
+          const last = task?.events[task.events.length - 1];
+          if (!task || task.state !== 'aceita' || last?.kind !== 'aceita' || last.by.kind !== 'dono') continue;
+          const made = await askLeader(projectPath, at, entry.cartaId, unlockTask(entry.trava.label, entry.trava.kind, entry.cartaId, entry.firstSeen));
+          if (made.ok) open[key] = { ...entry, acted: true };
+          else log(`[vigia] o Oráculo recusou a tarefa de destravar: ${made.reason}`);
         }
         for (const closed of plan.toClose) {
           // Also any other live card of the same lock (another vigia's), so none is left alive after the lock passed.
@@ -346,7 +470,73 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
             if (!result.ok) log(`[vigia] não cancelou a carta de uma trava que passou: ${result.reason}`);
           }
         }
-        writeState({ open: { ...open, ...handedOver } });
+
+        // Every lock that passed becomes a record (no question), queued until the Oráculo takes it.
+        let history: Passage[] = (stored.history ?? []).filter((passage) => passage.endedAt >= at - REPEAT_WINDOW_MS);
+        const records: PendingRecord[] = [...(stored.records ?? [])];
+        const labelOf = (placeId: string): string => places.find((place) => place.id === placeId)?.label ?? placeId;
+        for (const lock of plan.passed) {
+          if (records.some((record) => record.key === lock.key && record.firstSeen === lock.firstSeen) || history.some((passage) => passage.key === lock.key && passage.firstSeen === lock.firstSeen)) continue;
+          const overlaps = (start: number, end: number): boolean => start <= lock.endedAt && end >= lock.firstSeen;
+          const downTogether = [
+            ...history.filter((passage) => passage.kind === 'vps-fora' && passage.placeId !== lock.trava.placeId && overlaps(passage.firstSeen, passage.endedAt)).map((passage) => passage.placeId),
+            ...plan.passed.filter((other) => other !== lock && other.trava.kind === 'vps-fora' && other.trava.placeId !== lock.trava.placeId && overlaps(other.firstSeen, other.endedAt)).map((other) => other.trava.placeId),
+            ...Object.values(open).filter((entry) => entry.trava.kind === 'vps-fora' && entry.trava.placeId !== lock.trava.placeId && entry.rounds >= 2 && overlaps(entry.firstSeen, at)).map((entry) => entry.trava.placeId),
+          ];
+          const { record, cause } = await recordOf(lock, { known, tasks, downTogether: [...new Set(downTogether)].map(labelOf) });
+          records.push(record);
+          history = [...history, { key: lock.key, placeId: lock.trava.placeId, kind: lock.trava.kind, firstSeen: lock.firstSeen, endedAt: lock.endedAt, cause }];
+        }
+        const pending: PendingRecord[] = [];
+        for (const record of records.slice(-MAX_PENDING_RECORDS)) {
+          if (projectPath === null) {
+            // No board for the record: the PC itself tells it, once, and nothing is kept.
+            deps.notify(record.title, record.note);
+            continue;
+          }
+          const body = record.late ? `${record.body}\n\n${LATE_LINE}` : record.body;
+          const doneWhen = `${RECORD_DONE_WHEN} (registro da trava ${record.key}, vista em ${clockBr(record.firstSeen)})`;
+          const id = await deliverTask({ what: `o registro (${record.trava.kind})`, projectPath, at, title: record.title, doneWhen, risk: 'baixo', body, note: record.note, closeAlone: true, unique: true });
+          if (id === null) pending.push({ ...record, late: true });
+        }
+
+        // The same lock 3 times in 24 h on the same place: one card with a real question.
+        const repeats: Record<string, RepeatCard> = Object.fromEntries(Object.entries(stored.repeats ?? {}).filter(([, card]) => !card.done || card.at >= at - REPEAT_WINDOW_MS));
+        // From the 24 h history, not only this round's passages: a card the Oráculo did not take is tried every round.
+        const travaOf = new Map<string, Trava>([...records.map((record) => [record.key, record.trava] as const), ...plan.passed.map((lock) => [lock.key, lock.trava] as const)]);
+        for (const key of new Set(history.map((passage) => passage.key))) {
+          const passages = history.filter((passage) => passage.key === key).sort((x, y) => x.firstSeen - y.firstSeen);
+          const first = passages[0]!;
+          const lock = { key, trava: travaOf.get(key) ?? { key, kind: first.kind, placeId: first.placeId, label: labelOf(first.placeId), detail: '' } };
+          const already = repeats[lock.key];
+          // A repeat card still waiting for the owner holds the next one, however old (ressalva do #555).
+          const stillLive = already ? tasks?.find((task) => task.id === already.cartaId)?.state === 'entregue' : false;
+          if (stillLive) continue;
+          if (passages.length < REPEAT_TIMES || (already && already.at >= at - REPEAT_WINDOW_MS) || projectPath === null) continue;
+          const last = passages[passages.length - 1]!;
+          const card = repeatCard({ label: lock.trava.label, kind: lock.trava.kind, passages });
+          const doneWhen = `${REPEAT_DONE_WHEN} (repetição da trava ${lock.key}, até ${clockBr(last.endedAt)})`;
+          const id = await deliverTask({ what: `a carta de repetição (${lock.trava.kind})`, projectPath, at, title: card.title, doneWhen, risk: 'alto', body: card.body, forOwner: card.forOwner, unique: true });
+          if (id !== null) repeats[lock.key] = { cartaId: id, at, done: false, label: lock.trava.label, kind: lock.trava.kind };
+        }
+        // The owner's answer to a repeat card: "Investigar" opens the investigation for the Líder único.
+        for (const [key, card] of Object.entries(repeats)) {
+          if (card.done || !tasks || projectPath === null) continue;
+          const task = tasks.find((candidate) => candidate.id === card.cartaId);
+          const last = task?.events[task.events.length - 1];
+          if (!task || task.state === 'entregue' || task.state === 'aberta' || task.state === 'em-execucao') continue;
+          if (last?.kind === 'aceita' && last.by.kind === 'dono') {
+            const what = investigationTask(card.label, card.kind, card.cartaId);
+            const made = await askLeader(projectPath, at, card.cartaId, what);
+            if (!made.ok) {
+              log(`[vigia] o Oráculo recusou a investigação: ${made.reason}`);
+              continue;
+            }
+          }
+          repeats[key] = { ...card, done: true };
+        }
+
+        writeState({ open: { ...open, ...handedOver }, records: pending, history, sessions: known, repeats });
       } catch (error) {
         log(`[vigia] rodada falhou: ${error instanceof Error ? error.message : String(error)}`);
       } finally {

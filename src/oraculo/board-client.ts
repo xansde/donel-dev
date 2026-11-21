@@ -1,5 +1,7 @@
-// Quadro de tarefas (t-1e354d15) — the daemon's client of the task board in the owner's Supabase, schema `board`
-// (docs/board/schema.sql), over PostgREST. Off unless `<home>/.donel/board/supabase.json` says where it is:
+// Quadro de tarefas (t-1e354d15) — what the daemon and the cron need of the task board (`BoardStore`, `BoardCronStore`,
+// the rows), and the client of the board in the owner's Supabase, schema `board` (docs/board/schema.sql), over
+// PostgREST. Since 20/11 the board in use is the VPS's SQLite (board-sqlite.ts, which implements the same interfaces);
+// this client is used only without `sqlite.json` (`chooseBoard`). Off unless `<home>/.donel/board/supabase.json` says where it is:
 // `{ "url": "https://<ref>.supabase.co", "serviceKeyFile": "<path of a 600 file with the service key>" }`. Nothing
 // here is hardcoded (the repo goes public): no URL, no key. The key is read at each call and never logged, never put in
 // an error message.
@@ -34,6 +36,8 @@ export interface CardRow {
   readonly charge_count?: number;
   readonly leader_noticed_at?: string | null;
   readonly justified_at?: string | null;
+  /** The card on the owner's desk (the Oráculo task the seed imported it from), when there is one. */
+  readonly oraculo_id?: string | null;
 }
 
 export interface LaneRow {
@@ -64,6 +68,11 @@ export interface BoardCronStore {
   overview(): Promise<readonly import('../shared/board/page').OverviewRow[]>;
   /** Every card not done, plus the ones done in the last 3 days, for the page. */
   pageCards(): Promise<readonly import('../shared/board/page').PageCard[]>;
+  /**
+   * t-8406f473 (r-a01b8ca6) — the cards of Oráculo tasks (`oraculo_id`) not done, plus the ones done in the last days,
+   * for the round to follow their tasks. Absent = this board cannot (the Supabase one): its cards do not follow.
+   */
+  cardsWithTask?(): Promise<readonly CardRow[]>;
 }
 
 export interface CreateCardArgs {
@@ -78,6 +87,10 @@ export interface CreateCardArgs {
   readonly p_stage?: 'inbox' | 'todo';
   readonly p_place_id?: string;
   readonly p_session_id?: string;
+  /** `AAAA-MM-DD`. */
+  readonly p_due?: string;
+  readonly p_risk?: 'baixo' | 'alto';
+  readonly p_oraculo_id?: string;
   /** The board's picture shows the caller as the Líder the owner put there (see docs/board/schema.sql). */
   readonly p_as_leader?: boolean;
 }
@@ -111,6 +124,16 @@ export interface BoardStore {
   moveCard(args: MoveCardArgs): Promise<CardRow>;
   /** `force`: the Líder the picture shows takes the lane at once (only the daemon passes it). */
   touchLane(projectId: string, leaderPlace: string, leaderSession: string | undefined, force?: boolean): Promise<void>;
+  /** t-8406f473 — the lane of a project, or null: whether its Líder is the Líder único (`lider`). */
+  laneOf?(projectId: string): Promise<LaneRow | null>;
+  /** t-8406f473 — the newest card not done that carries this Oráculo task (`oraculo_id`), or null. */
+  cardByOraculoId?(taskId: string): Promise<CardRow | null>;
+  /**
+   * The session that does a card left without one: only while the card has none and its place is still `placeId`; no
+   * version, no move. False = nothing changed. Absent = this board cannot (the Supabase one). `replacing`: swaps that
+   * session instead (a renewed place), only while the card still has it.
+   */
+  fillSession?(cardId: string, placeId: string, sessionId: string, replacing?: string): Promise<boolean>;
 }
 
 export interface BoardConfig {
@@ -216,6 +239,14 @@ export function createBoardClient(config: BoardConfig, doFetch: Fetch = fetch): 
     },
     async cardByClientRef(ref) {
       const rows = await call<CardRow[]>('GET', `cards?client_ref=eq.${q(ref)}&limit=1`);
+      return rows[0] ?? null;
+    },
+    async laneOf(projectId) {
+      const rows = await call<LaneRow[]>('GET', `lanes?select=project_id,leader_place,leader_session,leader_seen_at&project_id=eq.${q(projectId)}&limit=1`);
+      return rows[0] ?? null;
+    },
+    async cardByOraculoId(taskId) {
+      const rows = await call<CardRow[]>('GET', `cards?oraculo_id=eq.${q(taskId)}&stage=neq.done&order=created_at.desc&limit=1`);
       return rows[0] ?? null;
     },
     createCard: (args) => rpc<CardRow>('create_card', args),

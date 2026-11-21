@@ -15,14 +15,20 @@
 //   of this board waiting for a verdict, between who delivered it and a live Revisor of outside the chain)? `{ligado}`.
 // - `aviso` `{aviso: OwnerMessage}`: a notice the satellite's recados could not deliver there (the target runs on
 //   another machine, or it is the Líder único) goes to this daemon's relay, which the PC delivers when it answers.
+//   `{ok, entregue}` (t-3f32edb1): `'lider'` or `{placeId}` = a queue here has it; `null` = the PC's relay.
 // - `retrato` `{retrato}` (t-d461e003): the picture of that machine's sessions, made there (retrato-satelite.ts); an
 //   older one than the one kept is ignored (`{ok, guardado}`).
 // - `recados` `{entregues?: [id]}` (t-d461e003): the satellite took those; answers what still waits for that machine
 //   (`{recados: [{id, message}]}`): the messages for its sessions (the Líder único's to the Dalton, with the PC off).
 // - `abrir` `{call}` (t-d461e003, only this machine's own gate): the Líder único's `sessao_abrir` on a board another
 //   machine pictures, queued for it (`{ok, text}`; `{conhecido: false}` = no machine has that board).
-// - `aberturas` `{respostas?, kit?}` (t-d461e003): the satellite's answers to the openings it made; what still waits for
-//   it, and the kit of roles when its hash changed (`{aberturas, kit?}`, abrir-satelite.ts).
+// - `aberturas` `{respostas?, kit?, telas?}` (t-d461e003): the satellite's answers to the openings it made; what still
+//   waits for it, and the kit of roles when its hash changed (`{aberturas, kit?, telas}`, abrir-satelite.ts). t-69eefa2c:
+//   `telas` in = the screens it captured for the orders asked of it; `telas` out = the screen orders waiting for it.
+// - `tela` `{pasta, lugar}` (t-69eefa2c, only this machine's own gate): the Líder único's `sessao_ver_tela` of a place
+//   of another machine, asked of its satellite (tela-satelite.ts); `{ok, text}`, or `{conhecido: false}`.
+// - `renovar` `{sessao, tarefa}` (t-8406f473): the renewal before a card move of the entregador apart (its board is
+//   there, the ledger here): the task of a closed place whose successor is the session follows it. `{ok}`.
 // - `fila` `{aviso: OwnerMessage}` (passo 9, only this machine's own entregador, `isLocalGate`): a message of its
 //   sessions for a place of another machine goes into that machine's queue here (the registro alone writes them);
 //   `{maquina}`, or `{maquina: null}` when no fresh picture has that place (the entregador then takes its old way).
@@ -40,6 +46,7 @@ import type { GateRecados } from './gate-recados';
 import { callerFromPicture, leaderTaskContext, ledgerCallRefusal, withLiveOwner, type BoardPicture, type LiveOwnerSource, type PictureSession } from './portao';
 import { parseRemotePicture, type RemotePictures } from './retrato-satelite';
 import { openCallOf, openingsBodyOf, type RemoteOpenings } from './abrir-satelite';
+import { screenAnswersOf, type RemoteScreens } from './tela-satelite';
 
 export const GATES_DIR = 'portoes';
 export const GATE_PATH_PREFIX = '/v1/portao/';
@@ -53,9 +60,13 @@ export const GATE_OPEN_PATH = '/v1/portao/abrir';
 /** t-d461e003 — a satellite's openings: its answers in, the orders waiting for it out (abrir-satelite.ts). */
 export const GATE_OPENINGS_PATH = '/v1/portao/aberturas';
 export const GATE_QUEUE_PATH = '/v1/portao/fila';
+/** t-8406f473 — the renewal before a card move of the entregador apart (its board is there, the ledger here). */
+export const GATE_RENEW_PATH = '/v1/portao/renovar';
+/** t-69eefa2c — the Líder único's look at a screen of another machine (only the local gate: the entregador apart). */
+export const GATE_SCREEN_PATH = '/v1/portao/tela';
 /** A machine's picture (each board once, with its arrows): up to this. */
 export const MAX_GATE_PICTURE_BYTES = 16 * 1024 * 1024;
-const GATE_PATHS: ReadonlySet<string> = new Set([GATE_TOOL_PATH, GATE_NOTICE_PATH, GATE_LINK_PATH, GATE_PICTURE_PATH, GATE_INBOX_PATH, GATE_OPEN_PATH, GATE_OPENINGS_PATH, GATE_QUEUE_PATH]);
+const GATE_PATHS: ReadonlySet<string> = new Set([GATE_TOOL_PATH, GATE_NOTICE_PATH, GATE_LINK_PATH, GATE_PICTURE_PATH, GATE_INBOX_PATH, GATE_OPEN_PATH, GATE_OPENINGS_PATH, GATE_QUEUE_PATH, GATE_RENEW_PATH, GATE_SCREEN_PATH]);
 /** The tool route's body may carry the delivery's proof files (base64): up to this. */
 export const MAX_GATE_BODY_BYTES = 64 * 1024 * 1024;
 const GATE_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/;
@@ -134,8 +145,8 @@ export function noticeOf(value: unknown): OwnerMessage | null {
 export interface GateToolRoutesDeps {
   /** The daemon's (guarded) ledger. */
   readonly ledger: () => LedgerService;
-  /** The recados of this daemon: only the renewal step before a task (`antesDaTarefa`) is used here. */
-  readonly recados?: Pick<GateRecados, 'antesDaTarefa'> | null;
+  /** The recados of this daemon: only the renewal steps (before a task, before a card move) are used here. */
+  readonly recados?: Pick<GateRecados, 'antesDaTarefa' | 'antesDoCartao'> | null;
   /** The owner's phone shows "virou tarefa" (as this machine's gate does). */
   readonly linkPedido?: (pedidoId: string, tarefa: { readonly id: string; readonly titulo: string }) => void;
   /** A notice for the PC to deliver (this daemon's relay). Absent = the `aviso` route answers 404. */
@@ -152,6 +163,11 @@ export interface GateToolRoutesDeps {
    * (`isLocal`, the entregador apart), `aberturas` from a satellite. Absent = both answer 404.
    */
   readonly openings?: { readonly queue: RemoteOpenings; readonly isLocal: (name: string) => boolean };
+  /**
+   * t-69eefa2c — the screens of other machines' sessions (tela-satelite.ts): `tela` only from this machine's own gate,
+   * their orders and answers in the `aberturas` exchange. Absent = `tela` answers 404 and `aberturas` carries none.
+   */
+  readonly screens?: { readonly queue: RemoteScreens; readonly isLocal: (name: string) => boolean };
   /**
    * Passo 9 — the entregador apart queues here a message for a place of another machine (`fila`), only from the gate
    * marked local. Absent = the route answers 404 (no entregador apart: it queues itself).
@@ -247,6 +263,19 @@ export function createGateToolRoutes(deps: GateToolRoutesDeps): GateRoutes {
         return json(500, { error: 'erro no Oráculo' });
       }
     }
+    if (path === GATE_RENEW_PATH) {
+      const sessao = pictureOf(body.sessao);
+      if (!sessao || typeof body.tarefa !== 'string' || !body.tarefa) return json(400, { error: 'sessao ou tarefa inválido' });
+      const caller = callerFromPicture(sessao);
+      if (typeof caller === 'string') return json(200, { ok: false, text: caller });
+      try {
+        await deps.recados?.antesDoCartao?.(caller, sessao, body.tarefa);
+        return json(200, { ok: true });
+      } catch (error) {
+        log(`[oraculo] portão ${name}: renovação antes do cartão falhou: ${error instanceof Error ? error.message : String(error)}`);
+        return json(500, { error: 'erro no Oráculo' });
+      }
+    }
     if (path === GATE_TOOL_PATH) {
       try {
         return await tool(name, body);
@@ -266,7 +295,16 @@ export function createGateToolRoutes(deps: GateToolRoutesDeps): GateRoutes {
       }
       const input = openingsBodyOf(body);
       if (!input) return json(400, { error: 'respostas inválidas' });
-      return json(200, deps.openings.queue.exchange(name, input.respostas, input.kitHash));
+      const telas = screenAnswersOf(body.telas);
+      if (!telas) return json(400, { error: 'telas inválidas' });
+      return json(200, { ...deps.openings.queue.exchange(name, input.respostas, input.kitHash), ...(deps.screens ? { telas: deps.screens.queue.exchange(name, telas) } : {}) });
+    }
+    if (path === GATE_SCREEN_PATH) {
+      if (!deps.screens) return null;
+      if (!deps.screens.isLocal(name)) return json(403, { error: 'só o portão desta máquina pede a tela de outra' });
+      if (typeof body.pasta !== 'string' || !body.pasta || typeof body.lugar !== 'string' || !body.lugar) return json(400, { error: 'pasta ou lugar inválido' });
+      const answer = await deps.screens.queue.ask(body.pasta, body.lugar);
+      return json(200, answer ? { ok: answer.ok, text: answer.text } : { conhecido: false });
     }
     if (path === GATE_PICTURE_PATH || path === GATE_INBOX_PATH) {
       if (!deps.pictures) return null;
@@ -289,7 +327,9 @@ export function createGateToolRoutes(deps: GateToolRoutesDeps): GateRoutes {
     if (!deps.notice) return null;
     const message = noticeOf(body.aviso);
     if (!message) return json(400, { error: 'aviso inválido' });
-    await deps.notice(message);
-    return json(200, { ok: true });
+    const to = await deps.notice(message);
+    // t-3f32edb1 — where it went (the Líder único's queue here, a place's, or the PC's relay = null): the satellite tells
+    // its sender. A satellite of before reads only `ok`.
+    return json(200, { ok: true, entregue: to === 'lider' ? to : isRecord(to) && typeof to.placeId === 'string' ? { placeId: to.placeId } : null });
   };
 }

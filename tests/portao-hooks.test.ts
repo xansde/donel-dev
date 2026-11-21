@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createGateHandler, startGateServer, type GateForward, type GateRequest } from '../src/oraculo/portao';
+import type { GateRecados } from '../src/oraculo/gate-recados';
 import { buildRemoteSetupScript, HOOKS_TO_GATE_SED, parseRemoteSetupOutput } from '../src/main/remote-session';
 
 const SID = '11111111-2222-4333-8444-555555555555';
@@ -73,9 +74,9 @@ function sessions(hookPort: number): string {
 }
 
 /** The gate as the daemon runs it (a real loopback server), so the headers go the way the CLI sends them. */
-async function gate(hookPort: number, options: { pcAway?: boolean } = {}) {
+async function gate(hookPort: number, options: { pcAway?: boolean; recados?: GateRecados; sessionsDir?: string } = {}) {
   const handler = createGateHandler({
-    sessionsDir: sessions(hookPort),
+    sessionsDir: options.sessionsDir ?? sessions(hookPort),
     ledger: () => {
       throw new Error('sem registro');
     },
@@ -83,6 +84,7 @@ async function gate(hookPort: number, options: { pcAway?: boolean } = {}) {
     forward: MCP_NEVER,
     serverVersion: 'teste',
     ...(options.pcAway ? { pcAway: () => true } : {}),
+    ...(options.recados ? { recados: options.recados } : {}),
   });
   const server = await startGateServer({ port: 0, handler });
   const post = (path: string, body: string, headers: Record<string, string> = { 'X-Donel-Token': HOOK_TOKEN }) =>
@@ -160,6 +162,66 @@ describe('portão: os hooks do app da sessão', () => {
       const get: GateRequest = { method: 'GET', path: `/s/${SID}/h/Stop`, headers: { 'x-donel-token': HOOK_TOKEN }, body: '' };
       expect((await g.handler(get)).status).toBe(405);
       expect(pc.seen).toEqual([]);
+    } finally {
+      await g.close();
+    }
+  });
+});
+
+// t-94202d38 — a rota dos recados confiava só no loopback: qualquer processo da máquina (outro usuário da
+// Homologações) pedia `fim-de-turno` com o nome do tmux de uma sessão e levava os recados dela, que sumiam da sessão.
+describe('portão: /recados/<evento> exige o token da sessão', () => {
+  const OTHER = '99999999-2222-4333-8444-555555555555';
+  const OTHER_TOKEN = 'o'.repeat(32);
+  const tmux = (sid: string) => ({ 'X-Donel-Tmux': `donel-${sid}` });
+
+  function fakeRecados() {
+    const calls: { evento: string; tmux: string | undefined }[] = [];
+    const recados = {
+      hook: async (evento: string, headers: Readonly<Record<string, string>>) => {
+        calls.push({ evento, tmux: headers['x-donel-tmux'] });
+        return { status: 200, headers: { 'Content-Type': 'application/json' }, body: '{"decision":"block","reason":"recado"}' };
+      },
+    } as unknown as GateRecados;
+    return { recados, calls };
+  }
+
+  function twoSessions(): string {
+    const dir = sessions(25711);
+    mkdirSync(join(dir, OTHER), { recursive: true });
+    writeFileSync(join(dir, OTHER, 'meta.json'), JSON.stringify({ sid: OTHER, hookToken: OTHER_TOKEN, hookPort: 25712, mcpToken: MCP_TOKEN, mcpPort: 25713 }));
+    return dir;
+  }
+
+  it('sem token, com token errado, com o de outra sessão ou o do MCP: 401 e os recados ficam na fila', async () => {
+    const fake = fakeRecados();
+    const g = await gate(await closedPort(), { recados: fake.recados, sessionsDir: twoSessions() });
+    try {
+      expect((await g.post('/recados/fim-de-turno', STOP, tmux(SID))).status).toBe(401);
+      expect((await g.post('/recados/fim-de-turno', STOP, { ...tmux(SID), 'X-Donel-Token': 'e'.repeat(32) })).status).toBe(401);
+      expect((await g.post('/recados/fim-de-turno', STOP, { ...tmux(SID), 'X-Donel-Token': OTHER_TOKEN })).status).toBe(401);
+      expect((await g.post('/recados/fim-de-turno', STOP, { ...tmux(SID), 'X-Donel-Token': MCP_TOKEN })).status).toBe(401);
+      expect((await g.post('/recados/ocupada', STOP, tmux(SID))).status).toBe(401);
+      // The token without the tmux name (the payload's session_id alone never names the session here).
+      expect((await g.post('/recados/fim-de-turno', `{"session_id":"${SID}"}`, { 'X-Donel-Token': HOOK_TOKEN })).status).toBe(401);
+      expect((await g.post('/recados/fim-de-turno', STOP, { 'X-Donel-Tmux': `donel-../${SID}`, 'X-Donel-Token': HOOK_TOKEN })).status).toBe(401);
+      expect((await g.post('/recados/fim-de-turno', STOP, { 'X-Donel-Tmux': 'donel-sem-pasta', 'X-Donel-Token': HOOK_TOKEN })).status).toBe(401);
+      expect(fake.calls).toEqual([]);
+    } finally {
+      await g.close();
+    }
+  });
+
+  it('com o token da própria sessão (o cabeçalho do hook-header): passa aos recados', async () => {
+    const fake = fakeRecados();
+    const g = await gate(await closedPort(), { recados: fake.recados, sessionsDir: twoSessions() });
+    try {
+      expect(await g.post('/recados/fim-de-turno', STOP, { ...tmux(SID), 'X-Donel-Token': HOOK_TOKEN })).toEqual({ status: 200, body: '{"decision":"block","reason":"recado"}' });
+      expect((await g.post('/recados/ocupada', STOP, { ...tmux(OTHER), 'X-Donel-Token': OTHER_TOKEN })).status).toBe(200);
+      expect(fake.calls).toEqual([
+        { evento: 'fim-de-turno', tmux: `donel-${SID}` },
+        { evento: 'ocupada', tmux: `donel-${OTHER}` },
+      ]);
     } finally {
       await g.close();
     }

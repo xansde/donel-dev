@@ -112,6 +112,19 @@ const PLACE_PATTERN = /^(?:place|session):[A-Za-z0-9-]{1,64}$/;
 const ROLE_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 /** The steps of a renewal under way: a mark left on one of them was cut midway. */
 const IN_FLIGHT_STEPS: ReadonlySet<string> = new Set(['detectou', 'pediu', 'pronta', 'abriu', 'respondeu']);
+/** The steps from the handoff ready on: the successor it opened (if alive) answers for the place, not this session. */
+const HANDED_OVER_STEPS: ReadonlySet<string> = new Set(['pronta', 'abriu', 'respondeu', 'nao-fechou', 'fechou']);
+
+/**
+ * Pure — t-49dee38d (condição do Líder único r-ded62192: "um dono só") — the mark (`RENEW_MARK`, parsed) says this
+ * session handed its place over: its handoff was ready, or a give-up after its successor opened (`sucessora` in the
+ * mark: "duas vivas no lugar" keeps the successor the owner until the Líder decides). A deferral (`adiada`) never.
+ * Whether the successor is alive, and of the same role, is the picture's to check (retrato-local).
+ */
+export function markHandedOver(mark: unknown): boolean {
+  if (!isRecord(mark) || mark.adiada === true || typeof mark.passo !== 'string') return false;
+  return HANDED_OVER_STEPS.has(mark.passo) || (mark.passo === 'desistiu' && typeof mark.sucessora === 'string');
+}
 
 function stringList(value: unknown, pattern: RegExp): string[] {
   if (!Array.isArray(value)) return [];
@@ -399,6 +412,8 @@ interface GiveUpOptions {
 }
 
 const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim();
+/** "1 recado ou mensagem que chegou" / "N recados ou mensagens que chegaram" (the journal line of a forward). */
+const arrivedText = (count: number): string => (count === 1 ? '1 recado ou mensagem que chegou' : `${count} recados ou mensagens que chegaram`);
 
 export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
   const now = deps.now ?? Date.now;
@@ -771,7 +786,7 @@ export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
       });
       return;
     }
-    say(`reencaminhou a ${new8} ${forwarded.reencaminhados} recado(s) ou mensagem(ns) que chegaram a ${sid8} depois da passagem; ${forwarded.passados} da fila passaram a ela.`);
+    say(`reencaminhou a ${new8} ${arrivedText(forwarded.reencaminhados)} a ${sid8} depois da passagem; ${forwarded.passados} da fila passaram a ela.`);
     const killed = await deps.kill(sid);
     if (!killed) {
       mark(sid, 'nao-fechou', { sucessora: opened.sid });
@@ -787,8 +802,10 @@ export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
     if (!after.ok) {
       say(`depois de fechar ${sid8}, o 2º reencaminhamento a ${new8} falhou (${oneLine(after.motivo).slice(0, 160)}).`);
       tellLeader(sid, `fechei ${sid8} e ${new8} segue no lugar dela, mas a conferência final do que chegou a ${sid8} depois da passagem falhou (${oneLine(after.motivo).slice(0, 160)}); confira os recados dela.`);
-    } else if (after.reencaminhados || after.passados) {
-      say(`reencaminhou a ${new8} mais ${after.reencaminhados} que chegaram a ${sid8} antes do fechamento; ${after.passados} da fila passaram a ela.`);
+    } else if (after.reencaminhados) {
+      say(`reencaminhou a ${new8} mais ${arrivedText(after.reencaminhados)} a ${sid8} antes do fechamento; ${after.passados} da fila passaram a ela.`);
+    } else if (after.passados) {
+      say(`depois de fechar ${sid8}, ${after.passados} da fila passaram a ${new8}.`);
     }
   }
 

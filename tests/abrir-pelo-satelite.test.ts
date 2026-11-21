@@ -20,9 +20,11 @@ import { buildClaudeArgs } from '../src/shared/commandBuilder';
 import type { MindscapeBoard, MindscapeCard } from '../src/shared/mindscape/model';
 import { createOpenLocal, NOT_THE_LEADER, readOpenKit, type ScriptRun } from '../src/oraculo/abrir-local';
 import { createRemoteOpenClient, createRemoteOpenings, createSatelliteOpenings, readRemoteKit } from '../src/oraculo/abrir-satelite';
+import { createGateRecados, type RecadosTmux } from '../src/oraculo/recados';
+import { createRemoteScreenClient, createRemoteScreens } from '../src/oraculo/tela-satelite';
 import { createOracleApiHandler, type OracleRequest } from '../src/oraculo/api';
 import { mergePicture, type BoardPicture } from '../src/oraculo/portao';
-import { createGateToolRoutes, GATE_OPEN_PATH, isLocalGate, readGateHashes } from '../src/oraculo/portoes';
+import { createGateToolRoutes, GATE_OPEN_PATH, GATE_OPENINGS_PATH, isLocalGate, readGateHashes } from '../src/oraculo/portoes';
 import { compactPicture, createRemotePictures, createRemotePicturesReader } from '../src/oraculo/retrato-satelite';
 import type { SatellitePost } from '../src/oraculo/satelite';
 
@@ -41,6 +43,7 @@ const T0 = Date.parse('2026-11-19T16:40:00Z');
 const hash = (token: string): string => createHash('sha256').update(token).digest('hex');
 const LOCAL_GATE = 'l'.repeat(64);
 const SAT_GATE = 's'.repeat(64);
+const OTHER_GATE = 'o'.repeat(64);
 const PC = 'p'.repeat(64);
 const PEDIDO = 'Revise as 2 entregas paradas do Homologação.\nCritério: veredito nas duas.';
 
@@ -106,6 +109,8 @@ interface Options {
   readonly noFolder?: boolean;
   /** The board Líder's session alive on the Homologações. */
   readonly boardLeader?: boolean;
+  /** How long the registro waits for a satellite's screen. */
+  readonly screenTimeoutMs?: number;
 }
 
 function machines(options: Options = {}) {
@@ -166,11 +171,14 @@ function machines(options: Options = {}) {
   writeFileSync(join(dir, 'portoes', 'homologacoes.sha256'), `${hash(SAT_GATE)}\n`);
   writeFileSync(join(dir, 'portoes', 'vps-pessoal.sha256'), `${hash(LOCAL_GATE)}\n`);
   writeFileSync(join(dir, 'portoes', 'vps-pessoal.local'), '');
+  // A third machine's gate: it never answers for the Homologações.
+  writeFileSync(join(dir, 'portoes', 'outra.sha256'), `${hash(OTHER_GATE)}\n`);
   // The registro apart (two units): it alone writes `portoes-*`, and says when it heard each satellite (`shareHeard`).
   const remotes = createRemotePictures({ dir, io, now: () => clock.now, shareHeard: true });
   // The satellite's picture of its sessions reached the personal VPS (retrato-satelite.ts).
   remotes.accept('homologacoes', compactPicture(spicture, seen, slive));
   const openings = createRemoteOpenings({ dir, pictures: remotes, kit: () => readOpenKit(dir), now: () => clock.now });
+  const screens = createRemoteScreens({ pictures: remotes, timeoutMs: options.screenTimeoutMs ?? 5_000 });
   const ledgerFile = join(dir, 'ledger.json');
   const ledger = createLedgerService({ filePath: ledgerFile, io, proofFs: nodeLedgerProofFs, now: () => clock.now });
   const api = createOracleApiHandler({
@@ -178,7 +186,12 @@ function machines(options: Options = {}) {
     ledgerFile,
     tokenHash: () => hash(PC),
     gates: () => readGateHashes(dir),
-    gateRoutes: createGateToolRoutes({ ledger: () => ledger, pictures: remotes, openings: { queue: openings, isLocal: (name) => isLocalGate(dir, name) } }),
+    gateRoutes: createGateToolRoutes({
+      ledger: () => ledger,
+      pictures: remotes,
+      openings: { queue: openings, isLocal: (name) => isLocalGate(dir, name) },
+      screens: { queue: screens, isLocal: (name) => isLocalGate(dir, name) },
+    }),
   });
   /** A POST straight into the API; `cut.answers` drops the next call that says answers before it reaches the registro. */
   const cut = { answers: false };
@@ -192,7 +205,16 @@ function machines(options: Options = {}) {
     const answer = await api({ method: 'POST', url: new URL(url).pathname, body, authorization: `Bearer ${token}` } as OracleRequest);
     return { status: answer.status, body: answer.body as string };
   };
-  const satRound = () => createSatelliteOpenings({ url: 'http://vps-pessoal:47816', token: () => SAT_GATE, post, dir: sat.oraculoDir, open: satOpen.openFor, log: () => undefined });
+  // The Homologações' tmux (only read here): what each session's screen shows.
+  const satScreens = new Map<string, string>();
+  const satTmux: RecadosTmux = {
+    screen: async (sid) => (satScreens.has(sid) ? { inMode: false, text: satScreens.get(sid)! } : null),
+    type: async () => true,
+    enter: async () => true,
+    clear: async () => true,
+  };
+  const satRecados = createGateRecados({ file: join(sat.oraculoDir, 'recados.json'), io, ledger: () => null, picture: () => spicture, localSessions: async () => new Set(slive), tmux: satTmux, now: () => clock.now, log: () => undefined });
+  const satRound = () => createSatelliteOpenings({ url: 'http://vps-pessoal:47816', token: () => SAT_GATE, post, dir: sat.oraculoDir, open: satOpen.openFor, screen: satRecados.screenOf, log: () => undefined });
 
   const vps = home('abrir-vps-home-');
   for (const sid of [SID_LIDER, SID_DEV]) mkdirSync(join(vps.sessionsDir, sid), { recursive: true });
@@ -222,7 +244,22 @@ function machines(options: Options = {}) {
     vpsOpen.abrir(sid, vpicture.sessoes[sid]!, { tool: 'sessao_abrir', papel: 'revisor', pedido: PEDIDO, quadro: 'Homologação', onde: 'Homologações', ...args } as never);
   const satFolders = (): string[] => readdirSync(sat.sessionsDir).filter((sid) => sid !== SID_HDEV && sid !== SID_LIDER_H);
   const metaOf = (sid: string): Record<string, unknown> => JSON.parse(readFileSync(join(sat.sessionsDir, sid, 'meta.json'), 'utf8')) as Record<string, unknown>;
-  return { clock, dir, sat, vps, project, satOpen, satRound, ask, cut, post, calls, satFolders, metaOf, slive, picture: () => spicture };
+  // The entregador apart: its recados read this VPS's picture with the other machines' (as entregador.ts does), and
+  // ask the registro for a screen of another machine by its local gate.
+  const view = createRemotePicturesReader({ dir, now: () => clock.now });
+  const vpsRecados = createGateRecados({
+    file: join(dir, 'recados.json'),
+    io,
+    ledger: () => null,
+    picture: () => view.combine(vpicture),
+    localSessions: async () => new Set([SID_LIDER, SID_DEV]),
+    tmux: { screen: async () => null, type: async () => true, enter: async () => true, clear: async () => true },
+    remoteScreen: createRemoteScreenClient({ url: 'http://127.0.0.1:47816', token: () => LOCAL_GATE, post, view }),
+    now: () => clock.now,
+    log: () => undefined,
+  });
+  const seeScreen = (quem: string) => vpsRecados.verTela!(SID_LIDER, { tool: 'sessao_ver_tela', quadro: 'Homologação', quem } as never);
+  return { clock, dir, sat, vps, project, satOpen, satRound, ask, cut, post, calls, satFolders, metaOf, slive, picture: () => spicture, satScreens, seeScreen };
 }
 
 const parsed = (outcome: { kind: string; text?: string }): Record<string, unknown> => JSON.parse(outcome.text ?? '') as Record<string, unknown>;
@@ -290,15 +327,23 @@ describe('com o PC desligado, abrir sessão no quadro de outra máquina pelo sat
     const compact = compactPicture(m.picture(), T0, m.slive);
     expect(compact.quadros[HOMOLOG]?.board?.links).toContainEqual(expect.objectContaining({ from: LIDER_H, to: `session:${NEW_SID}`, arrow: true, opened: true }));
 
+    // t-3b258224 — one Revisor per board: the Líder único's request for a 2nd one there is refused by the satellite.
+    expect(parsed(await m.ask({ nome: 'Outro revisor' }))).toMatchObject({ estado: 'pedido aceito' });
+    await m.satRound().round();
+    expect(m.satFolders()).toEqual([NEW_SID]);
+    const refused = await m.ask({ nome: 'Outro revisor' });
+    expect(refused.kind).toBe('error');
+    expect(refused.text).toContain(`já tem o Revisor session:${NEW_SID}`);
+
     // t-83b81fd2 — the Líder único's request to that board opens there directly, never handed to its live Líder: with
     // the PC off that Líder may not be able to open.
-    const viaVps = await m.ask({ nome: 'Outro revisor' });
+    const viaVps = await m.ask({ papel: 'dev', nome: 'Outro dev' });
     expect(parsed(viaVps)).toMatchObject({ estado: 'pedido aceito' });
     await m.satRound().round();
     expect(m.satFolders()).toHaveLength(2);
     const second = m.satFolders().find((sid) => sid !== NEW_SID)!;
     expect(m.metaOf(second)).toMatchObject({ openedBy: 'lider', localCwd: HOMOLOG });
-    expect(parsed(await m.ask({ nome: 'Outro revisor' }))).toMatchObject({ lugar: `session:${second}`, quadro: 'Homologação', nome: 'Outro revisor' });
+    expect(parsed(await m.ask({ papel: 'dev', nome: 'Outro dev' }))).toMatchObject({ lugar: `session:${second}`, quadro: 'Homologação', nome: 'Outro dev' });
   });
 
   it('nenhum outro abre: um Dev de qualquer das máquinas, e o portão do satélite pedindo abertura na VPS pessoal', async () => {
@@ -320,5 +365,48 @@ describe('com o PC desligado, abrir sessão no quadro de outra máquina pelo sat
     await m.satRound().round();
     expect(m.satFolders()).toEqual([]);
     expect(m.sat.tmuxStarts()).toBe(0);
+  });
+
+  it('sessao_ver_tela de uma sessão da Homologações: o pedido vai ao satélite e a tela de lá volta, com o estado dela', async () => {
+    const m = machines();
+    const RULE = '─'.repeat(40);
+    const KEY = `sk-ant-api03-${'x'.repeat(40)}`;
+    m.satScreens.set(SID_HDEV, `● rodando o verify com ${KEY}\n\n✻ Cogitating… (40s)\n${RULE}\n❯ \n${RULE}\n  ⏵⏵ bypass permissions on\n`);
+    const pending = m.seeScreen(HDEV);
+    // The order waits on the registro: the satellite sees it when it asks (its next round).
+    let id = '';
+    for (let i = 0; i < 50 && !id; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const asked = await m.post(`http://vps-pessoal:47816${GATE_OPENINGS_PATH}`, SAT_GATE, JSON.stringify({ respostas: [] }));
+      const telas = typeof asked === 'object' ? ((JSON.parse(asked.body) as { telas?: Array<{ id: string; pasta: string; lugar: string }> }).telas ?? []) : [];
+      if (telas[0]) {
+        expect(telas[0]).toMatchObject({ pasta: HOMOLOG, lugar: HDEV });
+        id = telas[0].id;
+      }
+    }
+    expect(id).not.toBe('');
+    // Another machine's gate answering that order is ignored.
+    await m.post(`http://vps-pessoal:47816${GATE_OPENINGS_PATH}`, OTHER_GATE, JSON.stringify({ respostas: [], telas: [{ id, ok: true, text: 'tela forjada' }] }));
+    await m.satRound().round();
+    const seen = await pending;
+    expect(seen.kind, seen.text).toBe('text');
+    expect(seen.text).not.toContain('forjada');
+    const answer = JSON.parse(seen.text!) as { id: string; estado: string; tela: string; fonte: string };
+    expect(answer).toMatchObject({ id: HDEV, estado: 'trabalhando' });
+    expect(answer.tela).toContain('rodando o verify');
+    expect(answer.tela).not.toContain(KEY);
+    expect(answer.fonte).toContain('Homologações');
+    // Nothing more waits for the satellite.
+    const after = await m.post(`http://vps-pessoal:47816${GATE_OPENINGS_PATH}`, SAT_GATE, JSON.stringify({ respostas: [] }));
+    expect(typeof after === 'object' && (JSON.parse(after.body) as { telas?: unknown[] }).telas).toEqual([]);
+  });
+
+  it('sessao_ver_tela com o satélite calado: erro de prazo claro, sem pendurar, e o pedido sai da fila', async () => {
+    const m = machines({ screenTimeoutMs: 50 });
+    const seen = await m.seeScreen(HDEV);
+    expect(seen.kind).toBe('error');
+    expect(seen.text).toContain('não mandou a tela');
+    const after = await m.post(`http://vps-pessoal:47816${GATE_OPENINGS_PATH}`, SAT_GATE, JSON.stringify({ respostas: [] }));
+    expect(typeof after === 'object' && (JSON.parse(after.body) as { telas?: unknown[] }).telas).toEqual([]);
   });
 });

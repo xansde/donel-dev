@@ -28,10 +28,11 @@ import { createLivroStore } from './livro';
 import { createReturnGuard } from './devolvido';
 import { GATE_PORT, type BoardPicture } from './portao';
 import { createGateToolRoutes, isLocalGate, readGateHashes, type GateRoutes } from './portoes';
-import { renewBeforeTask } from './recados';
+import { renewBeforeCard, renewBeforeTask } from './recados';
 import { createRemotePictures } from './retrato-satelite';
-import { tmuxLiveKnown } from './retrato-local';
+import { pcAway, tmuxLiveKnown } from './retrato-local';
 import { createRemoteOpenings } from './abrir-satelite';
+import { createRemoteScreens } from './tela-satelite';
 import { readOpenKit } from './abrir-local';
 import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
 import { createDaemonVigia } from './vigia';
@@ -43,16 +44,21 @@ import { createTarefasPedidasConsumer, createTarefasPedidasQueue, readQuadroTare
 import { createChatCelularConsumer, createChatCelularQueue } from './chat-celular';
 import { CELULAR_LOCAL_FILE, createCelularLocalStore } from './celular-local';
 import { createCelularV2Handler } from './celular-v2';
+import { AVISOS_CARTAS_FILE, createAvisosCartasWriter, entradasDeCartas } from './avisos-cartas';
+import { createQuadroLeitor, quadroPathsOf } from './quadro-v2';
 import { createCredencialHandler } from './credencial';
-import { CHAT_AUDIO_TIMEOUT_MS, createChatAudioWorker, DAEMON_WHISPER_URL } from './chat-audio';
+import { createChatAudioWorker, daemonWhisper } from './chat-audio';
 import { createGlossarioStore, glossarioFile } from './glossario';
 import { startChatArquivoSweep } from './chat-arquivo';
 import { chatResponder } from './chat-responder';
-import { boardOfSession, createEntregador, createLocalDeliverClient, gatePortOf, type Entregador, type EntregadorPlace } from './entregador';
+import { boardOfSession, createEntregador, createLocalDeliverClient, createLocalOpenReviewerClient, gatePortOf, type Entregador, type EntregadorPlace } from './entregador';
 import { RETRATO_PC_FILE } from './modo';
 import { CHAT_REPLIES_FILE, CHAT_TAIL_BYTES, readTail, repliesStore } from './chat-entregador';
 import { GATE_PHONE_PAIR_PATH, isChatRoute, registroPhonePort } from './celular-frente';
 import { MOBILE_PORT } from '../main/celular/server';
+import { localFlagOn } from '../main/local-flags';
+import { USO_IA_FLAG } from './uso-ia';
+import { HOMOLOGACAO_FLAG } from './homologacao';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
 /** t-89279f84 — `{url, serviceKeyFile}`: present, the Supabase is the ledger's source (ledger.json is not read). */
@@ -208,6 +214,8 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
   const remotes = entregador ? entregador.remotes : createRemotePictures({ dir, io, shareHeard: true });
   // t-d461e003 — the Líder único's openings on other machines' boards: one queue per machine, beside their pictures.
   const openings = entregador ? entregador.openings : remotes ? createRemoteOpenings({ dir, pictures: remotes, kit: () => readOpenKit(dir) }) : null;
+  // t-69eefa2c — the Líder único's look at a screen of another machine: an order its satellite takes in the exchange.
+  const screens = entregador ? entregador.screens : remotes ? createRemoteScreens({ pictures: remotes }) : null;
   /**
    * The local recados when the entregador runs here; apart (passo 9, PR 2), through its gate on the loopback: with it
    * down, `deliverLocalFirst` takes the message to the PC's relay with the same key (never twice when it comes back).
@@ -294,7 +302,7 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
     try {
       audioWorker = createChatAudioWorker({
         store: celularLocal,
-        transcribe: whisperServerTranscriber({ url: process.env.DONEL_WHISPER_URL || DAEMON_WHISPER_URL, timeoutMs: CHAT_AUDIO_TIMEOUT_MS }),
+        transcribe: whisperServerTranscriber(daemonWhisper(process.env)),
         kick: (fila) => kick(fila),
         log: (line) => console.log(line),
       });
@@ -319,6 +327,17 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
     ownerName: () => process.env.ESPELHO_DONO || 'Alexandre',
     readProof: createProofReader(ledgerProofsDir(ledgerFile)),
     arvoreFile: join(home, '.donel', 'estado-derivado', 'arvore.json'),
+    // t-1c683858 — the phone's "Uso de IA": the faixa-preta-dia readings, the frozen weeks and feats, behind a flag.
+    usoIa: {
+      dir: process.env.DONEL_USO_IA_DIR || join(home, '.donel', 'faixa-preta-dia'),
+      estado: process.env.DONEL_USO_IA_ESTADO || join(home, '.donel', 'uso-ia'),
+      flagOn: () => localFlagOn(USO_IA_FLAG, home),
+    },
+    // t-b3f48bf5 — the phone's homologation screen: the cleaned copy the export cron writes, read only, behind a flag.
+    homologacao: {
+      file: process.env.DONEL_HOMOLOGACAO_EXPORT || join(home, '.donel', 'homologacao', 'export.json'),
+      flagOn: () => localFlagOn(HOMOLOGACAO_FLAG, home),
+    },
     kick,
     audio: (id) => audioWorker?.enqueue(id),
     // t-753e8199 — the owner's corrections teach the transcriber (DONEL_GLOSSARIO, else ~/.donel/transcricao/glossario.json).
@@ -327,16 +346,30 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
     // t-c441e144 (docs/adr/0010) — the credential box announces in the chat: here only when the chat is (apart, the
     // entregador's 47815 answers it and this server never sees the body).
     ...(chatHere ? { credencial: createCredencialHandler({ dir, log: (line) => console.log(line) }) } : {}),
+    // t-f091595a — the task board (~/.donel/board), opened read only at each phone request.
+    quadro: createQuadroLeitor(quadroPathsOf(home), { home, log: (line) => console.log(line) }),
     log: (line) => console.log(line),
   });
   /** Apart, the chat routes are the entregador's: here they do not exist (a second writer of the conversation). */
   const v2Here = v2 && !chatHere ? (request: Parameters<typeof v2>[0]) => (isChatRoute(request.url) ? Promise.resolve({ status: 404, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }, body: JSON.stringify({ erro: 'nao-encontrada' }) }) : v2(request)) : v2;
+  // t-b07b50ff — the letters that start waiting go to avisos-cartas.json, read by the entregador for the phone's warnings.
+  const avisosCartas = createAvisosCartasWriter(join(dir, AVISOS_CARTAS_FILE));
+  const writeAvisosCartas = (fresh: Parameters<typeof entradasDeCartas>[0]): void => {
+    try {
+      avisosCartas.add(entradasDeCartas(fresh));
+    } catch (error) {
+      console.log(`[avisos] ${AVISOS_CARTAS_FILE} não foi gravado: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
   celular = createCelularCore({
     v2: () => (filaLocal() && v2Here ? v2Here : null),
+    onFresh: (fresh) => writeAvisosCartas(fresh),
     // Apart, this server listens on DONEL_CELULAR_PORT (47818) behind the entregador's 47815, which the phone reaches.
     ...(chatHere ? {} : { port: registroPhonePort(), publicPort: MOBILE_PORT }),
     userDataDir: dir,
     io,
+    // t-0eb91241 — the Pedir by voice goes to the VPS transcriber too (it fell on :8178, the PC's, which is not here).
+    whisper: daemonWhisper(process.env),
     ledger: () => ledger,
     provasRoot: ledgerProofsDir(ledgerFile),
     cardWriter: () => cardWriter,
@@ -388,22 +421,37 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
     gateRoutes: phonePairRoute(createGateToolRoutes({
       ledger: () => ledger,
       // Apart (passo 9, PR 2), the renewal before a task runs here, beside the ledger: the entregador's recados have none.
-      recados: entregador?.recados ?? { antesDaTarefa: (caller, mine, call) => renewBeforeTask(ledger, caller, mine, call, (line) => console.error(`[oraculo] recados: ${line}`)) },
+      recados: entregador?.recados ?? {
+        antesDaTarefa: (caller, mine, call) => renewBeforeTask(ledger, caller, mine, call, (line) => console.error(`[oraculo] recados: ${line}`)),
+        // t-8406f473 — the entregador apart's card moves (GATE_RENEW_PATH): the same renewal, beside the ledger.
+        antesDoCartao: (caller, mine, taskId) => renewBeforeCard(ledger, caller, mine, taskId, (line) => console.error(`[oraculo] recados: ${line}`)),
+      },
       linkPedido: (pedidoId, tarefa) => void celular?.linkPedido(pedidoId, tarefa),
       notice: toLeader,
       ...(remotes ? { pictures: remotes } : {}),
       ...(openings ? { openings: { queue: openings, isLocal: (name: string) => isLocalGate(dir, name) } } : {}),
+      ...(screens ? { screens: { queue: screens, isLocal: (name: string) => isLocalGate(dir, name) } } : {}),
       // Apart, the Líder único of this machine reaches the ledger through the entregador's gate (never a satellite's).
       ...(entregador ? {} : { leader: { isLocal: (name: string) => isLocalGate(dir, name), picture: () => (remotes ? remotes.combine(picture()) : picture()) } }),
       // Passo 9 — apart, a message of the entregador's sessions for a place of another machine is queued here.
       ...(entregador || !remotes ? {} : { remoteQueue: { isLocal: (name: string) => isLocalGate(dir, name), queue: remotes.queue } }),
       // t-d461e003 — an owner session alive in this VPS's tmux (or a satellite's fresh picture) is never orphan here.
-      liveOwner: { tmux: tmuxLiveKnown, ...(remotes ? { machineOf: (projectPath: string, placeId: string) => remotes.machineOf(projectPath, placeId) } : {}) },
+      // t-c292d9a4 — with the PC away, only a Revisor that runs (here or in a satellite's picture) decides a delivery.
+      liveOwner: {
+        tmux: tmuxLiveKnown,
+        ...(remotes ? { machineOf: (projectPath: string, placeId: string) => remotes.machineOf(projectPath, placeId) } : {}),
+        pcAway: entregador ? entregador.localPicture.away : () => pcAway(picture(), Date.now()),
+      },
     })),
     ...(process.env.DONEL_LIVRO_ARQUIVO ? { livro: createLivroStore({ filePath: process.env.DONEL_LIVRO_ARQUIVO }) } : {}),
     // t-cddc62fc — the reconciliador's notices reach the Líder único by the relay, out of the owner's phone chat.
     // t-c3fbe852: his own queue when he lives here.
     avisarLider: async (texto, chave) => (await toLeader({ projectPath: '', placeId: '', text: texto, leaderText: texto, key: `reconciliador:${chave}` })) ?? 'pendente',
+    // t-3b258224 — the reconciliador's Revisor for a board: the openLocal of the entregador, in this process or through
+    // its gate on the loopback (`/local/abrir-revisor`).
+    abrirRevisor: entregador
+      ? (order) => entregador.openReviewer({ quadro: order.quadro, pedido: order.pedido, ...(order.tarefa ? { tarefa: order.tarefa } : {}) })
+      : createLocalOpenReviewerClient({ port: () => gatePortOf(dir, place.gatePort ?? (Number(process.env.DONEL_ORACULO_PORTAO_PORT) || GATE_PORT)) }),
   });
   server = await (place.listen ?? startOracleServer)({ host, port, caller: (authorization) => callerOf(authorization, tokenHash(), services(), gates()), handler });
   writeFileSync(join(dir, 'url'), `${server.url}\n`, { mode: 0o600 });
@@ -415,6 +463,7 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
     ledger: () => ledger,
     log: (line) => console.log(line),
     boardOfSession: (sid) => boardOfSession(vigiaPicture(), sid),
+    avisarLider: toLeader,
   });
   vigia.start();
   // t-52bf8b45 — the config is read at each round: writing `decisoes.json` turns the queue on without a restart.

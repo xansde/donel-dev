@@ -156,6 +156,9 @@ const BODIES: Readonly<Record<OwnerInboxKind, string>> = {
   'para-repassar': 'Ninguém está fazendo: peça ao Líder para repassar.',
 };
 
+/** The line under the title of an item of the box (the phone's native warning uses it too, src/oraculo/avisos-cartas.ts). */
+export const pushBodyFor = (kind: OwnerInboxKind): string => BODIES[kind];
+
 /** The warning of one item: a card kind opens its card; the others open the app (the box is there). */
 export function pushMessageFor(item: OwnerInboxItem): PushMessage {
   const { task, kind } = item;

@@ -28,7 +28,8 @@
 //   answered here without harm (initialize, the tool list, ping, notifications, `sessao_quem_sou`, `sessao_listar`)
 //   is answered here when the PC is silent for `LOCAL_ANSWER_MS`. Any other tool waits for the PC as before; a 502
 //   stays a 502.
-// - `POST /recados/<evento>`: the VPS's user-level hooks, loopback only, no MCP token.
+// - `POST /recados/<evento>`: the VPS's user-level hooks, loopback only, with the session's hook token (`X-Donel-Token`,
+//   `hookToken` of the meta of the session `X-Donel-Tmux` names; t-94202d38), never the MCP token.
 // - `POST /s/<sid>/h/<Evento>` (t-d461e003): the app's hooks of a session (its `settings.json`, pointed here by the
 //   setup). With the session's hook token (`X-Donel-Token`, `hookToken` of its meta), passed on as it came to the PC's
 //   hook bridge on the session's tunnel (`hookPort`); with the PC off (the tunnel refused, or `pcAway`) answered `{}`
@@ -55,19 +56,22 @@ import { readFileSync } from 'node:fs';
 import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { connect as netConnect, type Socket } from 'node:net';
 import { join } from 'node:path';
-import { handleMcpPayload, parseMcpBody, type BrowserToolOutcome } from '../shared/browser/mcp';
+import { CARD_INSTRUCTIONS, handleMcpPayload, parseMcpBody, type BrowserToolOutcome } from '../shared/browser/mcp';
 import type { BoardToolCall } from '../shared/mindscape/agent-tools';
 import type { MindscapeBoard } from '../shared/mindscape/model';
 import type { LedgerToolCall } from '../shared/ledger/tools';
+import type { LedgerTask } from '../shared/ledger/contract';
 import { askedByRefusal, isLedgerToolName, LEDGER_TOOLS } from '../shared/ledger/tools';
 import { leaderCallerOffBoard, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService, type LedgerToolAnswer } from '../main/ledger-store';
 import type { OwnerMessage } from '../main/ledger-card-writer';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
-import { CARD_TOOLS, isCardToolName, type CardToolCall } from '../shared/board/tools';
+import { CARD_TOOLS, isCardToolName, LEADER_OF_ALL_CARD_TOOLS, type CardToolCall } from '../shared/board/tools';
 import { canReach, demandOwnerRefusal, hearingPlaceIds, isBoardOrchestrator, LEADER_OF_ALL_FROM, whoHears } from '../shared/mindscape/reach';
 import { LEADER_ROLE_ID } from '../shared/roles';
 import type { BoardStore } from './board-client';
-import { runCardTool } from './board-tools';
+import { runCardTool, type CardCaller } from './board-tools';
+import { openTaskCard } from './cartao-da-tarefa';
+import { currentConversation } from './lider-local';
 import type { GateRecados } from './gate-recados';
 import type { GateAbrir } from './gate-abrir';
 import { openedPlaceOf } from './primeiras';
@@ -81,6 +85,8 @@ export const CONNECT_MS = 2_000;
 /** How long a call that can be answered here without harm waits for the PC before it is. */
 export const LOCAL_ANSWER_MS = 3_000;
 const HOOK_PATH = /^\/recados\/([a-z-]{1,40})$/;
+/** The tmux session of a Donel session (`donel-<sid>`), as the recados hook names it (recados.ts `TMUX_PREFIX`). */
+const RECADOS_TMUX_PREFIX = 'donel-';
 /** The app's hooks of a session; the event is checked apart (`HOOK_EVENT`), like the sid. */
 const SESSION_HOOK_PATH = /^\/s\/([^/]+)\/h\/([^/]*)$/;
 /** The hook bridge's own rule for an event name (`/h/([A-Za-z]+)`, hook-bridge.ts), bounded. */
@@ -117,6 +123,11 @@ export interface PictureSession {
    * (retrato-satelite.ts): it lives there, so a message to it waits in that machine's queue, never in this tmux.
    */
   readonly maquina?: string;
+  /**
+   * t-49dee38d — this session handed its place over to the successor its renewal opened (that sid), which is now the
+   * place's only owner (retrato-local.ts): its ledger writes are refused; it only ends its turn and waits to be closed.
+   */
+  readonly renovadaPara?: string;
 }
 
 /** What the PC pushes (`POST /v1/retrato`): every VPS session it has open. */
@@ -184,6 +195,11 @@ export interface GateDeps {
   readonly serverVersion: string;
   /** The task board's client; absent or null = no `card_*` tools (the board is off). */
   readonly cards?: () => BoardStore | null;
+  /**
+   * t-8406f473 — a session (folder sid) was served the `card_*` tools: the board's vigia wakes only those
+   * (`markCardTools`, `~/.donel/board/com-cartoes/<sid>`). Absent = no mark.
+   */
+  readonly markCards?: (sid: string) => void;
   readonly now?: () => number;
   /** The recados queue (`sessao_enviar` here, the notices after a task, the hooks' route); absent = none. */
   readonly recados?: GateRecados;
@@ -205,6 +221,11 @@ export interface GateDeps {
    * and the call's arguments as the session sent them (the satellite passes them on to the ledger's machine).
    */
   readonly runLedger?: (caller: LedgerCaller, call: LedgerToolCall, context: GateLedgerContext) => Promise<LedgerToolAnswer>;
+  /**
+   * t-8406f473 — the task a `runLedger` call just left, when the ledger lives in another process (the entregador apart:
+   * the registro's route answers with it, createSatelliteTaskMemory). Absent = read from `ledger()`.
+   */
+  readonly taskOf?: (id: string) => LedgerTask | undefined;
   /** t-d461e003 — where an owner place's session may live off the board's list (`withLiveOwner`); absent = the list alone. */
   readonly liveOwner?: LiveOwnerSource;
   readonly timeouts?: { readonly localAnswerMs?: number };
@@ -309,16 +330,44 @@ function mapToolList(answer: GateResponse, map: (tools: unknown[]) => unknown[])
  * with the fields an older app does not know. Otherwise they stay the PC's: the schema never promises the key or the
  * reason to a call that goes to an app that drops them (revisão do #483).
  */
-export function withGateTools(requestBody: string, answer: GateResponse, withCards: boolean, tasksHere = true): GateResponse {
-  if (answer.status !== 200 || singleMessage(requestBody)?.method !== 'tools/list') return answer;
-  return mapToolList(answer, (tools) => servedTools(tools, withCards, tasksHere)) ?? answer;
+export function withGateTools(requestBody: string, answer: GateResponse, withCards: boolean, tasksHere = true, leaderOfAll = false): GateResponse {
+  if (answer.status !== 200) return answer;
+  const method = singleMessage(requestBody)?.method;
+  if (method === 'initialize') return withCards ? (withCardInstructions(answer) ?? answer) : answer;
+  if (method !== 'tools/list') return answer;
+  return mapToolList(answer, (tools) => servedTools(tools, withCards, tasksHere, leaderOfAll)) ?? answer;
 }
 
-function servedTools(tools: readonly unknown[], withCards: boolean, tasksHere: boolean): unknown[] {
+/**
+ * t-8406f473 — the PC's `initialize` with the task board's paragraph appended: the app on the PC does not serve the
+ * `card_*`, so its text (an old app's too) does not have it. Once only; `null` = not an initialize answer.
+ */
+function withCardInstructions(answer: GateResponse): GateResponse | null {
+  const parsed = singleMessage(answer.body);
+  const result = parsed && isRecord(parsed.result) ? parsed.result : null;
+  if (!parsed || !result) return null;
+  const own = typeof result.instructions === 'string' ? result.instructions : '';
+  if (own.includes(CARD_INSTRUCTIONS.trim())) return answer;
+  const instructions = own && !/\s$/.test(own) ? `${own} ${CARD_INSTRUCTIONS}` : `${own}${CARD_INSTRUCTIONS}`;
+  return { ...answer, body: JSON.stringify({ ...parsed, result: { ...result, instructions } }) };
+}
+
+function servedTools(tools: readonly unknown[], withCards: boolean, tasksHere: boolean, leaderOfAll: boolean): unknown[] {
   const ledgerTools = new Map<string, unknown>(LEDGER_TOOLS.map((tool) => [tool.name, tool]));
   const served: unknown[] = tasksHere ? tools.map((tool: unknown) => (isRecord(tool) && typeof tool.name === 'string' && ledgerTools.has(tool.name) ? ledgerTools.get(tool.name) : tool)) : [...tools];
   const names = new Set(served.map((tool) => (isRecord(tool) ? tool.name : null)));
-  return withCards ? [...served, ...CARD_TOOLS.filter((tool) => !names.has(tool.name))] : served;
+  return withCards ? [...served, ...cardToolsFor(leaderOfAll).filter((tool) => !names.has(tool.name))] : served;
+}
+
+/** t-8406f473 — the `card_*` definitions a session is served: the Líder único's carry `quadro`, nobody else's do. */
+function cardToolsFor(leaderOfAll: boolean): readonly { readonly name: string }[] {
+  return leaderOfAll ? LEADER_OF_ALL_CARD_TOOLS : CARD_TOOLS;
+}
+
+/** A tool list answered here, with the Líder único's `card_*` (with `quadro`) in place of everyone else's. */
+function withLeaderCardTools(tools: unknown[]): unknown[] {
+  const leaderTools = new Map<string, unknown>(LEADER_OF_ALL_CARD_TOOLS.map((tool) => [tool.name, tool]));
+  return tools.map((tool) => (isRecord(tool) && typeof tool.name === 'string' && leaderTools.has(tool.name) ? leaderTools.get(tool.name) : tool));
 }
 
 /**
@@ -351,6 +400,11 @@ export interface LiveOwnerSource {
   readonly tmux: () => ReadonlySet<string> | null;
   /** The other machine whose fresh picture has `placeId` on `projectPath` (retrato-satelite.ts); absent = none. */
   readonly machineOf?: (projectPath: string, placeId: string) => string | undefined;
+  /**
+   * t-c292d9a4 — the PC has not answered for long (retrato-local.ts `pcAway`): its last list is old, so which Revisor is
+   * alive is this source's word (`LedgerCaller.reviewerLive`), not the list's. Absent = never away.
+   */
+  readonly pcAway?: () => boolean;
 }
 
 /**
@@ -362,16 +416,18 @@ export interface LiveOwnerSource {
 export function withLiveOwner(caller: LedgerCaller, source: LiveOwnerSource | undefined): LedgerCaller {
   if (!source) return caller;
   let live: ReadonlySet<string> | null | undefined;
-  return {
-    ...caller,
-    ownerLive: (projectPath, placeId) => {
-      if (source.machineOf?.(projectPath, placeId) !== undefined) return true;
-      if (live === undefined) live = source.tmux();
-      if (live === null) return null;
-      const sid = placeId.startsWith(SESSION_PLACE_PREFIX) ? placeId.slice(SESSION_PLACE_PREFIX.length) : caller.sessionOf?.(projectPath, placeId);
-      return sid !== undefined && live.has(sid);
-    },
+  const runs = (projectPath: string, placeId: string): boolean | null => {
+    if (source.machineOf?.(projectPath, placeId) !== undefined) return true;
+    if (live === undefined) live = source.tmux();
+    if (live === null) return null;
+    // A `session:<sid>` place renewed here: its card carries the successor's sid (retrato-local `boardWith`).
+    const own = placeId.startsWith(SESSION_PLACE_PREFIX) ? placeId.slice(SESSION_PLACE_PREFIX.length) : undefined;
+    const card = caller.sessionOf?.(projectPath, placeId);
+    return (own !== undefined && live.has(own)) || (card !== undefined && live.has(card));
   };
+  // t-c292d9a4 (20/11) — with the PC away its last list keeps every session it saw "trabalhando", closed or not: a
+  // delivery named 14 Revisores, most of them closed, and the request to each closed one went stale in the PC's relay.
+  return { ...caller, ownerLive: runs, ...(source.pcAway?.() === true ? { reviewerLive: runs } : {}) };
 }
 
 const SESSION_PLACE_PREFIX = 'session:';
@@ -496,7 +552,21 @@ function leaderList(picture: BoardPicture | null, quadro: string | undefined): B
 
 /** This session's `tarefa_*` are answered by this gate: it has a picture that says its place (not the Líder único). */
 function tasksAnsweredHere(mine: PictureSession | null): mine is PictureSession {
-  return mine !== null && typeof callerFromPicture(mine) !== 'string';
+  return mine !== null && (typeof mine.renovadaPara === 'string' || typeof callerFromPicture(mine) !== 'string');
+}
+
+/** t-49dee38d — the words a session that handed its place over gets: in its `quemSou`, and as the gate's refusal. */
+export function renewedText(successor: string): string {
+  return `esta sessão foi renovada; quem responde pelo lugar agora é ${successor.slice(0, 8)}`;
+}
+
+/** The `tarefa_*` that only read the ledger: a session that handed its place over still may. */
+const LEDGER_READS: ReadonlySet<string> = new Set(['tarefa_listar', 'tarefa_ver', 'tarefa_novidades']);
+
+/** t-49dee38d — why a session that handed its place over may not write to the ledger; `null` = it may. */
+export function renewedRefusal(mine: PictureSession, tool: string): string | null {
+  if (typeof mine.renovadaPara !== 'string' || LEDGER_READS.has(tool)) return null;
+  return `Recusado: ${renewedText(mine.renovadaPara)}. Não registre andamento, entrega nem decisão de tarefa daqui: termine o turno e espere ser fechada.`;
 }
 
 function nameOf(who: Record<string, unknown>): string {
@@ -525,7 +595,8 @@ export function relayedTaskNotice(mine: PictureSession, caller: LedgerCaller, ca
   }
   if (typeof answer.id !== 'string' || answer.repetida === true) return null;
   const live = hearingPlaceIds(placeStatesOf(mine.listar));
-  const target = whoHears(mine.board, caller.placeId, (id) => live.has(id));
+  // t-c292d9a4 — with the PC away, only a place whose session runs (`reviewerLive`), never a closed one by the old list.
+  const target = whoHears(mine.board, caller.placeId, (id) => caller.reviewerLive?.(caller.projectPath, id) ?? live.has(id));
   const em = answer.tarefa?.ultimoEvento?.em;
   const eventAt = typeof em === 'string' && Number.isFinite(Date.parse(em)) ? Date.parse(em) : Date.now();
   const words = `${nameOf(mine.quemSou)} (${caller.placeId}) ${urgent}`;
@@ -631,6 +702,27 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
       }
     };
 
+    /**
+     * t-8406f473 — an assumir answered ok opens the task's card in Fazendo, tied to this session (cartao-da-tarefa.ts).
+     * It never holds the answer nor changes it (scripts parse it): it runs after, and a failure is a log line.
+     */
+    const afterAssume = (store: BoardStore, caller: LedgerCaller, taskId: string): void => {
+      const failed = (error: unknown): void => log(`[oraculo] portão: cartão da tarefa ${taskId} não abriu: ${error instanceof Error ? error.message : String(error)}`);
+      try {
+        // The entregador apart has no ledger here: the task the registro's answer carried (taskOf), else this one's.
+        const task = deps.taskOf?.(taskId) ?? deps.ledger().load().doc.tasks[taskId];
+        if (!task) return;
+        const place = mine?.board?.cards[caller.placeId];
+        const sessionId = place?.kind === 'session' && place.sessionId ? place.sessionId : undefined;
+        void openTaskCard(store, task, { placeId: caller.placeId, projectPath: caller.projectPath, ...(sessionId ? { sessionId } : {}) }).then(
+          (outcome) => log(`[oraculo] portão: cartão da tarefa ${taskId}: ${outcome.kind}${'card' in outcome ? ` ${outcome.card.id}` : ''}`),
+          failed,
+        );
+      } catch (error) {
+        failed(error);
+      }
+    };
+
     /** The renewal step before a task step (a failure is a log line). */
     const beforeTask = async (mine: PictureSession, caller: LedgerCaller, call: LedgerToolCall): Promise<void> => {
       if (!deps.recados) return;
@@ -643,6 +735,8 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
 
     const ledger = async (call: LedgerToolCall): Promise<BrowserToolOutcome> => {
       if (!mine) return { kind: 'error', text: NO_PICTURE };
+      const renewed = renewedRefusal(mine, call.tool);
+      if (renewed) return { kind: 'error', text: renewed };
       if (mine.quemSou.liderUnico === true && pc !== 'ligado') return leaderLedger(mine, call);
       const pictured = callerFromPicture(mine);
       if (typeof pictured === 'string') return { kind: 'error', text: pictured };
@@ -654,6 +748,7 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
       const raw = toolCallOf(singleMessage(body));
       const result = await runLedger(caller, call, { mine, args: raw?.name === call.tool ? raw.args : {} });
       if (!result.ok) return { kind: 'error', text: result.text };
+      if (call.tool === 'tarefa_assumir' && cards) afterAssume(cards, caller, call.id);
       // As the PC does (executeLedgerTool): the owner's phone shows "virou tarefa" with its name.
       if (call.tool === 'tarefa_criar' && call.pedidoDoDono && deps.linkPedido) {
         try {
@@ -694,22 +789,65 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
       const notYet = 'Sem retrato do quadro desta sessão ainda: o app manda um a cada meio minuto. Tente de novo em um minuto.';
       if (!mine || !cards) return { kind: 'error', text: notYet };
       const who = mine.quemSou;
-      if (who.liderUnico === true) return { kind: 'error', text: 'O Líder único não tem raia no quadro de tarefas: quem move os cartões é o Líder de cada quadro.' };
-      if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') return { kind: 'error', text: notYet };
-      const place = mine.board?.cards[who.lugar];
-      const outcome = await runCardTool(
-        cards,
-        {
+      let caller: CardCaller;
+      if (who.liderUnico === true) {
+        const chosen = await leaderCardCaller(cards, call.quadro);
+        if (typeof chosen === 'string') return { kind: 'error', text: chosen };
+        caller = chosen;
+      } else {
+        if (call.quadro) return { kind: 'error', text: 'Só o Líder único escolhe o quadro. Esta sessão usa sempre o próprio quadro (chame sem "quadro").' };
+        if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') return { kind: 'error', text: notYet };
+        const place = mine.board?.cards[who.lugar];
+        caller = {
           placeId: who.lugar,
           projectPath: who.pasta,
           ...(place?.kind === 'session' && place.sessionId ? { sessionId: place.sessionId } : {}),
           isLeader: mine.board ? isBoardOrchestrator(mine.board, who.lugar) : who.orquestrador === true,
           boardPlaces: new Set(mine.board ? Object.keys(mine.board.cards) : []),
-        },
-        call,
-        (deps.now ?? Date.now)(),
-      );
+        };
+      }
+      if (who.liderUnico !== true && (call.tool === 'card_move' || call.tool === 'card_justify')) await beforeCard(cards, mine, call.id);
+      const outcome = await runCardTool(cards, caller, call, (deps.now ?? Date.now)());
       return outcome.ok ? { kind: 'text', text: outcome.text } : { kind: 'error', text: outcome.text };
+    };
+
+    /**
+     * t-8406f473 — moving a card works its Oráculo task (`oraculo_id`) as a `tarefa_andamento` does: the task of a closed
+     * place whose successor is this session follows it first (the recados' renewal). A failure is a log line.
+     */
+    const beforeCard = async (store: BoardStore, mine: PictureSession, cardId: string): Promise<void> => {
+      if (!deps.recados?.antesDoCartao) return;
+      try {
+        const taskId = (await store.getCard(cardId))?.oraculo_id;
+        if (!taskId) return;
+        const caller = callerFromPicture(mine);
+        if (typeof caller === 'string') return;
+        await deps.recados.antesDoCartao(caller, mine, taskId);
+      } catch (error) {
+        log(`[oraculo] portão: renovação antes do cartão ${cardId} falhou: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    };
+
+    /**
+     * t-8406f473 (r-f4c27f39, decisão 1b) — the Líder único on the board he names: as `lider`, his own conversation, the
+     * places the picture has there, and the Líder of the lane only where the lane's Líder is `lider` (donel-dev and
+     * teamzone); elsewhere (bizops, its own Líder) he is one more place. A string = why not.
+     */
+    const leaderCardCaller = async (store: BoardStore, quadro: string | undefined): Promise<CardCaller | string> => {
+      const names = [...picturedBoards(picture).keys()].map(lastSegment).join(', ') || 'nenhum';
+      if (!quadro) return `Você é o Líder único e não tem quadro: diga qual em "quadro" (conheço: ${names}).`;
+      const found = pictureBoard(picture, quadro);
+      if (!found) return `Conheço só os quadros do retrato (${names}); "${quadro}" não está entre eles.`;
+      const [pasta, { listar }] = found;
+      try {
+        const projectId = await store.projectOf(pasta);
+        const lane = projectId === 'sem-projeto' ? null : ((await store.laneOf?.(projectId)) ?? null);
+        const places = listar.map((place) => (isRecord(place) ? place.id : null)).filter((id): id is string => typeof id === 'string');
+        // Resumed with `-r`, his live conversation is the folder's `current`, not the folder's sid.
+        return { placeId: LEADER_OF_ALL, projectPath: pasta, projectId, sessionId: currentConversation(deps.sessionsDir, sid) ?? sid, isLeader: lane?.leader_place === LEADER_OF_ALL, boardPlaces: new Set(places) };
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
     };
 
     const answer = await handleMcpPayload(parsed.payload, {
@@ -723,16 +861,51 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
       serverVersion: deps.serverVersion,
     });
     const response: GateResponse = answer === null ? { status: 202, headers: {}, body: '' } : { status: 200, headers: JSON_HEADERS, body: JSON.stringify(answer) };
-    // The list a session keeps for good: no key nor reason promised while its tasks would go to the PC.
-    if (!tasksAnsweredHere(mine) && singleMessage(body)?.method === 'tools/list') return { response: mapToolList(response, (tools) => tools.map(withoutGateFields)) ?? response, passOn };
+    // The list a session keeps for good: no key nor reason promised while its tasks would go to the PC; the Líder
+    // único's `card_*` with his `quadro`.
+    if (singleMessage(body)?.method === 'tools/list') {
+      const leaderOfAll = cards !== null && mine?.quemSou.liderUnico === true;
+      const tasksHere = tasksAnsweredHere(mine);
+      if (!tasksHere || leaderOfAll) {
+        const mapped = mapToolList(response, (tools) => {
+          const own = tasksHere ? tools : tools.map(withoutGateFields);
+          return leaderOfAll ? withLeaderCardTools(own) : own;
+        });
+        return { response: mapped ?? response, passOn };
+      }
+    }
     return { response, passOn };
   }
 
-  return async (request) => {
+  /** t-8406f473 — a session served the `card_*` tools is marked (the board's vigia wakes only those); never fails the answer. */
+  const markedCards = (request: GateRequest, response: GateResponse): GateResponse => {
+    if (!deps.markCards || response.status !== 200 || singleMessage(request.body)?.method !== 'tools/list') return response;
+    const sid = /^\/s\/([^/]+)\/mcp$/.exec(request.path)?.[1];
+    const result = singleMessage(response.body)?.result;
+    const tools = isRecord(result) && Array.isArray(result.tools) ? result.tools : [];
+    if (!sid || !tools.some((tool) => isRecord(tool) && typeof tool.name === 'string' && isCardToolName(tool.name))) return response;
+    try {
+      deps.markCards(sid);
+    } catch (error) {
+      log(`[oraculo] portão: marca de card_* da sessão ${sid} falhou: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return response;
+  };
+
+  return async (request) => markedCards(request, await serve(request));
+
+  async function serve(request: GateRequest): Promise<GateResponse> {
     const hook = HOOK_PATH.exec(request.path);
     if (hook) {
-      // The loopback is the server's check; the hooks carry no MCP token.
       if (!deps.recados || request.method !== 'POST') return { status: 404, headers: {}, body: '' };
+      // t-94202d38 — the loopback alone let any process of the machine (another user of it) take a session's recados by
+      // naming its tmux. The hook names its session (`X-Donel-Tmux: donel-<sid>`) and carries that session's hook token
+      // (`X-Donel-Token`, the `hook-header` file the app's own hooks send), compared in constant time, never logged.
+      const tmuxName = request.headers['x-donel-tmux']?.trim() ?? '';
+      const hookSid = tmuxName.startsWith(RECADOS_TMUX_PREFIX) ? tmuxName.slice(RECADOS_TMUX_PREFIX.length) : '';
+      const hookMeta = SID_PATTERN.test(hookSid) ? readHookMeta(deps.sessionsDir, hookSid) : null;
+      const token = request.headers['x-donel-token'] ?? '';
+      if (!hookMeta || !token || !sameToken(token, hookMeta.hookToken)) return { status: 401, headers: {}, body: '' };
       return deps.recados.hook(hook[1]!, request.headers, request.body);
     }
     const sessionHook = SESSION_HOOK_PATH.exec(request.path);
@@ -817,13 +990,13 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
           }
         }
       }
-      return withGateTools(request.body, forwarded, cards !== null, tasksAnsweredHere(mine));
+      return withGateTools(request.body, forwarded, cards !== null, tasksAnsweredHere(mine), mine?.quemSou.liderUnico === true);
     }
     if (request.method !== 'POST') return { status: 405, headers: { Allow: 'POST' }, body: '' };
     // Nothing reached the PC: a `sessao_enviar` the recados passed on is theirs again, now with the PC off. A session the
     // PC has no picture of is made here (nothing of the PC serves it).
     return (await local(sid, request.body, cards, 'desligado', true, mine ? picture : (deps.pictureWithoutPc?.(sid) ?? picture), true)).response;
-  };
+  }
 }
 
 export interface TunnelForwardOptions {

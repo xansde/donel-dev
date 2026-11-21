@@ -13,6 +13,11 @@ export const MAX_AUDIO_BYTES = 8 * 1024 * 1024;
 export const DEFAULT_WHISPER_URL = 'http://127.0.0.1:8178';
 /** Com a RAM cheia, 8 s de fala levaram 2 min (medido em 06/11). */
 const TRANSCRIBE_TIMEOUT_MS = 6 * 60_000;
+/**
+ * t-0eb91241 — the VPS transcriber (one for the app and the Pedir) holds an audio up to 8 min while the machine's 5-min
+ * load is above 12 (`TRANSCRITOR_ESPERA_MAX_S` on the VPS), then transcribes: its clients wait that long.
+ */
+export const VPS_TRANSCRIBE_TIMEOUT_MS = 10 * 60_000;
 /** Um resultado que o celular não buscou some depois disto. */
 const JOB_TTL_MS = 30 * 60_000;
 
@@ -42,8 +47,10 @@ export function whisperServerTranscriber(options: {
   readonly url?: string;
   readonly fetchFn?: typeof fetch;
   readonly language?: string;
-  /** Default 6 min (the PC, short of RAM); the VPS daemon passes 60 s. */
+  /** Default 6 min (the PC, short of RAM); the VPS daemon passes `VPS_TRANSCRIBE_TIMEOUT_MS`. */
   readonly timeoutMs?: number;
+  /** Whose transcriber it is, for the message when it does not answer (default the PC's OpenWhispr). */
+  readonly where?: 'pc' | 'vps';
 }): Transcribe {
   const url = options.url ?? DEFAULT_WHISPER_URL;
   const host = new URL(url).hostname;
@@ -62,7 +69,12 @@ export function whisperServerTranscriber(options: {
       const timedOut = error instanceof Error && error.name === 'TimeoutError';
       throw timedOut
         ? new TranscribeError('tempo', 'A transcrição demorou demais. O áudio ficou guardado; escreva o pedido.')
-        : new TranscribeError('conexao', 'O OpenWhispr não está aberto neste PC. Abra o OpenWhispr ou escreva o pedido.');
+        : new TranscribeError(
+            'conexao',
+            options.where === 'vps'
+              ? 'O transcritor da VPS não respondeu. O áudio ficou guardado; tente de novo em um minuto ou escreva o pedido.'
+              : 'O OpenWhispr não está aberto neste PC. Abra o OpenWhispr ou escreva o pedido.',
+          );
     }
     if (!response.ok) throw new TranscribeError('recusou', `O transcritor recusou o áudio (${response.status}).`);
     const body = (await response.json().catch(() => null)) as { text?: unknown; error?: unknown } | null;

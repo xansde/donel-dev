@@ -1,10 +1,11 @@
 import { createHash, createHmac } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
-import { createLedgerService, nodeLedgerProofFs } from '../src/main/ledger-store';
+import { createLedgerService, ledgerProofsDir, nodeLedgerProofFs } from '../src/main/ledger-store';
+import { maskSecrets } from '../src/shared/ledger/mirror';
 import { createMobileHandler } from '../src/main/celular/server';
 import { createCelularLocalStore } from '../src/oraculo/celular-local';
 import { createCelularV2Handler, signedMessage } from '../src/oraculo/celular-v2';
@@ -29,7 +30,7 @@ const KEY = createHash('sha256').update('token-do-aparelho', 'utf8').digest();
 const T0 = Date.parse('2026-11-18T23:00:00Z');
 const UUID = (n: number): string => `${String(n).padStart(8, '0')}-1111-4222-8333-444455556666`;
 
-function world(now = () => T0) {
+function world(now = () => T0, opts: { flags?: Set<string>; proofs?: Map<string, Buffer> } = {}) {
   const dir = tmp();
   const file = join(dir, 'celular-local.json');
   let store = createCelularLocalStore(file, now);
@@ -40,7 +41,11 @@ function world(now = () => T0) {
       verify: (message, signature) => (createHmac('sha256', KEY).update(message, 'utf8').digest('hex') === signature ? { name: 'Donel (Android)' } : null),
       doc: () => ledger.load().doc,
       store,
-      readProof: async () => ({ kind: 'sumiu' }),
+      readProof: async (name) => {
+        const bytes = opts.proofs?.get(name);
+        return bytes ? { kind: 'ok', bytes } : { kind: 'sumiu' };
+      },
+      flagOn: (name) => opts.flags?.has(name) ?? false,
       arvoreFile: join(dir, 'arvore.json'),
       kick: (fila) => kicks.push(fila),
       now,
@@ -159,6 +164,107 @@ describe('celular pela tailnet (/api/v2)', () => {
     const response = await off({ method: 'GET', url: '/api/v2/ping', body: '' });
     expect(response.status).toBe(404);
     expect(parse(response).erro).toBe('nao-encontrada');
+  });
+
+  // t-c62538a7 — o resultado de cada pedido do dono (contrato v1.7): o print de um pedido já aceito não pode sumir
+  // (antes, /prova dava 404 fora das cartas), um link com segredo não pode sair cru, e a rota só lê.
+  it('/resultados traz o pedido aceito do dono com o sha do print, e /prova serve os bytes; flag desligada = 404', async () => {
+    const png = Buffer.from('print do pedido aceito');
+    const file = '2026-11-20-abcdef012345.png';
+    const flags = new Set<string>();
+    const w = world(() => T0, { flags, proofs: new Map([[file, png]]) });
+    mkdirSync(ledgerProofsDir(join(w.dir, 'ledger.json')), { recursive: true });
+    writeFileSync(join(ledgerProofsDir(join(w.dir, 'ledger.json')), file), png);
+    const dev = { kind: 'lugar', placeId: 'place:dev', roleId: 'dev' } as const;
+    const mine = await w.ledger.apply({ kind: 'dono' }, { op: 'criar', projectPath: '/home/dono/seazone/atlas', request: 'caixa de credencial no app', doneWhen: 'print', due: '2026-11-20', ownerPlaceId: 'place:dev', risk: 'baixo' });
+    const other = await w.ledger.apply(dev, { op: 'criar', projectPath: '/home/dono/seazone/atlas', request: 'faxina interna do Dev', doneWhen: 'x', due: '2026-11-20', ownerPlaceId: 'place:dev', risk: 'baixo' });
+    if (!mine.ok || !other.ok) throw new Error('criar');
+    const id = mine.task.id;
+    const secretLink = 'https://example.com/callback?token=ghp_abcdefghijklmnopqrstuvwxyz0123456789';
+    expect(maskSecrets(secretLink).text).not.toBe(secretLink);
+    await w.ledger.apply(dev, { op: 'assumir', id });
+    const delivered = await w.ledger.apply(dev, {
+      op: 'entregar',
+      id,
+      proofs: [{ kind: 'arquivo', file, mediaType: 'image/png' }, { kind: 'link', url: 'https://github.com/xansde/donel-dev/pull/43' }, { kind: 'link', url: secretLink }, { kind: 'texto', text: 'feito, 3 prints' }],
+    });
+    expect(delivered.ok).toBe(true);
+    expect((await w.ledger.apply({ kind: 'dono' }, { op: 'aceitar', id })).ok).toBe(true);
+
+    expect((await w.call('GET', '/api/v2/resultados')).status).toBe(404);
+    expect((await w.call('GET', `/api/v2/prova?tarefa=${id}&ordem=0`)).status).toBe(404);
+
+    flags.add('celular-resultados');
+    const before = JSON.stringify(w.ledger.load().doc);
+    const response = await w.call('GET', '/api/v2/resultados');
+    expect(response.status).toBe(200);
+    const { resultados } = parse(response);
+    expect(resultados.map((r: { id: string }) => r.id)).toEqual([id]);
+    const [r] = resultados;
+    expect(r).toMatchObject({ estado: 'aceita', esperando_dono: false, pedido: 'caixa de credencial no app' });
+    expect(r.entrega.provas).toEqual([expect.objectContaining({ ordem: 0, tipo: 'imagem', sha256: createHash('sha256').update(png).digest('hex'), pronta: true })]);
+    expect(r.entrega.links.map((l: { url: string }) => l.url)).toEqual(['https://github.com/xansde/donel-dev/pull/43', maskSecrets(secretLink).text]);
+    expect(String(response.body)).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz0123456789');
+    const bytes = await w.call('GET', `/api/v2/prova?tarefa=${id}&ordem=0`);
+    expect(bytes.status).toBe(200);
+    expect(Buffer.from(bytes.body as Uint8Array).equals(png)).toBe(true);
+    expect(bytes.headers['X-Sha256']).toBe(r.entrega.provas[0].sha256);
+    expect(JSON.stringify(w.ledger.load().doc)).toBe(before);
+  });
+
+  // t-3206a54f — o objetivo de uma missão abre a última entrega e a prova em texto de qualquer tarefa, também a que o
+  // dono não pediu (o registro do vigia): sem isso o corpo do registro (o que parou, a causa, o que o time fez) some.
+  it('/resultado?tarefa= traz a prova em texto de uma tarefa que o dono não pediu; flag desligada ou id ausente = 404', async () => {
+    const flags = new Set<string>();
+    const w = world(() => T0, { flags });
+    const vigia = { kind: 'lugar', placeId: 'servico:vigia', roleId: 'servico' } as const;
+    const made = await w.ledger.apply(vigia, { op: 'criar', projectPath: '/home/dono/seazone/atlas', title: 'Máquina atlas fora do ar 17/11 07:30–08:08 (38 min)', request: 'avisar travas', doneWhen: 'registro', due: '2026-11-20', ownerPlaceId: 'servico:vigia', risk: 'baixo' });
+    if (!made.ok) throw new Error('criar');
+    const id = made.task.id;
+    const body = 'O que parou\n- Sessões: nenhuma lida.\n\nCausa provável: carga extrema\n- Leitura: carga até 287,3 em 4 CPUs.';
+    await w.ledger.apply(vigia, { op: 'assumir', id });
+    expect((await w.ledger.apply(vigia, { op: 'entregar', id, proofs: [{ kind: 'texto', text: body }] })).ok).toBe(true);
+
+    expect((await w.call('GET', `/api/v2/resultado?tarefa=${id}`)).status).toBe(404);
+    flags.add('celular-resultados');
+    const before = JSON.stringify(w.ledger.load().doc);
+    const response = await w.call('GET', `/api/v2/resultado?tarefa=${id}`);
+    expect(response.status).toBe(200);
+    const { resultado } = parse(response);
+    expect(resultado).toMatchObject({ id, titulo: 'Máquina atlas fora do ar 17/11 07:30–08:08 (38 min)' });
+    expect(resultado.entrega.prova_texto).toBe(body);
+    // the owner did not ask for it: the list of his results leaves it out, the single read does not
+    expect(parse(await w.call('GET', '/api/v2/resultados')).resultados).toEqual([]);
+    expect((await w.call('GET', '/api/v2/resultado?tarefa=t-nao-existe')).status).toBe(404);
+    expect((await w.call('GET', '/api/v2/resultado?tarefa=__proto__')).status).toBe(404);
+    expect(JSON.stringify(w.ledger.load().doc)).toBe(before);
+  });
+
+  // r-6df6986e (Líder único) — legibilidade marcada na origem, sem adivinhar pelo texto: a prova que o vigia de travas
+  // escreveu sai com `prova_legivel: true` (quem escreveu é a marca); a de qualquer outro lugar, com o mesmo texto, não.
+  it('/resultado marca prova_legivel só na entrega escrita pelo vigia; flag desligada = 404', async () => {
+    const flags = new Set<string>();
+    const w = world(() => T0, { flags });
+    const body = 'O que parou\n- Sessões: nenhuma lida.\n\nCausa provável: carga extrema';
+    const deliver = async (actor: { kind: 'lugar'; placeId: string; roleId: string }): Promise<string> => {
+      const made = await w.ledger.apply(actor, { op: 'criar', projectPath: '/home/dono/seazone/atlas', title: 'Máquina atlas fora do ar', request: 'pedido', doneWhen: `critério ${actor.roleId}`, due: '2026-11-20', ownerPlaceId: actor.placeId, risk: 'baixo' });
+      if (!made.ok) throw new Error(made.reason);
+      await w.ledger.apply(actor, { op: 'assumir', id: made.task.id });
+      const done = await w.ledger.apply(actor, { op: 'entregar', id: made.task.id, proofs: [{ kind: 'texto', text: body }] });
+      if (!done.ok) throw new Error(done.reason);
+      return made.task.id;
+    };
+    const vigiaId = await deliver({ kind: 'lugar', placeId: 'servico:vigia', roleId: 'servico' });
+    const otherId = await deliver({ kind: 'lugar', placeId: 'place:dev-atlas', roleId: 'dev' });
+
+    expect((await w.call('GET', `/api/v2/resultado?tarefa=${vigiaId}`)).status).toBe(404);
+    flags.add('celular-resultados');
+    const vigia = parse(await w.call('GET', `/api/v2/resultado?tarefa=${vigiaId}`)).resultado;
+    expect(vigia.entrega.prova_texto).toBe(body);
+    expect(vigia.entrega.prova_legivel).toBe(true);
+    const other = parse(await w.call('GET', `/api/v2/resultado?tarefa=${otherId}`)).resultado;
+    expect(other.entrega.prova_texto).toBe(body);
+    expect(other.entrega.prova_legivel).toBe(false);
   });
 
   it('a árvore vem do arquivo local; sem ele, vazia', async () => {

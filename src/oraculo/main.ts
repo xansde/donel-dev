@@ -7,8 +7,9 @@
 //
 // Env: DONEL_ORACULO_DIR (default ~/.donel/oraculo), DONEL_ORACULO_HOST (default: this place's Tailscale address),
 // DONEL_ORACULO_PORT (default 47816), DONEL_LIVRO_ARQUIVO (F6 do ledger bom: the journal file; unset = no journal
-// route, which is today's production until F4), DONEL_BOARD_CONFIG (quadro de tarefas, t-1e354d15: default
-// ~/.donel/board/supabase.json; missing = no `card_*` tools).
+// route, which is today's production until F4), DONEL_BOARD_SQLITE_CONFIG and DONEL_BOARD_CONFIG (quadro de
+// tarefas, t-1e354d15: default ~/.donel/board/sqlite.json, the board in a SQLite of this machine, else
+// ~/.donel/board/supabase.json; neither = no `card_*` tools; chosen in entregador.ts).
 // `<dir>/decisoes.json` (t-52bf8b45, same shape as the board's config): the phone app's decision queue in Supabase,
 // applied to the ledger here; missing = the queue is off. Its optional `importar` (t-8762b0ac) lists the unsigned rows
 // the Líder vouched for (`readImportList` in decisoes.ts); its optional `"semAssinatura": "aceitar"` (the owner's order,
@@ -110,7 +111,7 @@ async function runSatellite(dir: string, url: string): Promise<void> {
     taskOf: tasks.taskOf,
     reviewLinked: createSatelliteReviewLink(remote),
     picture: localPicture.get,
-    relay: notices.send,
+    relay: notices.deliver,
     firstMessages: join(dir, FIRST_MESSAGES_FILE),
     placeOf: placeOfSessionIn(sessionsDir),
   });
@@ -145,7 +146,8 @@ async function runSatellite(dir: string, url: string): Promise<void> {
       await notices.send(message);
       return true;
     },
-    openings: createSatelliteOpenings({ ...remote, dir, open: openLocal.openFor }),
+    // t-69eefa2c — the Líder único's look at a screen of this machine, asked in the same exchange.
+    openings: createSatelliteOpenings({ ...remote, dir, open: openLocal.openFor, screen: recados.screenOf }),
   });
   for (const sid of sweepUnfinishedOpenings(sessionsDir, await tmuxLocalSessions())) console.log(`[oraculo] abrir: apaguei a pasta ${sid}, aberta pela metade.`);
   const gatePort = Number(process.env.DONEL_ORACULO_PORTAO_PORT) || GATE_PORT;

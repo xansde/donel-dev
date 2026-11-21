@@ -18,6 +18,8 @@ import { esteiraStoreDir } from './esteira-store';
 import { createMindscapeStore, mindscapeFilePath } from './mindscape-store';
 import { createRolesStore, type RolesStore } from './roles-store';
 import { createCelularService, type CelularService } from './celular/service';
+import { sshVpsTranscriber } from './celular/transcrever-ssh';
+import { VPS_TRANSCRIBE_TIMEOUT_MS } from './celular/transcrever';
 import { LEADER_ROLE_ID, ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
@@ -3451,6 +3453,7 @@ function registerHealthIpcHandlers(): void {
     // t-5839d76b — a board that exists (`vigia.quadro`, else the one picked), never the projects' folder.
     projectPath: vigiaBoard,
     boardOfSession: boardNameOfSession,
+    placeOfSession: boardPlaceOfSession,
     cofre: () => appConfig.vigia.cofre,
     notify: (title, body) => {
       if (!systemNotificationsSupported()) return;
@@ -3468,6 +3471,7 @@ function registerHealthIpcHandlers(): void {
     statePath: join(app.getPath('userData'), 'vigia-travas.json'),
     // t-ffbf8e7d — with the Oráculo on a VPS whose daemon watches, that place's vault and sessions are the daemon's.
     delegated: () => remoteOracleHost?.vigiaDelegada() ?? null,
+    avisarLider: async (message) => deliverOwnerMessageViaBoard?.(message) ?? null,
     log: (line) => console.log(line),
   });
   vigiaService.start();
@@ -3982,6 +3986,19 @@ function boardNameOfSession(sid: string): string | undefined {
     }
   } catch {
     // unreadable: the card names the sessions only
+  }
+  return undefined;
+}
+
+/** t-0358187b — the board and the place of a session, so the vigia's record names the work that stopped with it. */
+function boardPlaceOfSession(sid: string): { projectPath: string; placeId: string } | undefined {
+  try {
+    const boards = createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load().boards;
+    for (const [projectPath, board] of Object.entries(boards)) {
+      for (const [placeId, card] of Object.entries(board.cards)) if (card.kind === 'session' && card.sessionId === sid) return { projectPath, placeId };
+    }
+  } catch {
+    // unreadable: the record names the sessions only
   }
   return undefined;
 }
@@ -5186,6 +5203,11 @@ void app.whenReady().then(async () => {
     placeName: placeNameOf,
     cardWriter: () => cardWriter,
     deliverToLeader: () => deliverPedidoToLeader,
+    // t-0eb91241 — one transcriber, on the VPS: the Pedir by voice this PC serves goes there by ssh, not to OpenWhispr.
+    // A transcriber set by hand on this PC (DONEL_WHISPER_URL) still wins (ressalva do #562).
+    ...(process.env.DONEL_WHISPER_URL
+      ? {}
+      : { transcribe: sshVpsTranscriber({ remotes: () => appConfig.accounts.remotes, command: sshRemoteCommand, timeoutMs: VPS_TRANSCRIBE_TIMEOUT_MS }) }),
     // Oráculo na VPS: the phone talks to the daemon there; this PC's server stays down.
     remote: () => remoteOracleHost?.celular() ?? null,
   }); // Ledger no celular (PWA só na Tailscale)

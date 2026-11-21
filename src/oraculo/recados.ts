@@ -58,11 +58,14 @@ import { promises as fsp } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { BrowserToolOutcome } from '../shared/browser/mcp';
-import { hasArrowLink } from '../shared/mindscape/agent-tools';
+import { hasArrowLink, LEADER_MESSAGE_REFUSAL } from '../shared/mindscape/agent-tools';
 import { listedPlaces, resolveAddress } from '../shared/mindscape/address';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { BOARD_LEADER, canReach, canReachLeader, isBoardOrchestrator, isLiveListedPlace, LEADER_OF_ALL_FROM, MY_OPENER, successorOf, whoHears, type ListedPlace } from '../shared/mindscape/reach';
 import { blockingScreen, isWorking } from '../shared/chat/screen';
+import { locateInputBox } from '../shared/cliInputBox';
+import { maskSecrets } from '../shared/ledger/secret-scan';
+import { MAX_SCREEN_TEXT } from './tela-satelite';
 import type { MindscapeBoard } from '../shared/mindscape/model';
 import type { LedgerDeliveredTo, LedgerTask } from '../shared/ledger/contract';
 import type { LedgerToolCall } from '../shared/ledger/tools';
@@ -170,11 +173,21 @@ export interface GateRecadosDeps {
    * the ledger's machine; `null` = it did not answer, and the message goes on to the PC, which decides).
    */
   readonly reviewLinked?: (mine: PictureSession, from: string, to: string) => Promise<boolean | null>;
+  /**
+   * t-8406f473 — the renewal before a card move, asked of the ledger's machine when `ledger()` is null (the entregador
+   * apart: `createSatelliteCardRenewal`). Absent = nothing follows there.
+   */
+  readonly renewCard?: (mine: PictureSession, taskId: string) => Promise<void>;
   readonly picture: () => BoardPicture | null;
   /** The sessions alive in this machine's tmux (folder sids). Default: `tmux -L donel ls`. */
   readonly localSessions?: () => Promise<ReadonlySet<string>>;
   readonly tmux?: RecadosTmux;
-  /** A notice to a place out of this machine (or to the Líder único): the PC's relay. Absent = only logged. */
+  /**
+   * A notice to a place out of this machine (or to the Líder único): the PC's relay. Absent = only logged. What it
+   * answers tells a `sessao_enviar` where it went (t-3f32edb1): `'lider'` (or `{placeId}` of the target) = that session's
+   * queue has it; `'nesta-maquina'` = still on this machine's disk (the satellite whose personal VPS did not answer);
+   * anything else = in the PC's relay.
+   */
   readonly relay?: (message: OwnerMessage) => Promise<unknown>;
   /**
    * t-d461e003 — a message for a place that runs on another machine whose satellite sends its picture here
@@ -204,11 +217,23 @@ export interface GateRecadosDeps {
    * that far). Default: `readTranscriptSince`.
    */
   readonly readTranscript?: (path: string, since: number) => Promise<string | null>;
+  /**
+   * t-69eefa2c — the Líder único's `sessao_ver_tela` of a place that runs on another machine (the Homologações, whose
+   * satellite pictures it): asked of that machine's satellite (tela-satelite.ts). `null` = no other machine runs it.
+   * Absent = only this machine's tmux.
+   */
+  readonly remoteScreen?: (projectPath: string, placeId: string) => Promise<BrowserToolOutcome | null>;
   readonly now?: () => number;
   readonly log?: (line: string) => void;
 }
 
 export interface GateRecadosHandle extends GateRecados {
+  /**
+   * t-69eefa2c — the satellite's side of a `sessao_ver_tela` asked from the personal VPS: the screen of the one live
+   * session of `placeId` (board `projectPath`) in this machine's tmux, its secrets masked, with its state read from it.
+   * `ok: false` = why not (no live session here, two of them, tmux silent).
+   */
+  screenOf(projectPath: string, placeId: string): Promise<{ readonly ok: boolean; readonly text: string }>;
   /**
    * t-4c60b815 — the owner's word on a card or his decision (the card writer), when the session that owns the task runs
    * here: queued in `recados.json` (the same key joins, even after delivered) and answered as delivered to it. `null` =
@@ -285,6 +310,10 @@ const ANSWER_LINE = 'Responda a quem mandou pelo sessao_enviar se precisar.';
 const RELAY_HOW = 'o PC está fora e esse lugar não roda nesta máquina: o recado espera no Oráculo e o app entrega quando o PC voltar';
 const NO_RELAY = 'O PC está fora e esse lugar não roda nesta máquina; o recado não saiu. Tente quando o PC ligar.';
 const REMOTE_HOW = 'esse lugar roda em outra máquina: o recado espera na fila dela, o portão de lá o busca em segundos e ele entra no fim do turno da sessão, ou na hora se ela estiver parada';
+/** t-3f32edb1 — what the satellite's relay put in the target's queue on the personal VPS (the Líder único alive there). */
+const QUEUED_THERE_HOW = 'entrou na fila de quem recebe, viva na VPS pessoal: entra no fim do turno dela, ou na hora se ela estiver parada; não reenvie';
+/** t-3f32edb1 — what the satellite keeps on its disk while the personal VPS does not answer. */
+const HELD_HERE_HOW = 'a VPS pessoal não respondeu agora: o recado espera em disco nesta máquina e vai a ela a cada 15 s; lá entra na fila de quem recebe se estiver viva, senão espera o PC; não reenvie';
 const NOT_PICTURED = 'Sem retrato do quadro desta sessão (lugar e setas): com o PC fora, o recado não sai daqui. Tente quando o PC ligar.';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -507,6 +536,36 @@ function plainScreen(text: string): string {
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
     .replace(/\x1b./g, '')
     .replace(/\s+$/, '');
+}
+
+/**
+ * t-69eefa2c (r-4f20422c) — what a session's screen says of it, for `sessao_ver_tela`: never the list the PC pushed
+ * before it left (frozen with the PC away: a session "parada" there may be mid-turn now). Mid-turn = the CLI's spinner
+ * above the box or "esc to interrupt" under it (`isWorking`); with no box drawn, "esc to interrupt" anywhere. A dialog
+ * or a box-less screen holding the CLI = it needs the owner (`pergunta`: what it asks). Else stopped. Pure.
+ */
+export function screenState(text: string): { readonly estado: 'trabalhando' | 'parada' | 'precisa do dono'; readonly pergunta?: string } {
+  const lines = plainScreen(text).split('\n');
+  if (isWorking(lines) || (!locateInputBox(lines) && BUSY_ON_SCREEN.test(text))) return { estado: 'trabalhando' };
+  const dialog = blockingScreen(lines);
+  if (dialog) return { estado: 'precisa do dono', pergunta: dialog.title };
+  return { estado: 'parada' };
+}
+
+/**
+ * The answer of `sessao_ver_tela`: the place, its state read from the screen, the screen's end, and where it came from.
+ * With `maxChars`, the screen loses its first characters until the answer fits (what goes to another machine).
+ */
+function screenAnswer(placeId: string, text: string, fonte: string, maxChars = Infinity): string {
+  const lines = plainScreen(text).split('\n');
+  let tela = lines.slice(-SCREEN_LINES).join('\n');
+  const answer = (): string => JSON.stringify({ id: placeId, ...screenState(text), tela, fonte }, null, 1);
+  let out = answer();
+  while (out.length > maxChars && tela) {
+    tela = tela.slice(Math.max(1, out.length - maxChars));
+    out = answer();
+  }
+  return out;
 }
 
 /** A turn that did not end (an Esc, a lost Stop) and wrote nothing for this long, with a quiet screen, is not running. */
@@ -830,13 +889,23 @@ function workedTaskIds(call: LedgerToolCall): string[] | undefined {
  * another process (the entregador apart, a satellite), so the renewal is always beside the ledger.
  */
 export async function renewBeforeTask(service: LedgerService, caller: LedgerCaller, mine: PictureSession, call: LedgerToolCall, log: (line: string) => void): Promise<void> {
-  const places = listedPlaces(mine.listar);
-  const closed = places.filter((place) => place.estado === 'fechada' && successorOf(mine.board, places, place.id) === caller.placeId);
-  if (!closed.length) return;
   // Only the task the call works on follows (§6): a read (tarefa_ver), listar, criar or novidades takes nothing, so
   // a sibling of the same role that only looks at it never takes it.
   const ids = workedTaskIds(call);
-  if (!ids?.length) return;
+  if (ids?.length) await renewTasks(service, caller, mine, ids, log);
+}
+
+/**
+ * t-8406f473 — before a `card_move`/`card_justify` of a card that carries an Oráculo task (`oraculo_id`): moving the card
+ * works the task as a `tarefa_andamento` does, so the task of a closed place whose successor is the caller follows it.
+ */
+export async function renewBeforeCard(service: LedgerService, caller: LedgerCaller, mine: PictureSession, taskId: string, log: (line: string) => void): Promise<void> {
+  if (taskId) await renewTasks(service, caller, mine, [taskId], log);
+}
+
+async function renewTasks(service: LedgerService, caller: LedgerCaller, mine: PictureSession, ids: readonly string[], log: (line: string) => void): Promise<void> {
+  const places = listedPlaces(mine.listar);
+  const closed = places.filter((place) => place.estado === 'fechada' && successorOf(mine.board, places, place.id) === caller.placeId);
   for (const place of closed) {
     const passed = await followRenewal(service, { projectPath: caller.projectPath, placeId: place.id, to: caller.placeId, ids });
     if (passed.length) log(`renovação: ${passed.join(', ')} de ${place.id} para ${caller.placeId}`);
@@ -1222,12 +1291,17 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     const task = taskOf(taskId);
     const signature = `${nameOf(mine.quemSou)} (${caller.placeId})`;
     const notes = new Map<string, string>();
-    // As on the PC: the Líder único's own "travada" or delivery is no urgent notice (it would come back to him).
+    // t-c292d9a4 — with the PC away, only a place whose session runs hears (`reviewerLive`): a notice to a closed one
+    // went stale in the PC's relay. Else (PC on, or unknown), the list.
+    const reviewerLive = caller.reviewerLive;
+    const runs = (id: string): boolean => reviewerLive?.(caller.projectPath, id) ?? isLive(id);
+    // As on the PC: the Líder único's own "travada" or delivery is no urgent notice (it would come back to him). The
+    // first place above that runs, else the board's Líder that runs, else the Líder único (`whoHears`).
     const urgent = caller.placeId === LEADER_OF_ALL ? null : urgentLedgerNotice(call, answerText);
-    if (urgent) notes.set(whoHears(board, caller.placeId, isLive), `${signature} ${urgent}`);
+    if (urgent) notes.set(whoHears(board, caller.placeId, runs), `${signature} ${urgent}`);
     // The Revisores out of the chain hear a delivery for acceptance (their words replace the generic one).
     if (call.tool === 'tarefa_entregar' && answer.entregue === true && task?.state === 'entregue' && board)
-      for (const reviewer of reviewersOutsideChain(board, isLive, deliverersOf(task))) notes.set(reviewer, reviewRequestNotice(signature, task));
+      for (const reviewer of reviewersOutsideChain(board, runs, deliverersOf(task))) notes.set(reviewer, reviewRequestNotice(signature, task));
     const accepted = call.tool === 'tarefa_aceitar' && answer.aceita === true;
     if (task && (accepted || (call.tool === 'tarefa_rejeitar' && answer.rejeitada === true)))
       for (const target of verdictTargets(task, caller.placeId)) notes.set(target, verdictNotice(signature, accepted, task, call.tool === 'tarefa_rejeitar' ? call.motivo : undefined));
@@ -1279,13 +1353,18 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     const machine = toLeader ? null : await toRemote(relayMessage(projectPath, me, name, placeId, words, true));
     if (machine) return { kind: 'text', text: JSON.stringify({ entregue: 'na-fila', para: placeId, maquina: machine, como: REMOTE_HOW }) };
     if (!deps.relay) return { kind: 'error', text: NO_RELAY };
+    let to: unknown;
     try {
-      await deps.relay(relayMessage(projectPath, me, name, placeId, words));
+      to = await deps.relay(relayMessage(projectPath, me, name, placeId, words));
     } catch (error) {
       log(`recado de ${me} para ${placeId} não entrou no relay: ${error instanceof Error ? error.message : String(error)}`);
       return { kind: 'error', text: NO_RELAY };
     }
-    return { kind: 'text', text: JSON.stringify({ entregue: 'pelo-relay', para: toLeader ? 'lider' : placeId, como: RELAY_HOW }) };
+    const para = toLeader ? 'lider' : placeId;
+    // t-3f32edb1 — the satellite's relay says where it went: never "espera o PC" for what the target's queue has.
+    const queued = toLeader ? to === 'lider' : isRecord(to) && to.placeId === placeId;
+    if (queued) return { kind: 'text', text: JSON.stringify({ entregue: 'na-fila', para, como: QUEUED_THERE_HOW }) };
+    return { kind: 'text', text: JSON.stringify({ entregue: 'pelo-relay', para, como: to === 'nesta-maquina' ? HELD_HERE_HOW : RELAY_HOW }) };
   }
 
   /**
@@ -1343,7 +1422,18 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
    * the PC (`findPlace`): only the exact id of a place of the board, never a role, "lider-quadro", "quem-me-abriu" nor
    * the successor of a closed place (closing would end a live sibling); two live sessions with the place = refused.
    */
-  async function leaderLocalTarget(call: ScreenCall | CloseCall, verb: string): Promise<{ readonly placeId: string; readonly sid: string; readonly estado?: string } | string> {
+  async function leaderLocalTarget(call: ScreenCall | CloseCall, verb: string): Promise<{ readonly placeId: string; readonly sid: string } | string> {
+    const place = await leaderPlace(call);
+    if (typeof place === 'string') return place;
+    if (!place.sid) return `"${place.placeId}" não roda nesta máquina: com o PC fora, ${verb} só sessões do tmux daqui.`;
+    return { placeId: place.placeId, sid: place.sid };
+  }
+
+  /**
+   * The place the Líder único names (as `leaderLocalTarget`), with the sid of its one live session in this machine's
+   * tmux, or none (`sid` absent: it may run on another machine). A string = why not.
+   */
+  async function leaderPlace(call: ScreenCall | CloseCall): Promise<{ readonly projectPath: string; readonly placeId: string; readonly sid?: string } | string> {
     const boards = picturedBoards(deps.picture());
     const names = [...boards.keys()].map(lastSegment).join(', ') || 'nenhum';
     const id = call.quem.trim();
@@ -1360,9 +1450,8 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     const reach = board ? canReach({ schemaVersion: 8, boards: { [projectPath]: board } }, LEADER_OF_ALL_FROM, { projectPath, placeId: id }) : { ok: false as const, reason: 'o retrato não tem as setas deste quadro.' };
     if (!reach.ok) return `Sem ligação: o Líder único não alcança "${id}" no quadro ${lastSegment(projectPath)}: ${reach.reason}`;
     const sids = sidsOfPlace(projectPath, id, await localSessions());
-    if (!sids.length) return `"${id}" não roda nesta máquina: com o PC fora, ${verb} só sessões do tmux daqui.`;
     if (sids.length > 1) return `"${id}" tem ${sids.length} sessões vivas nesta máquina (${sids.join(', ')}); não sei qual é a do lugar. Espere o PC voltar.`;
-    return { placeId: id, sid: sids[0]!, ...(estado ? { estado } : {}) };
+    return { projectPath, placeId: id, ...(sids[0] ? { sid: sids[0] } : {}) };
   }
 
   /** When each target with a waiting item was first missing from tmux (memory only). */
@@ -1793,7 +1882,14 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       }
       outgoing.sort((a, b) => a.at - b.at);
       const oracle = { lugar: '', nome: 'Oráculo' };
-      for (const out of outgoing) enqueue(oracle, { lugar, sid: para }, out.words, out.key);
+      // Counted only when it is queued now: one already forwarded (its key joins) is not "mais 1" on the call after the
+      // kill (ensaio 2 de 20/11: the owner's phrase, typed into the old one, was counted again, though sent once).
+      const queuedBefore = new Set(items.map((item) => item.chave));
+      let forwarded = 0;
+      for (const out of outgoing) {
+        if (!queuedBefore.has(keyedChave(out.key))) forwarded += 1;
+        enqueue(oracle, { lugar, sid: para }, out.words, out.key);
+      }
       const sources = new Set(outgoing.flatMap((out) => (out.source ? [out.source] : [])));
       if (sources.size)
         update(
@@ -1805,9 +1901,9 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
         (item) => item.para.sid === de && item.estado === 'fila',
         (item) => ({ ...item, para: { ...item.para, sid: para } }),
       );
-      if (outgoing.length || passed.length)
-        log(`renovação de ${de.slice(0, 8)}: ${outgoing.length} recado(s) ou mensagem(ns) que chegaram depois da passagem reencaminhado(s) a ${para.slice(0, 8)}; ${passed.length} da fila passado(s) a ela.`);
-      return { ok: true, reencaminhados: outgoing.length, passados: passed.length };
+      if (forwarded || passed.length)
+        log(`renovação de ${de.slice(0, 8)}: ${forwarded} recado(s) ou mensagem(ns) que chegaram depois da passagem reencaminhado(s) a ${para.slice(0, 8)}; ${passed.length} da fila passado(s) a ela.`);
+      return { ok: true, reencaminhados: forwarded, passados: passed.length };
     } catch (error) {
       return { ok: false, motivo: error instanceof Error ? error.message : String(error) };
     }
@@ -1854,11 +1950,14 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       if ('erro' in target) return pcOn ? 'repassar' : { kind: 'error', text: target.erro };
       const words = `${call.tarefa ? `[${call.tarefa}] ` : ''}${call.texto}`;
       if ('liderUnico' in target) {
-        // The PC's rule (t-d461e003): opened by the Líder único, below one he opened, or nobody alive above to hear it.
+        // The PC's rule (t-d461e003, t-3f32edb1): opened by the Líder único, below one he opened, or nobody alive above
+        // it nor a live Líder of its board to hear it (a top place, like the Dalton, included).
         const opened = (id: string): boolean => places.find((place) => place.id === id)?.abertaPor === LEADER_OF_ALL;
         const isLive = (id: string): boolean => isLiveListedPlace(places.find((place) => place.id === id));
         const reach = canReachLeader({ schemaVersion: 8, boards: { [projectPath]: board } }, { projectPath, placeId: me }, opened, isLive);
         if (!reach.ok) return pcOn ? 'repassar' : { kind: 'error', text: `Sem ligação com o Líder único: ${reach.reason}` };
+        // Dono, 09/11 — the same as the PC: only a finished task or a lock goes to the Líder único (t-3f32edb1, revisão do #567).
+        if (!call.motivo) return { kind: 'error', text: LEADER_MESSAGE_REFUSAL };
         // t-c3fbe852 — the Líder único alive here hears it from its own queue, PC on or off (no paste through the PC).
         const back = relayMessage(projectPath, me, nameOf(who), LEADER_OF_ALL, words);
         const item = await toLocalLeader({ lugar: me, nome: nameOf(who), sid }, words, back);
@@ -1895,15 +1994,30 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     },
 
     async verTela(_sid, call) {
-      const target = await leaderLocalTarget(call, 'vejo');
+      const target = await leaderPlace(call);
       if (typeof target === 'string') return { kind: 'error', text: target };
+      if (!target.sid) {
+        // t-69eefa2c — a place of another machine (the Homologações): its satellite sends the screen of its tmux.
+        const remote = deps.remoteScreen ? await deps.remoteScreen(target.projectPath, target.placeId) : null;
+        return remote ?? { kind: 'error', text: `"${target.placeId}" não roda nesta máquina: com o PC fora, vejo só sessões do tmux daqui.` };
+      }
       const screen = await tmux.screen(target.sid);
       if (!screen) return { kind: 'error', text: `O tmux de "${target.placeId}" não respondeu; tente de novo em instantes.` };
-      const lines = plainScreen(screen.text).split('\n');
-      return {
-        kind: 'text',
-        text: JSON.stringify({ id: target.placeId, ...(target.estado ? { estado: target.estado } : {}), tela: lines.slice(-SCREEN_LINES).join('\n'), fonte: 'tmux desta VPS (o PC está fora)' }, null, 1),
-      };
+      // The state from the screen (r-4f20422c): the list the PC left is frozen while it is away.
+      return { kind: 'text', text: screenAnswer(target.placeId, screen.text, 'tmux desta VPS (o PC está fora)') };
+    },
+
+    async screenOf(projectPath, placeId) {
+      const sids = sidsOfPlace(projectPath, placeId, await localSessions());
+      const sessions = deps.picture()?.sessoes ?? {};
+      const named = sids.map((sid) => sessions[sid]?.quemSou.roda).find((name): name is string => typeof name === 'string' && name.length > 0);
+      const roda = named ?? 'esta máquina';
+      if (!sids.length) return { ok: false, text: `"${placeId}" não tem sessão viva em ${roda}.` };
+      if (sids.length > 1) return { ok: false, text: `"${placeId}" tem ${sids.length} sessões vivas em ${roda}; não sei qual é a do lugar.` };
+      const screen = await tmux.screen(sids[0]!);
+      if (!screen) return { ok: false, text: `O tmux de "${placeId}" em ${roda} não respondeu; tente de novo em instantes.` };
+      // The screen leaves this machine: its secrets masked first (never in a log).
+      return { ok: true, text: screenAnswer(placeId, maskSecrets(plainScreen(screen.text)).text, `tmux ${named ? `da ${named}` : 'da máquina de lá'} pelo satélite (o PC está fora)`, MAX_SCREEN_TEXT) };
     },
 
     async fechar(_sid, call) {
@@ -1932,6 +2046,13 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     async antesDaTarefa(caller, mine, call) {
       const service = deps.ledger();
       if (service) await renewBeforeTask(service, caller, mine, call, log);
+    },
+
+    async antesDoCartao(caller, mine, taskId) {
+      const service = deps.ledger();
+      if (service) await renewBeforeCard(service, caller, mine, taskId, log);
+      // Apart (the entregador with no ledger here): the registro runs it, beside the ledger.
+      else if (deps.renewCard) await deps.renewCard(mine, taskId);
     },
 
     depoisDaTarefa(_sid, mine, caller, call, answerText) {

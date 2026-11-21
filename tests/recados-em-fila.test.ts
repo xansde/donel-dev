@@ -657,7 +657,7 @@ describe('Recados em fila: caixa pendurada', () => {
       now: g.clock,
       log: () => undefined,
     });
-    const sent = JSON.parse(textOf(await recados.enviar(SID_DEV, g.picture.sessoes[SID_DEV]!, { tool: 'sessao_enviar', para: 'lider', texto: 'olha o PR 12' }))) as { id: string };
+    const sent = JSON.parse(textOf(await recados.enviar(SID_DEV, g.picture.sessoes[SID_DEV]!, { tool: 'sessao_enviar', para: 'lider', texto: 'olha o PR 12', motivo: 'bloqueio' }))) as { id: string };
     expect(sent.id).toMatch(/^r-/);
     for (let i = 0; i < 1800; i += 1) {
       await recados.tick();
@@ -796,25 +796,44 @@ describe.skipIf(process.platform === 'win32')('recados-hook.sh: só a CLI do pr�
     const bin = join(dir, 'bin');
     mkdirSync(bin);
     const called = join(dir, 'curl-chamado');
+    const argsFile = join(dir, 'curl-args');
     const tool = (name: string, body: string): void => {
       writeFileSync(join(bin, name), body);
       chmodSync(join(bin, name), 0o755);
     };
+    // t-94202d38 — the session's hook token, as the app writes it next to its meta (the same header as its own hooks).
+    const home = join(dir, 'home');
+    const header = join(home, '.donel', 's', SID_DEV, 'hook-header');
+    const token = 'k'.repeat(32);
+    mkdirSync(join(home, '.donel', 's', SID_DEV), { recursive: true });
+    writeFileSync(header, `X-Donel-Token: ${token}\n`, { mode: 0o600 });
     // The pane's process is the outer "claude"; a nested one is a claude run by it, with the same tmux.
     tool('tmux', `#!/bin/sh\ncase "$*" in *pane_pid*) echo "$FAKE_PANE_PID" ;; *) echo donel-${SID_DEV} ;; esac\n`);
-    tool('curl', `#!/bin/sh\ncat > '${called}'\necho '{"decision":"block","reason":"recado"}'\n`);
+    tool('curl', `#!/bin/sh\nprintf '%s\\n' "$@" > '${argsFile}'\ncat > '${called}'\necho '{"decision":"block","reason":"recado"}'\n`);
     tool('claude', '#!/bin/bash\n[ -n "${FAKE_PANE_PID:-}" ] || export FAKE_PANE_PID=$$\nif [ "${1:-}" = dentro ]; then "$0"; exit $?; fi\nprintf \'{}\' | bash "$HOOK" fim-de-turno\nexit $?\n');
     const { FAKE_PANE_PID: _drop, ...base } = process.env;
-    const env = { ...base, PATH: `${bin}:${process.env.PATH ?? ''}`, TMUX: '/tmp/fake-tmux,1,0', HOOK: fileURLToPath(new URL('../scripts/vps/recados-hook.sh', import.meta.url)) };
+    const env = { ...base, HOME: home, PATH: `${bin}:${process.env.PATH ?? ''}`, TMUX: '/tmp/fake-tmux,1,0', HOOK: fileURLToPath(new URL('../scripts/vps/recados-hook.sh', import.meta.url)) };
 
     const own = spawnSync(join(bin, 'claude'), [], { env, encoding: 'utf8', timeout: 20_000 });
     expect(own.stdout).toContain('"decision":"block"');
     expect(existsSync(called)).toBe(true);
+    // The token goes from the session's file, never on curl's command line (any user of the machine reads argv).
+    const args = readFileSync(argsFile, 'utf8').split('\n');
+    expect(args).toContain(`@${header}`);
+    expect(args[args.indexOf(`@${header}`) - 1]).toBe('-H');
+    expect(args.join(' ')).not.toContain(token);
     rmSync(called);
 
     const nested = spawnSync(join(bin, 'claude'), ['dentro'], { env, encoding: 'utf8', timeout: 20_000 });
     expect(nested.status).toBe(0);
     expect(nested.stdout).toBe('');
+    expect(existsSync(called)).toBe(false);
+
+    // Without the session's token file nothing is asked (the gate would refuse it): the CLI goes on as with no hook.
+    rmSync(header);
+    const without = spawnSync(join(bin, 'claude'), [], { env, encoding: 'utf8', timeout: 20_000 });
+    expect(without.status).toBe(0);
+    expect(without.stdout).toBe('');
     expect(existsSync(called)).toBe(false);
   });
 });

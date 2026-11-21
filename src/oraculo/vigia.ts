@@ -12,6 +12,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { LedgerService } from '../main/ledger-store';
+import type { OwnerMessage } from '../main/ledger-card-writer';
 import { createVigiaService, type VigiaService } from '../main/vigia/vigia-service';
 import { buildRemoteHealthScript, parseRemoteHealthOutput, type RemoteHealthReport } from '../shared/health/remote';
 import { sanitizeVigiaPrefs, type VigiaCofrePrefs } from '../shared/vigia/config';
@@ -79,6 +80,8 @@ export interface DaemonVigiaDeps {
   readonly log?: (line: string) => void;
   /** The board (its name) of a session of this place, from the picture the PC left: the card of a loop names them. */
   readonly boardOfSession?: (sid: string) => string | undefined;
+  /** Tells the Líder único of a task the owner asked for on a vigia card (the daemon's delivery to the Líder). */
+  readonly avisarLider?: (message: OwnerMessage) => Promise<unknown>;
 }
 
 export interface DaemonVigia {
@@ -114,6 +117,7 @@ export function createDaemonVigia(deps: DaemonVigiaDeps): DaemonVigia {
     tasks: () => Object.values(deps.ledger().load().doc.tasks),
     projectPath: () => config?.projectPath ?? null,
     ...(deps.boardOfSession ? { boardOfSession: deps.boardOfSession } : {}),
+    ...(deps.avisarLider ? { avisarLider: deps.avisarLider } : {}),
     cofre: () => config?.cofre ?? null,
     // No screen here: the card's push to the phone is the warning. A card that cannot be made is logged.
     notify: (title, body) => deps.log?.(`[vigia] ${title}: ${body}`),
