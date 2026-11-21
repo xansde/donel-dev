@@ -212,6 +212,34 @@ describe('celular pela tailnet (/api/v2)', () => {
     expect(JSON.stringify(w.ledger.load().doc)).toBe(before);
   });
 
+  // t-3206a54f — o objetivo de uma missão abre a última entrega e a prova em texto de qualquer tarefa, também a que o
+  // dono não pediu (o registro do vigia): sem isso o corpo do registro (o que parou, a causa, o que o time fez) some.
+  it('/resultado?tarefa= traz a prova em texto de uma tarefa que o dono não pediu; flag desligada ou id ausente = 404', async () => {
+    const flags = new Set<string>();
+    const w = world(() => T0, { flags });
+    const vigia = { kind: 'lugar', placeId: 'servico:vigia', roleId: 'servico' } as const;
+    const made = await w.ledger.apply(vigia, { op: 'criar', projectPath: '/home/dono/seazone/atlas', title: 'Máquina atlas fora do ar 17/11 07:30–08:08 (38 min)', request: 'avisar travas', doneWhen: 'registro', due: '2026-11-20', ownerPlaceId: 'servico:vigia', risk: 'baixo' });
+    if (!made.ok) throw new Error('criar');
+    const id = made.task.id;
+    const body = 'O que parou\n- Sessões: nenhuma lida.\n\nCausa provável: carga extrema\n- Leitura: carga até 287,3 em 4 CPUs.';
+    await w.ledger.apply(vigia, { op: 'assumir', id });
+    expect((await w.ledger.apply(vigia, { op: 'entregar', id, proofs: [{ kind: 'texto', text: body }] })).ok).toBe(true);
+
+    expect((await w.call('GET', `/api/v2/resultado?tarefa=${id}`)).status).toBe(404);
+    flags.add('celular-resultados');
+    const before = JSON.stringify(w.ledger.load().doc);
+    const response = await w.call('GET', `/api/v2/resultado?tarefa=${id}`);
+    expect(response.status).toBe(200);
+    const { resultado } = parse(response);
+    expect(resultado).toMatchObject({ id, titulo: 'Máquina atlas fora do ar 17/11 07:30–08:08 (38 min)' });
+    expect(resultado.entrega.prova_texto).toBe(body);
+    // the owner did not ask for it: the list of his results leaves it out, the single read does not
+    expect(parse(await w.call('GET', '/api/v2/resultados')).resultados).toEqual([]);
+    expect((await w.call('GET', '/api/v2/resultado?tarefa=t-nao-existe')).status).toBe(404);
+    expect((await w.call('GET', '/api/v2/resultado?tarefa=__proto__')).status).toBe(404);
+    expect(JSON.stringify(w.ledger.load().doc)).toBe(before);
+  });
+
   it('a árvore vem do arquivo local; sem ele, vazia', async () => {
     const w = world();
     expect(parse(await w.call('GET', '/api/v2/arvore'))).toEqual({ nos: [], rodada: null });
