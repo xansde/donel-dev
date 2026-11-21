@@ -20,13 +20,13 @@ const SVC = 's'.repeat(64);
 const hash = (token: string): string => createHash('sha256').update(token).digest('hex');
 const dirs: string[] = [];
 
-function setup() {
+function setup(now?: () => number) {
   const dir = mkdtempSync(join(tmpdir(), 'oraculo-svc-'));
   dirs.push(dir);
   mkdirSync(join(dir, 'servicos'));
   writeFileSync(join(dir, 'servicos', 'mencoes.sha256'), `${hash(SVC)}\n`);
   const file = join(dir, 'ledger.json');
-  const ledger = createLedgerService({ filePath: file, io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs });
+  const ledger = createLedgerService({ filePath: file, io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs, ...(now ? { now } : {}) });
   const handle = createOracleApiHandler({ ledger, ledgerFile: file, tokenHash: () => hash(PC), services: () => readServiceHashes(dir) });
   return { dir, file, ledger, handle };
 }
@@ -142,6 +142,42 @@ describe('carta de serviço no Oráculo da VPS', () => {
     const alerta = JSON.parse((await as(REC, { ...criar, request: 'alerta SRE: disco cheio', ownerPlaceId: 'lider', requestedBy: 'SRE' })).body as string);
     expect(alerta).toMatchObject({ ok: true, estado: 'aberta' });
     expect(JSON.parse(readFileSync(file, 'utf8')).tasks[alerta.id].ownerPlaceId).toBe('lider');
+  });
+
+  // t-27340b98 — a cron routine (the faixa-preta's) records its daily lines on a task of its own, with no live session.
+  // What breaks unseen: a service writing on someone else's task, or the same line twice on a retry.
+  it('serviço registra andamento só na tarefa de que é dono; na alheia é recusado; a mesma chave não grava em dobro', async () => {
+    const clock = { at: Date.parse('2026-11-20T14:05:00Z') };
+    const { file, ledger, handle } = setup(() => clock.at);
+    const lines = (id: string) => (JSON.parse(readFileSync(file, 'utf8')).tasks[id].events as { by: unknown; text?: string }[]).flatMap((e) => (progressOf(e as never) ? [{ by: e.by, progress: progressOf(e as never) }] : []));
+    const own =JSON.parse((await handle(svc(criar))).body as string).id as string;
+    await handle(svc({ op: 'assumir', id: own }));
+    const progress = { estado: 'trabalhando', prova: 'linha 1 de 5 do dia 20/11', proximo: 'linha 2' };
+    const op = { op: 'andamento', id: own, progress, requestId: 'fp-2026-11-20-l1' };
+    expect(JSON.parse((await handle(svc(op))).body as string)).toMatchObject({ ok: true, id: own, estado: 'em-execucao' });
+    expect(JSON.parse((await handle(svc(op))).body as string)).toMatchObject({ ok: true, id: own });
+    expect(lines(own)).toEqual([{ by: { kind: 'lugar', placeId: 'servico:mencoes', roleId: 'servico' }, progress }]);
+    // The routine runs again (or resends after a timeout) once other lines went in, even hours later: line 1 stays one.
+    const line = (n: number) => ({ estado: 'trabalhando', prova: `linha ${n} de 5 do dia 20/11`, proximo: `linha ${n + 1}` });
+    for (const n of [2, 3]) await handle(svc({ op: 'andamento', id: own, progress: line(n), requestId: `fp-2026-11-20-l${n}` }));
+    clock.at += 5 * 60 * 60 * 1000;
+    expect(JSON.parse((await handle(svc(op))).body as string)).toMatchObject({ ok: true, id: own });
+    // The same key with another line is refused: nothing lost silently, nothing written twice.
+    expect((await handle(svc({ ...op, progress: line(9) }))).status).toBe(400);
+    expect(lines(own).map((l) => l.progress)).toEqual([progress, line(2), line(3)]);
+
+    const other = await ledger.apply({ kind: 'dono' }, { op: 'criar', projectPath: '/p', request: 'x', doneWhen: 'y', due: '2026-11-20', ownerPlaceId: 'place:e8e2842d-1111-4111-8111-111111111111', risk: 'baixo' });
+    if (!other.ok) throw new Error(other.reason);
+    await ledger.apply({ kind: 'lugar', placeId: other.task.ownerPlaceId }, { op: 'assumir', id: other.task.id });
+    for (const bad of [
+      { ...op, id: other.task.id },
+      { ...op, id: other.task.id, requestId: undefined },
+      { ...op, extra: 1 },
+      { ...op, progress: { ...progress, resumo: 'x' } },
+    ])
+      expect((await handle(svc(bad))).status).toBe(400);
+    expect(lines(other.task.id)).toEqual([]);
+    expect(lines(own)).toHaveLength(3);
   });
 
   // t-e1e992ab — a real refusal of the VPS's limiter (a session waiting for a slot, a Workflow, a heavy run, a cron
