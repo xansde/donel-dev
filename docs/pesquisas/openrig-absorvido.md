@@ -1,8 +1,46 @@
 # OpenRig — registro de absorção
 
-Último commit absorvido: d29937aff7266c06249d70c3e92dba8a18742344
+Último commit absorvido: 66a1de95dccb841d159139cf2c04161d6aa9ead2
 
 Referência de design do Mindscape (github.com/mvschwarz/openrig). Procedimento na skill `absorver-openrig`. Cada rodada lista o que virou PR, o que ficou adiado, o que espera o dono e o que foi descartado.
+
+## 2026-11-21 — d29937a..66a1de9
+
+51 commits do OpenRig; versões 0.7.20 (nova).
+
+### Vale → PR
+
+- **Sessão renovada avisa uma vez quando não dá para ver se ela leu a passagem** (plano: item 07, Sessão renovada em voo, B36). Origem: OpenRig `08c21c7`. PR: https://github.com/xansde/donel-dev/pull/577. Teste primeiro: em `tests/session-renewal.test.ts`, 4 testes novos (`toolTouchesHandoff`, `renewalHandoffUptakeNotice`, `RENEWAL_HANDOFF_UPTAKE_WAIT_MS`) falharam antes de as funções existirem e, depois, os 18 do arquivo passaram. Verify verde pela fila, com `origin/staging` mesclada (175 arquivos, 2285 testes, 3 pulados, build ok).
+- **Rotina em sombra mostra quantas rodadas fez e quantas ficou quieta** (plano: item 20, Rotinas que acordam lugares, com filtro sem LLM). Origem: OpenRig `7de5d8b`, `006b576`. PR: https://github.com/xansde/donel-dev/pull/578. Sem teste novo: a contagem fica em memória e só aparece na tela, nada é salvo, apagado ou morto (regra de testes enxutos). Verify verde pela fila, em dia com `origin/staging` 86e0920e (175 arquivos, 2281 testes, 3 pulados, build ok).
+
+### Vale → adiado
+
+Nenhum (teto de 3 PRs não foi atingido).
+
+### Vale → pendente para o dono
+
+Nenhum novo. Seguem abertas as perguntas das seções anteriores (responder o "esperando você" em nome do dono, desde 08/11 e 20/11; fila durável do item 13, desde 10/11; pausa até o reset do limite de uso, desde 12/11).
+
+### Descartado
+
+- Compactação: aviso de recuperação sem pai vai à pessoa (`b7e2b80`): o Donel já tem igual: quem ouve o urgente é `whoHears` em `src/shared/mindscape/reach.ts` (seta acima, Líder do quadro, Líder único), e "precisa do dono" chega ao dono pelo ledger. A parte do aviso de leitura do restore virou o PR #577.
+- Permissão ou elicitação pendente anotada no envio (`55fb6a3`, `c45f880`): o Donel já tem melhor: `sessao_enviar` espera a permissão aberta na tela e responde "Ainda não entrou: há uma permissão aberta na tela dela" (`agentBridge.ts`), e `elicitation_dialog` já conta como precisa do dono (`session-semaphore-manager.ts`). A parte do Codex é específica de runtime.
+- Watchdog: retry de wake que falha ao gravar e `routeToFallback` guardado (`006b576` backoff, `adeb414`): refactor interno do daemon e da fila SQLite, sem ideia nova além da contagem de rodadas, que entrou no PR #578.
+- Fila e varredura de travados: concorrência e diagnóstico: fila durável do daemon (SQLite, transações, geração do claimant) não iniciada no Donel; o achado para destino que sumiu o Donel já cobre ao passar tarefas de lugar que se foi (`agentBridge`, `PASS_ON_GRACE_MS`).
+- Reconciliação de identidade Pi/OMP e cursor de fim de turno: específico dos runtimes Pi/OMP/Codex do daemon; o Donel não roda esses motores.
+- Tmux: session bus, sondas antigas, escape de separador: tmux fora de escopo (o Donel é dono dos PTYs).
+- Herdr: follow view se recupera após reinício: específico do Herdr; a prévia do terminal (item 05) não depende de multiplexador externo.
+- Workflow: abort fecha instância já encerrada por handoff de fila: runtime de workflow do daemon atrelado à fila; sem equivalente no Donel.
+- Slack gateway: dedup, linha de status, quem respondeu: Slack fora do plano; o Donel fala no Slack só pela Composio/slack-guard.
+- TUI: sanitização no copy, execução ausente, seat page: TUI fora de escopo (dono, 03/11).
+- CLI: start/up/restore/snapshot, proxy de sandbox, escopos: CLI do daemon OpenRig; reabrir o quadro inteiro (item 09) segue pendente de refinamento e o resultado por lugar na reabertura remota já está no PR #446 aberto.
+- Seat pool: aviso do bloco armazenado ao lançar: nada arma pool nesta versão; sem ideia aplicável.
+- MCP: `lead_of` declarado conta como líder do time: o Donel resolve o Líder pelo quadro (`reach.ts`, ADR 0007), não por roster declarado.
+- Proof/missão: leitura de prontidão e política: a faixa do ledger (`ledgerStrip`) já mostra contagens, então zero aberto não se confunde com bloqueado; a política `everyJudge` não tem equivalente.
+- Performance de `/api/ps` e `/api/ps/resources`: otimização interna do daemon, sem ideia nova.
+- Build e CI: esbuild postinstall com npm 12: packaging/CI do próprio OpenRig.
+- Release 0.7.20 e docs: release e docs do OpenRig; os temas de código do changelog estão triados nas linhas acima.
+- Codex: pod state gerado antes do dispatch: específico do runtime Codex no daemon.
 
 ## 2026-11-20 — eca0402..d29937a
 
