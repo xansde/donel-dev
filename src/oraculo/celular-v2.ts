@@ -11,9 +11,9 @@
 
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { isClosed, lastDelivery, type LedgerDoc, type LedgerTask } from '../shared/ledger/contract';
+import { isClosed, lastDelivery, SERVICE_PLACE_PREFIX, VIGIA_SERVICE, type LedgerDoc, type LedgerEvent, type LedgerTask } from '../shared/ledger/contract';
 import { deliveryNote } from '../shared/ledger/labels';
-import { actorName, cartaRow, cartaRows, maskSecrets, tarefaRows, type CartaProvaRef, type PlaceInfoOf, type TarefaRow } from '../shared/ledger/mirror';
+import { actorName, cartaRow, cartaRows, maskSecrets, tarefaRow, tarefaRows, type CartaProvaRef, type PlaceInfoOf, type TarefaRow } from '../shared/ledger/mirror';
 import { localFlagOn } from '../main/local-flags';
 import { prepareProof, type ProofReader } from '../main/ledger-mirror/cartas';
 import type { MobileRequest, MobileResponse } from '../main/celular/server';
@@ -247,6 +247,15 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     }
   }
 
+  /**
+   * r-6df6986e (Líder único) — the proof is people's text, marked at the source and never guessed from the words: the
+   * ledger has no field for it on a proof, so the mark is who wrote the delivery. Today only the vigia de travas
+   * (`servico:vigia`) writes its proof for the owner to read (what stopped, the likely cause, what the team did).
+   */
+  function provaLegivel(delivery: LedgerEvent): boolean {
+    return delivery.by.kind === 'lugar' && delivery.by.placeId === `${SERVICE_PLACE_PREFIX}${VIGIA_SERVICE}`;
+  }
+
   async function entregaOf(task: LedgerTask, row: TarefaRow, places: PlaceInfoOf | undefined): Promise<Record<string, unknown> | null> {
     const delivery = lastDelivery(task);
     if (!delivery) return null;
@@ -262,8 +271,52 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
       nota: note === undefined ? null : masked(note.trim(), MAX_RESULTADO_NOTA),
       links,
       prova_texto: row.prova_texto,
+      prova_legivel: provaLegivel(delivery),
       provas: await Promise.all(cartaRow(task, []).provas.map(provaMeta)),
     };
+  }
+
+  /** One task's result, as `GET resultados` lists it and `GET resultado` gives it. */
+  async function resultadoOf(row: TarefaRow, task: LedgerTask, places: PlaceInfoOf | undefined, ownerName: string): Promise<Record<string, unknown>> {
+    const delivery = lastDelivery(task);
+    return {
+      id: row.id,
+      quadro: row.quadro,
+      frente: row.frente,
+      titulo: row.titulo,
+      estado: row.estado,
+      esperando_dono: row.esperando_dono,
+      quem_pediu: row.quem_pediu,
+      pedido: masked(row.pedido, MAX_RESULTADO_NOTA),
+      criterio: row.criterio ? masked(row.criterio, 1000) : null,
+      quem_faz_agora: row.quem_faz_agora,
+      quem_entregou: delivery ? actorName(delivery.by, task.projectPath, places, ownerName) : null,
+      criada_em: row.criada_em,
+      entregue_em: row.entregue_em,
+      decidida_em: row.decidida_em,
+      atualizado_em: iso(lastAt(task)),
+      decisao: row.decisao,
+      motivo: row.motivo === null ? null : masked(row.motivo, 1000),
+      ultimo_andamento: row.ultimo_andamento,
+      ultimo_andamento_em: row.ultimo_andamento_em,
+      entrega: await entregaOf(task, row, places),
+    };
+  }
+
+  /**
+   * t-3206a54f — the result of any one task (`GET resultado?tarefa=<id>`): a mission's objective opens its last delivery
+   * and its text proof, also when the owner did not ask for it (the vigia's records). Same flag as `resultados`.
+   */
+  async function resultado(query: URLSearchParams): Promise<MobileResponse> {
+    const doc = deps.doc();
+    if (!doc) return erro(503, 'sem-ledger');
+    const id = query.get('tarefa') ?? '';
+    const task = Object.hasOwn(doc.tasks, id) ? doc.tasks[id]! : undefined;
+    if (!task) return erro(404, 'nao-encontrada');
+    const places = deps.places?.();
+    const ownerName = deps.ownerName?.() ?? 'Alexandre';
+    const row = tarefaRow(doc, task, places, [], { ownerName });
+    return json(200, { gerado_em: new Date(now()).toISOString(), resultado: await resultadoOf(row, task, places, ownerName) });
   }
 
   async function resultados(): Promise<MobileResponse> {
@@ -279,31 +332,7 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
       .sort((a, b) => lastAt(b.task) - lastAt(a.task) || a.row.id.localeCompare(b.row.id))
       .slice(0, MAX_RESULTADOS);
     const out: Array<Record<string, unknown>> = [];
-    for (const { row, task } of picked) {
-      const delivery = lastDelivery(task);
-      out.push({
-        id: row.id,
-        quadro: row.quadro,
-        frente: row.frente,
-        titulo: row.titulo,
-        estado: row.estado,
-        esperando_dono: row.esperando_dono,
-        quem_pediu: row.quem_pediu,
-        pedido: masked(row.pedido, MAX_RESULTADO_NOTA),
-        criterio: row.criterio ? masked(row.criterio, 1000) : null,
-        quem_faz_agora: row.quem_faz_agora,
-        quem_entregou: delivery ? actorName(delivery.by, task.projectPath, places, ownerName) : null,
-        criada_em: row.criada_em,
-        entregue_em: row.entregue_em,
-        decidida_em: row.decidida_em,
-        atualizado_em: iso(lastAt(task)),
-        decisao: row.decisao,
-        motivo: row.motivo === null ? null : masked(row.motivo, 1000),
-        ultimo_andamento: row.ultimo_andamento,
-        ultimo_andamento_em: row.ultimo_andamento_em,
-        entrega: await entregaOf(task, row, places),
-      });
-    }
+    for (const { row, task } of picked) out.push(await resultadoOf(row, task, places, ownerName));
     return json(200, { gerado_em: new Date(now()).toISOString(), desde_dias: RESULTADOS_DIAS, resultados: out });
   }
 
@@ -598,6 +627,7 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     if (method === 'GET' && path === 'prova') return prova(url.searchParams);
     if (method === 'GET' && path === 'tarefas') return tarefas(url.searchParams);
     if (method === 'GET' && path === 'resultados' && flagOn(RESULTADOS_FLAG)) return resultados();
+    if (method === 'GET' && path === 'resultado' && flagOn(RESULTADOS_FLAG)) return resultado(url.searchParams);
     if (isPost && path === 'decidir') return decidir(body!);
     if (isPost && path === 'tarefas-pedidas') return pedir(body!);
     if (method === 'GET' && path === 'tarefas-pedidas') return json(200, { pedidas: deps.store.pedidasView(100) });

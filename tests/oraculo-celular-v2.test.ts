@@ -212,6 +212,61 @@ describe('celular pela tailnet (/api/v2)', () => {
     expect(JSON.stringify(w.ledger.load().doc)).toBe(before);
   });
 
+  // t-3206a54f — o objetivo de uma missão abre a última entrega e a prova em texto de qualquer tarefa, também a que o
+  // dono não pediu (o registro do vigia): sem isso o corpo do registro (o que parou, a causa, o que o time fez) some.
+  it('/resultado?tarefa= traz a prova em texto de uma tarefa que o dono não pediu; flag desligada ou id ausente = 404', async () => {
+    const flags = new Set<string>();
+    const w = world(() => T0, { flags });
+    const vigia = { kind: 'lugar', placeId: 'servico:vigia', roleId: 'servico' } as const;
+    const made = await w.ledger.apply(vigia, { op: 'criar', projectPath: '/home/dono/seazone/atlas', title: 'Máquina atlas fora do ar 17/11 07:30–08:08 (38 min)', request: 'avisar travas', doneWhen: 'registro', due: '2026-11-20', ownerPlaceId: 'servico:vigia', risk: 'baixo' });
+    if (!made.ok) throw new Error('criar');
+    const id = made.task.id;
+    const body = 'O que parou\n- Sessões: nenhuma lida.\n\nCausa provável: carga extrema\n- Leitura: carga até 287,3 em 4 CPUs.';
+    await w.ledger.apply(vigia, { op: 'assumir', id });
+    expect((await w.ledger.apply(vigia, { op: 'entregar', id, proofs: [{ kind: 'texto', text: body }] })).ok).toBe(true);
+
+    expect((await w.call('GET', `/api/v2/resultado?tarefa=${id}`)).status).toBe(404);
+    flags.add('celular-resultados');
+    const before = JSON.stringify(w.ledger.load().doc);
+    const response = await w.call('GET', `/api/v2/resultado?tarefa=${id}`);
+    expect(response.status).toBe(200);
+    const { resultado } = parse(response);
+    expect(resultado).toMatchObject({ id, titulo: 'Máquina atlas fora do ar 17/11 07:30–08:08 (38 min)' });
+    expect(resultado.entrega.prova_texto).toBe(body);
+    // the owner did not ask for it: the list of his results leaves it out, the single read does not
+    expect(parse(await w.call('GET', '/api/v2/resultados')).resultados).toEqual([]);
+    expect((await w.call('GET', '/api/v2/resultado?tarefa=t-nao-existe')).status).toBe(404);
+    expect((await w.call('GET', '/api/v2/resultado?tarefa=__proto__')).status).toBe(404);
+    expect(JSON.stringify(w.ledger.load().doc)).toBe(before);
+  });
+
+  // r-6df6986e (Líder único) — legibilidade marcada na origem, sem adivinhar pelo texto: a prova que o vigia de travas
+  // escreveu sai com `prova_legivel: true` (quem escreveu é a marca); a de qualquer outro lugar, com o mesmo texto, não.
+  it('/resultado marca prova_legivel só na entrega escrita pelo vigia; flag desligada = 404', async () => {
+    const flags = new Set<string>();
+    const w = world(() => T0, { flags });
+    const body = 'O que parou\n- Sessões: nenhuma lida.\n\nCausa provável: carga extrema';
+    const deliver = async (actor: { kind: 'lugar'; placeId: string; roleId: string }): Promise<string> => {
+      const made = await w.ledger.apply(actor, { op: 'criar', projectPath: '/home/dono/seazone/atlas', title: 'Máquina atlas fora do ar', request: 'pedido', doneWhen: `critério ${actor.roleId}`, due: '2026-11-20', ownerPlaceId: actor.placeId, risk: 'baixo' });
+      if (!made.ok) throw new Error(made.reason);
+      await w.ledger.apply(actor, { op: 'assumir', id: made.task.id });
+      const done = await w.ledger.apply(actor, { op: 'entregar', id: made.task.id, proofs: [{ kind: 'texto', text: body }] });
+      if (!done.ok) throw new Error(done.reason);
+      return made.task.id;
+    };
+    const vigiaId = await deliver({ kind: 'lugar', placeId: 'servico:vigia', roleId: 'servico' });
+    const otherId = await deliver({ kind: 'lugar', placeId: 'place:dev-atlas', roleId: 'dev' });
+
+    expect((await w.call('GET', `/api/v2/resultado?tarefa=${vigiaId}`)).status).toBe(404);
+    flags.add('celular-resultados');
+    const vigia = parse(await w.call('GET', `/api/v2/resultado?tarefa=${vigiaId}`)).resultado;
+    expect(vigia.entrega.prova_texto).toBe(body);
+    expect(vigia.entrega.prova_legivel).toBe(true);
+    const other = parse(await w.call('GET', `/api/v2/resultado?tarefa=${otherId}`)).resultado;
+    expect(other.entrega.prova_texto).toBe(body);
+    expect(other.entrega.prova_legivel).toBe(false);
+  });
+
   it('a árvore vem do arquivo local; sem ele, vazia', async () => {
     const w = world();
     expect(parse(await w.call('GET', '/api/v2/arvore'))).toEqual({ nos: [], rodada: null });
