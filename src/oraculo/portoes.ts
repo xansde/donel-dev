@@ -15,6 +15,7 @@
 //   of this board waiting for a verdict, between who delivered it and a live Revisor of outside the chain)? `{ligado}`.
 // - `aviso` `{aviso: OwnerMessage}`: a notice the satellite's recados could not deliver there (the target runs on
 //   another machine, or it is the Líder único) goes to this daemon's relay, which the PC delivers when it answers.
+//   `{ok, entregue}` (t-3f32edb1): `'lider'` or `{placeId}` = a queue here has it; `null` = the PC's relay.
 // - `retrato` `{retrato}` (t-d461e003): the picture of that machine's sessions, made there (retrato-satelite.ts); an
 //   older one than the one kept is ignored (`{ok, guardado}`).
 // - `recados` `{entregues?: [id]}` (t-d461e003): the satellite took those; answers what still waits for that machine
@@ -326,7 +327,9 @@ export function createGateToolRoutes(deps: GateToolRoutesDeps): GateRoutes {
     if (!deps.notice) return null;
     const message = noticeOf(body.aviso);
     if (!message) return json(400, { error: 'aviso inválido' });
-    await deps.notice(message);
-    return json(200, { ok: true });
+    const to = await deps.notice(message);
+    // t-3f32edb1 — where it went (the Líder único's queue here, a place's, or the PC's relay = null): the satellite tells
+    // its sender. A satellite of before reads only `ok`.
+    return json(200, { ok: true, entregue: to === 'lider' ? to : isRecord(to) && typeof to.placeId === 'string' ? { placeId: to.placeId } : null });
   };
 }

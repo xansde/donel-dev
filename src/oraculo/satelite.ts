@@ -206,6 +206,12 @@ export function createSatelliteCardRenewal(deps: SatelliteDeps): (mine: PictureS
 export interface SatelliteNotices {
   /** Queues the notice on disk (a repeat of the same key joins it) and tries to send what waits; never throws for the network. */
   send(message: OwnerMessage): Promise<Exclude<LedgerDeliveredTo, null> | 'pendente'>;
+  /**
+   * t-3f32edb1 — `send`, answering where it went for the recados' `sessao_enviar`: `'lider'`/`{placeId}` = the personal
+   * VPS put it in that queue there (its `entregue`); `'pendente'` = it took it into the PC's relay; `'nesta-maquina'` =
+   * it did not answer, the notice waits on disk here. (`send`'s `'lider'` is only "taken there": the phone chat's.)
+   */
+  deliver(message: OwnerMessage): Promise<Exclude<LedgerDeliveredTo, null> | 'pendente' | 'nesta-maquina'>;
   /** What waits on disk, and the item of a key (sent = acked `'lider'` or to its place): the phone chat reads them. */
   readonly outbox: Pick<Relay, 'pending' | 'byKey'>;
   /** One round: what waits goes to the personal VPS's relay, oldest first; the first failure ends the round. */
@@ -215,6 +221,18 @@ export interface SatelliteNotices {
 }
 
 const NOTICE_RETRY_MS = 15_000;
+
+/** The `entregue` of the personal VPS's answer to an `aviso` (t-3f32edb1); a registro of before sends none. */
+function entregueOf(body: string): Exclude<LedgerDeliveredTo, null> | null {
+  try {
+    const to = (JSON.parse(body) as { entregue?: unknown }).entregue;
+    if (to === 'lider') return 'lider';
+    if (typeof to === 'object' && to !== null && typeof (to as { placeId?: unknown }).placeId === 'string') return { placeId: (to as { placeId: string }).placeId };
+  } catch {
+    // below
+  }
+  return null;
+}
 
 /**
  * The satellite's recados `relay`: a notice for another machine (or the Líder único) to the personal VPS's relay. It
@@ -230,6 +248,8 @@ export function createSatelliteNotice(deps: SatelliteDeps & { readonly file: str
   const outbox = createRelay({ filePath: deps.file, io: deps.io });
   let flushing: Promise<void> | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
+  /** Where the personal VPS said each key went (its `entregue`), in memory: the answer of `deliver`. */
+  const reached = new Map<string, Exclude<LedgerDeliveredTo, null>>();
 
   async function round(): Promise<void> {
     const token = deps.token();
@@ -241,6 +261,8 @@ export function createSatelliteNotice(deps: SatelliteDeps & { readonly file: str
         log(`aviso ${item.id} espera: o Oráculo da VPS pessoal ${typeof result === 'object' ? `respondeu HTTP ${result.status}` : 'não respondeu'}.`);
         return;
       }
+      const there = entregueOf(result.body);
+      if (there) reached.set(item.key, there);
       outbox.ack(item.id, item.message.placeId ? { placeId: item.message.placeId } : 'lider');
     }
   }
@@ -259,6 +281,13 @@ export function createSatelliteNotice(deps: SatelliteDeps & { readonly file: str
       const sent = await outbox.send(message, 0);
       await flush();
       return sent;
+    },
+    async deliver(message) {
+      await outbox.send(message, 0);
+      await flush();
+      const item = message.key ? outbox.byKey(message.key) : undefined;
+      if (item && !item.deliveredTo) return 'nesta-maquina';
+      return (message.key && reached.get(message.key)) || 'pendente';
     },
     flush,
     outbox,

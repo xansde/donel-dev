@@ -182,7 +182,12 @@ export interface GateRecadosDeps {
   /** The sessions alive in this machine's tmux (folder sids). Default: `tmux -L donel ls`. */
   readonly localSessions?: () => Promise<ReadonlySet<string>>;
   readonly tmux?: RecadosTmux;
-  /** A notice to a place out of this machine (or to the Líder único): the PC's relay. Absent = only logged. */
+  /**
+   * A notice to a place out of this machine (or to the Líder único): the PC's relay. Absent = only logged. What it
+   * answers tells a `sessao_enviar` where it went (t-3f32edb1): `'lider'` (or `{placeId}` of the target) = that session's
+   * queue has it; `'nesta-maquina'` = still on this machine's disk (the satellite whose personal VPS did not answer);
+   * anything else = in the PC's relay.
+   */
   readonly relay?: (message: OwnerMessage) => Promise<unknown>;
   /**
    * t-d461e003 — a message for a place that runs on another machine whose satellite sends its picture here
@@ -305,6 +310,10 @@ const ANSWER_LINE = 'Responda a quem mandou pelo sessao_enviar se precisar.';
 const RELAY_HOW = 'o PC está fora e esse lugar não roda nesta máquina: o recado espera no Oráculo e o app entrega quando o PC voltar';
 const NO_RELAY = 'O PC está fora e esse lugar não roda nesta máquina; o recado não saiu. Tente quando o PC ligar.';
 const REMOTE_HOW = 'esse lugar roda em outra máquina: o recado espera na fila dela, o portão de lá o busca em segundos e ele entra no fim do turno da sessão, ou na hora se ela estiver parada';
+/** t-3f32edb1 — what the satellite's relay put in the target's queue on the personal VPS (the Líder único alive there). */
+const QUEUED_THERE_HOW = 'entrou na fila de quem recebe, viva na VPS pessoal: entra no fim do turno dela, ou na hora se ela estiver parada; não reenvie';
+/** t-3f32edb1 — what the satellite keeps on its disk while the personal VPS does not answer. */
+const HELD_HERE_HOW = 'a VPS pessoal não respondeu agora: o recado espera em disco nesta máquina e vai a ela a cada 15 s; lá entra na fila de quem recebe se estiver viva, senão espera o PC; não reenvie';
 const NOT_PICTURED = 'Sem retrato do quadro desta sessão (lugar e setas): com o PC fora, o recado não sai daqui. Tente quando o PC ligar.';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1339,13 +1348,18 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     const machine = toLeader ? null : await toRemote(relayMessage(projectPath, me, name, placeId, words, true));
     if (machine) return { kind: 'text', text: JSON.stringify({ entregue: 'na-fila', para: placeId, maquina: machine, como: REMOTE_HOW }) };
     if (!deps.relay) return { kind: 'error', text: NO_RELAY };
+    let to: unknown;
     try {
-      await deps.relay(relayMessage(projectPath, me, name, placeId, words));
+      to = await deps.relay(relayMessage(projectPath, me, name, placeId, words));
     } catch (error) {
       log(`recado de ${me} para ${placeId} não entrou no relay: ${error instanceof Error ? error.message : String(error)}`);
       return { kind: 'error', text: NO_RELAY };
     }
-    return { kind: 'text', text: JSON.stringify({ entregue: 'pelo-relay', para: toLeader ? 'lider' : placeId, como: RELAY_HOW }) };
+    const para = toLeader ? 'lider' : placeId;
+    // t-3f32edb1 — the satellite's relay says where it went: never "espera o PC" for what the target's queue has.
+    const queued = toLeader ? to === 'lider' : isRecord(to) && to.placeId === placeId;
+    if (queued) return { kind: 'text', text: JSON.stringify({ entregue: 'na-fila', para, como: QUEUED_THERE_HOW }) };
+    return { kind: 'text', text: JSON.stringify({ entregue: 'pelo-relay', para, como: to === 'nesta-maquina' ? HELD_HERE_HOW : RELAY_HOW }) };
   }
 
   /**
