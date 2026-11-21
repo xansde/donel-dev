@@ -519,6 +519,11 @@ export interface LiveState {
   readonly terminalNeeded: { readonly reason: TerminalNeededReason } | null;
   /** What the session left running in the background (running first), plus the last few that ended. */
   readonly background: readonly BackgroundTask[];
+  /**
+   * B36 — only on a conversation that continues a renewal: whether one of its tool calls opened the handoff
+   * (`toolTouchesHandoff`). Absent elsewhere.
+   */
+  readonly handoffRead?: boolean;
 }
 
 // ---------------------------------------------------------------------------

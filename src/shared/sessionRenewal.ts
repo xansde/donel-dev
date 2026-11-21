@@ -406,6 +406,53 @@ export function renewalHandoffDeliveryNotice(outcome: RenewalHandoffDelivery, ha
   return `A sessão nova não confirmou ter recebido a passagem de bastão: a primeira mensagem ${why}. A passagem está em ${handoffPath}. Confira antes de reenviar.`;
 }
 
+/**
+ * How long, after the first message went in, the tab waits to see the new session open the handoff before it says it
+ * cannot tell (OpenRig 08c21c7). The end of the first turn says it sooner.
+ */
+export const RENEWAL_HANDOFF_UPTAKE_WAIT_MS = 30 * 60_000;
+
+const READ_TOOLS: ReadonlySet<string> = new Set(['Read']);
+const SHELL_TOOLS: ReadonlySet<string> = new Set(['Bash', 'PowerShell']);
+
+function fileNameOf(path: string): string {
+  return path.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? '';
+}
+
+/**
+ * Whether a tool call of the new session opened the handoff: a `Read` of a file with the handoff's name (a session on a
+ * place reads its own copy, same name), or a shell command that names it. The handoff file name is unique per renewal.
+ */
+export function toolTouchesHandoff(tool: string, input: unknown, handoffPath: string): boolean {
+  const name = fileNameOf(handoffPath);
+  if (name === '' || typeof input !== 'object' || input === null) return false;
+  const fields = input as Record<string, unknown>;
+  if (READ_TOOLS.has(tool)) return typeof fields.file_path === 'string' && fileNameOf(fields.file_path) === name;
+  if (SHELL_TOOLS.has(tool)) return typeof fields.command === 'string' && fields.command.replace(/\\/g, '/').includes(name);
+  return false;
+}
+
+export interface RenewalHandoffUptakeInput {
+  readonly handoffPath: string;
+  /** A tool call of the new session opened the handoff (`toolTouchesHandoff`). */
+  readonly read: boolean;
+  /** The first turn after the handoff message ended (`Stop`). */
+  readonly turnEnded: boolean;
+  /** Since the first message went in. */
+  readonly elapsedMs: number;
+}
+
+/**
+ * `null` while the new session may still open the handoff, or once it did. At the end of its first turn, or past
+ * `RENEWAL_HANDOFF_UPTAKE_WAIT_MS`, without a read: one notice for the tab. It says it cannot tell (the session may know
+ * the content another way), never that it failed, and never resends.
+ */
+export function renewalHandoffUptakeNotice(input: RenewalHandoffUptakeInput): string | null {
+  if (input.read) return null;
+  if (!input.turnEnded && input.elapsedMs < RENEWAL_HANDOFF_UPTAKE_WAIT_MS) return null;
+  return `A sessão nova recebeu a passagem de bastão, mas não abriu o arquivo: não sei se leu. A passagem está em ${input.handoffPath}.`;
+}
+
 /** "250k" for the warning and the prompts. */
 export function formatTokensK(tokens: number): string {
   return `${Math.round(tokens / 1000)}k`;

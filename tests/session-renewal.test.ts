@@ -5,7 +5,10 @@ import {
   DEFAULT_SESSION_RENEWAL_PREFS,
   parseHandoffHeader,
   renewalHandoffDeliveryNotice,
+  renewalHandoffUptakeNotice,
   renewalLaunchArgs,
+  RENEWAL_HANDOFF_UPTAKE_WAIT_MS,
+  toolTouchesHandoff,
   type RenewalCheckInput,
 } from '../src/shared/sessionRenewal';
 import { renewalEligible, type RenewalEligibilityFacts } from '../src/shared/sessionRenewal';
@@ -90,6 +93,38 @@ describe('decideSwap — swap or wait?', () => {
     expect(decideSwap({ handoff: ready, turn: 'waiting', backgroundAgents: false, turnEndedSinceAsk: false })).toBe('wait-turn');
     expect(decideSwap({ handoff: parseHandoffHeader(null), turn: 'waiting', backgroundAgents: false, turnEndedSinceAsk: true })).toBe('give-up');
     expect(decideSwap({ handoff: parseHandoffHeader('# sem cabeçalho'), turn: 'waiting', backgroundAgents: false, turnEndedSinceAsk: true })).toBe('give-up');
+  });
+});
+
+describe('the new session read the handoff? (it went in, but did it open the file?)', () => {
+  const path = '/home/atlas/.config/donel-dev/handoffs/2026-11-21-1030-beacon-1a2b3c4d.md';
+
+  it('a Read of the handoff counts, also by the same file name on the place (remote copy) or a shell that prints it', () => {
+    expect(toolTouchesHandoff('Read', { file_path: path }, path)).toBe(true);
+    expect(toolTouchesHandoff('Read', { file_path: '/home/vega/.donel/handoffs/2026-11-21-1030-beacon-1a2b3c4d.md' }, path)).toBe(true);
+    expect(toolTouchesHandoff('Read', { file_path: 'C:\\Users\\atlas\\handoffs\\2026-11-21-1030-beacon-1a2b3c4d.md' }, path)).toBe(true);
+    expect(toolTouchesHandoff('Bash', { command: `cat "${path}"` }, path)).toBe(true);
+  });
+
+  it('another file, the instructions next to it or a write of the handoff do not count', () => {
+    expect(toolTouchesHandoff('Read', { file_path: '/home/atlas/projeto/README.md' }, path)).toBe(false);
+    expect(toolTouchesHandoff('Read', { file_path: path.replace('.md', '.instrucoes.md') }, path)).toBe(false);
+    expect(toolTouchesHandoff('Write', { file_path: path }, path)).toBe(false);
+    expect(toolTouchesHandoff('Read', 'lixo', path)).toBe(false);
+  });
+
+  it('quiet while the first turn runs, and once the read shows up', () => {
+    expect(renewalHandoffUptakeNotice({ handoffPath: path, read: false, turnEnded: false, elapsedMs: 60_000 })).toBeNull();
+    expect(renewalHandoffUptakeNotice({ handoffPath: path, read: true, turnEnded: true, elapsedMs: RENEWAL_HANDOFF_UPTAKE_WAIT_MS })).toBeNull();
+  });
+
+  it('at the end of the first turn, or past the wait, without a read: says it does not know, with the path, never "falhou"', () => {
+    const atStop = renewalHandoffUptakeNotice({ handoffPath: path, read: false, turnEnded: true, elapsedMs: 60_000 });
+    expect(atStop).toContain(path);
+    expect(atStop).toContain('não sei se leu');
+    expect(atStop).not.toMatch(/falhou/i);
+    const late = renewalHandoffUptakeNotice({ handoffPath: path, read: false, turnEnded: false, elapsedMs: RENEWAL_HANDOFF_UPTAKE_WAIT_MS });
+    expect(late).toContain(path);
   });
 });
 
