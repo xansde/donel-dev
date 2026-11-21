@@ -374,8 +374,9 @@ export interface LedgerCaller {
    */
   readonly ownerLive?: OwnerLive;
   /**
-   * t-c292d9a4 — with the PC away, whether a Revisor's session runs (this machine's tmux, or another machine's fresh
-   * picture): the PC's last list is old there. `null` = unknown (the list decides). Absent = the list decides alone.
+   * t-c292d9a4 — with the PC away, whether a place's session runs (this machine's tmux, or another machine's fresh
+   * picture): the PC's last list is old there. Who decides and hears a delivery (the Revisores) and who hears an urgent
+   * notice (`whoHears`) read it. `null` = unknown (the list decides). Absent = the list decides alone.
    */
   readonly reviewerLive?: OwnerLive;
 }
