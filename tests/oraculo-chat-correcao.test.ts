@@ -81,7 +81,9 @@ function world(options: { transcrito?: string } = {}) {
 }
 
 const parse = (response: { body: unknown }): any => JSON.parse(String(response.body));
-const corrigida = (id: string, texto: string): string => `✏️ O dono corrigiu a transcrição do áudio [celular #${id.slice(0, 8)}]: ${texto}`;
+/** O texto ao Líder: o marcador da própria correção (traz a resposta dela) e o id do áudio corrigido, o mesmo que o áudio levou. */
+const corrigida = (id: string, texto: string, audio = AUDIO): string =>
+  `✏️ [celular #${id.slice(0, 8)}] O dono fez a correção da transcrição de [celular #${audio.slice(0, 8)}]: ${texto}`;
 
 describe('correção da transcrição de um áudio (/api/v2/chat/correcao)', () => {
   it('a correção reenviada entra uma vez; o mesmo id com outro texto dá 409; a linha vira o texto corrigido', async () => {
@@ -268,6 +270,9 @@ describe('a resposta do Líder à correção volta ao celular', () => {
     await l.consumer.round();
     expect(l.lidas).toHaveLength(2);
     expect(l.lidas[1]).toContain(corrigida(UUID(2), 'Abre o Donel e manda o PR pra staging.'));
+    // A correção nomeia o áudio pelo mesmo marcador que a mensagem do áudio levou ao Líder.
+    expect(l.lidas[0]).toContain(`[celular #${AUDIO.slice(0, 8)}]`);
+    expect(l.lidas[1]).toContain(`correção da transcrição de [celular #${AUDIO.slice(0, 8)}]: Abre o Donel e manda o PR pra staging.`);
     l.conversa([
       [0, 'Abrindo o do nel.'],
       [1, 'Ah, o Donel: abrindo.'],
@@ -299,5 +304,6 @@ describe('a resposta do Líder à correção volta ao celular', () => {
     for (let i = 0; i < 3; i += 1) await l.consumer.round();
     w.reopen();
     expect(respostas(w).map((linha) => linha.texto)).toEqual(['Vou abrir.', 'Corrigido: abro o Donel.']);
+    expect(respostas(w).map((linha) => linha.em_resposta_a)).toEqual([AUDIO, AUDIO]);
   });
 });
