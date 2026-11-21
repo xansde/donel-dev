@@ -144,6 +144,33 @@ describe('carta de serviço no Oráculo da VPS', () => {
     expect(JSON.parse(readFileSync(file, 'utf8')).tasks[alerta.id].ownerPlaceId).toBe('lider');
   });
 
+  // t-27340b98 — a cron routine (the faixa-preta's) records its daily lines on a task of its own, with no live session.
+  // What breaks unseen: a service writing on someone else's task, or the same line twice on a retry.
+  it('serviço registra andamento só na tarefa de que é dono; na alheia é recusado; a mesma chave não grava em dobro', async () => {
+    const { file, ledger, handle } = setup();
+    const lines = (id: string) => (JSON.parse(readFileSync(file, 'utf8')).tasks[id].events as { by: unknown; text?: string }[]).flatMap((e) => (progressOf(e as never) ? [{ by: e.by, progress: progressOf(e as never) }] : []));
+    const own = JSON.parse((await handle(svc(criar))).body as string).id as string;
+    await handle(svc({ op: 'assumir', id: own }));
+    const progress = { estado: 'trabalhando', prova: 'linha 1 de 5 do dia 20/11', proximo: 'linha 2' };
+    const op = { op: 'andamento', id: own, progress, requestId: 'fp-2026-11-20-l1' };
+    expect(JSON.parse((await handle(svc(op))).body as string)).toMatchObject({ ok: true, id: own, estado: 'em-execucao' });
+    expect(JSON.parse((await handle(svc(op))).body as string)).toMatchObject({ ok: true, id: own });
+    expect(lines(own)).toEqual([{ by: { kind: 'lugar', placeId: 'servico:mencoes', roleId: 'servico' }, progress }]);
+
+    const other = await ledger.apply({ kind: 'dono' }, { op: 'criar', projectPath: '/p', request: 'x', doneWhen: 'y', due: '2026-11-20', ownerPlaceId: 'place:e8e2842d-1111-4111-8111-111111111111', risk: 'baixo' });
+    if (!other.ok) throw new Error(other.reason);
+    await ledger.apply({ kind: 'lugar', placeId: other.task.ownerPlaceId }, { op: 'assumir', id: other.task.id });
+    for (const bad of [
+      { ...op, id: other.task.id },
+      { ...op, id: other.task.id, requestId: undefined },
+      { ...op, extra: 1 },
+      { ...op, progress: { ...progress, resumo: 'x' } },
+    ])
+      expect((await handle(svc(bad))).status).toBe(400);
+    expect(lines(other.task.id)).toEqual([]);
+    expect(lines(own)).toHaveLength(1);
+  });
+
   // t-e1e992ab — a real refusal of the VPS's limiter (a session waiting for a slot, a Workflow, a heavy run, a cron
   // routine) is a progress line of the task it belongs to, never a notice to the Líder. What breaks unseen: the line
   // on someone else's task, a "travada" that reaches the Líder at once, or a second line for the same series.

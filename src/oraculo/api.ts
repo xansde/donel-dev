@@ -6,7 +6,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
-import { MAX_PROOF_FILE_BYTES, PROOF_FILE_TYPES, isProofFileName, maxProofBytes, type LedgerActor, type LedgerOp } from '../shared/ledger/contract';
+import { MAX_PROOF_FILE_BYTES, PROOF_FILE_TYPES, isProofFileName, LIMITER_SERVICE, maxProofBytes, type LedgerActor, type LedgerOp } from '../shared/ledger/contract';
 import { checkLedgerImport, ledgerCount, ledgerProofFiles, sameLedger } from '../shared/ledger/remote-import';
 import { ledgerProofsDir, type LedgerService } from '../main/ledger-store';
 import {
@@ -242,7 +242,7 @@ export function createOracleApiHandler(deps: OracleApiDeps): OracleApiHandler {
     try {
       let ledgerOp = op as ServiceOp;
       // t-e1e992ab — the limiter names the place (or none); the task is picked here, on the ledger as it is now.
-      if (isRecord(op) && op.op === 'andamento') {
+      if (isRecord(op) && op.op === 'andamento' && name === LIMITER_SERVICE) {
         const line = op as unknown as LimiterProgressOp;
         const id = limiterTaskOf(ledger.load().doc, line.lugar, line.reserva);
         ledgerOp = { op: 'andamento', id, progress: line.progress, ...(line.requestId ? { requestId: line.requestId } : {}) };
@@ -300,7 +300,7 @@ export function createOracleApiHandler(deps: OracleApiDeps): OracleApiHandler {
     if (path.startsWith(GATE_PATH_PREFIX)) return json(403, { error: 'só a credencial de um portão chama /v1/portao/*' });
     if (path === LIVRO_PATH) return deps.livro ? livroRoute(deps.livro, caller, method, url, request.body) : json(404, { error: 'rota' });
     if (caller.kind === 'servico') {
-      if (method !== 'POST' || path !== SERVICE_PATH) return json(403, { error: 'credencial de serviço só cria, assume e entrega tarefas (e o limitador registra andamento)' });
+      if (method !== 'POST' || path !== SERVICE_PATH) return json(403, { error: 'credencial de serviço só cria, assume e entrega tarefas, e registra andamento na própria' });
       return serviceApply(caller.name, request.body);
     }
 
