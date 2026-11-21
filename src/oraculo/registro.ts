@@ -30,7 +30,7 @@ import { GATE_PORT, type BoardPicture } from './portao';
 import { createGateToolRoutes, isLocalGate, readGateHashes, type GateRoutes } from './portoes';
 import { renewBeforeCard, renewBeforeTask } from './recados';
 import { createRemotePictures } from './retrato-satelite';
-import { tmuxLiveKnown } from './retrato-local';
+import { pcAway, tmuxLiveKnown } from './retrato-local';
 import { createRemoteOpenings } from './abrir-satelite';
 import { createRemoteScreens } from './tela-satelite';
 import { readOpenKit } from './abrir-local';
@@ -436,7 +436,12 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
       // Passo 9 — apart, a message of the entregador's sessions for a place of another machine is queued here.
       ...(entregador || !remotes ? {} : { remoteQueue: { isLocal: (name: string) => isLocalGate(dir, name), queue: remotes.queue } }),
       // t-d461e003 — an owner session alive in this VPS's tmux (or a satellite's fresh picture) is never orphan here.
-      liveOwner: { tmux: tmuxLiveKnown, ...(remotes ? { machineOf: (projectPath: string, placeId: string) => remotes.machineOf(projectPath, placeId) } : {}) },
+      // t-c292d9a4 — with the PC away, only a Revisor that runs (here or in a satellite's picture) decides a delivery.
+      liveOwner: {
+        tmux: tmuxLiveKnown,
+        ...(remotes ? { machineOf: (projectPath: string, placeId: string) => remotes.machineOf(projectPath, placeId) } : {}),
+        pcAway: entregador ? entregador.localPicture.away : () => pcAway(picture(), Date.now()),
+      },
     })),
     ...(process.env.DONEL_LIVRO_ARQUIVO ? { livro: createLivroStore({ filePath: process.env.DONEL_LIVRO_ARQUIVO }) } : {}),
     // t-cddc62fc — the reconciliador's notices reach the Líder único by the relay, out of the owner's phone chat.

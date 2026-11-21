@@ -373,6 +373,11 @@ export interface LedgerCaller {
    * in another machine's fresh picture (`OwnerLive`). Absent = the list decides alone (the PC's app).
    */
   readonly ownerLive?: OwnerLive;
+  /**
+   * t-c292d9a4 — with the PC away, whether a Revisor's session runs (this machine's tmux, or another machine's fresh
+   * picture): the PC's last list is old there. `null` = unknown (the list decides). Absent = the list decides alone.
+   */
+  readonly reviewerLive?: OwnerLive;
 }
 
 /**
@@ -647,12 +652,13 @@ const NOT_LIVE: ReadonlySet<string> = new Set(['fechada', 'nao-comecou']);
  * and who did the work): neither opened by them nor below them. `null` = unknown (the board or its places could not be
  * read): nothing closes alone on a guess.
  */
-export function liveReviewersOutside(caller: LedgerCaller, from: readonly string[]): string[] | null {
+export function liveReviewersOutside(caller: LedgerCaller, from: readonly string[], byList = false): string[] | null {
   const states = caller.placeStates?.get(caller.projectPath);
   if (!caller.board || !states) return null;
+  const runs = byList ? undefined : caller.reviewerLive;
   return reviewersOutsideChain(caller.board, (id) => {
     const state = states.get(id);
-    return state !== undefined && !NOT_LIVE.has(state);
+    return runs?.(caller.projectPath, id) ?? (state !== undefined && !NOT_LIVE.has(state));
   }, from);
 }
 
@@ -676,7 +682,11 @@ export function skepticApproved(provas: readonly ProofInput[]): boolean {
  * local flag `cetico-fecha-entrega` on and the skeptical reviewer's approved verdict in the proof, nobody else decides
  * (`skeptic`): that reviewer already read the diff before the merge.
  */
-function closeAloneCheck(service: LedgerService, caller: LedgerCaller, call: Extract<LedgerToolCall, { tool: 'tarefa_entregar' }>): { readonly reviewers: string[]; readonly skeptic?: true } | null {
+function closeAloneCheck(
+  service: LedgerService,
+  caller: LedgerCaller,
+  call: Extract<LedgerToolCall, { tool: 'tarefa_entregar' }>,
+): { readonly reviewers: string[]; readonly skeptic?: true; readonly waitsReconciler?: true } | null {
   // Done by another place (`feitoPor`): its chain is not the deliverer's, so a Revisor decides (revisão do #383).
   if (call.paraODono || (call.feitoPor && call.feitoPor !== caller.placeId)) return null;
   let task: LedgerTask | undefined;
@@ -687,8 +697,13 @@ function closeAloneCheck(service: LedgerService, caller: LedgerCaller, call: Ext
   }
   if (!task || task.risk !== 'baixo' || task.slack || task.projectPath !== caller.projectPath || task.state !== 'em-execucao') return null;
   if (call.feitoPor === undefined && skepticApproved(call.provas) && service.flagOn?.(SKEPTIC_CLOSES_FLAG)) return { reviewers: [], skeptic: true };
-  const reviewers = liveReviewersOutside(caller, [caller.placeId, ...(call.feitoPor ? [call.feitoPor] : [])]);
-  return reviewers === null ? null : { reviewers };
+  const from = [caller.placeId, ...(call.feitoPor ? [call.feitoPor] : [])];
+  const reviewers = liveReviewersOutside(caller, from);
+  if (reviewers === null) return null;
+  // t-c292d9a4 — the PC away and none of the Revisores its old list shows runs: the delivery waits for the
+  // reconciliador (it opens the board's Revisor or tells the Líder), never closes alone on that list's word.
+  if (!reviewers.length && caller.reviewerLive && liveReviewersOutside(caller, from, true)?.length) return { reviewers, waitsReconciler: true };
+  return { reviewers };
 }
 
 /** Why the place `caller` may not decide this delivery, beyond the contract's rules; `null` = may. */
@@ -1094,7 +1109,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       // 09/11 — low risk without a card for the owner: a live Revisor out of the chain decides; with none, it closes alone.
       const check = closeAloneCheck(service, caller, call);
       const reviewers = check?.reviewers ?? null;
-      const closeAlone = reviewers !== null && reviewers.length === 0;
+      const closeAlone = reviewers !== null && reviewers.length === 0 && !check?.waitsReconciler;
       const result = await service.apply(actor, {
         op: 'entregar',
         id: call.id,
@@ -1116,7 +1131,9 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
           : 'Fechada sozinha com a prova: não há Revisor vivo de fora da sua cadeia no quadro. Fica no registro; o dono pode reabrir.'
         : reviewers?.length
           ? `Um Revisor de fora da sua cadeia decide (${reviewers.join(', ')}); não vai ao dono.`
-          : undefined;
+          : check?.waitsReconciler
+            ? 'Nenhum Revisor de fora da sua cadeia está aberto agora: a entrega espera, e o reconciliador abre o Revisor do quadro ou avisa o Líder (até ~35 min). Não vai ao dono.'
+            : undefined;
       return { ok: true, text: JSON.stringify({ entregue: true, id: result.task.id, estado: result.task.state, ...(next ? { proximo: next } : {}), ...rereadTask(service, result.task) }) };
     }
     case 'tarefa_aceitar':

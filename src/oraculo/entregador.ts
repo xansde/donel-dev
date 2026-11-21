@@ -374,7 +374,7 @@ export interface Entregador {
   readonly screens: RemoteScreens | null;
   readonly pictures: PictureStore;
   /** The picture the gate, the recados and the Líder read (the stored one, with this tmux's live sessions). */
-  readonly localPicture: { get(): BoardPicture | null };
+  readonly localPicture: { get(): BoardPicture | null; away(): boolean };
   /** The PC's push (`POST /v1/retrato`) when the registro runs here. */
   setPicture(next: BoardPicture): void;
   /** t-3b258224 — the reconciliador's Revisor for a board (the registro's service route, in this process). */
@@ -653,8 +653,10 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
             : () => {
                 throw new Error('o entregador não tem registro');
               },
-          // Apart, the registro's gate route says it (t-d461e003): the caller never leaves this process.
-          ...(apart ? { runLedger: apart.runLedger, taskOf: apart.taskOf } : { liveOwner: { tmux: place.liveNow ?? tmuxLiveKnown, machineOf: (projectPath: string, placeId: string) => remoteView.machineOf(projectPath, placeId) } }),
+          // Apart, the registro's gate route says it (t-d461e003): the caller never leaves this process. t-c292d9a4: the
+          // live source there too, for the notices after a delivery (only the Revisores that run hear it, the PC away).
+          ...(apart ? { runLedger: apart.runLedger, taskOf: apart.taskOf } : {}),
+          liveOwner: { tmux: place.liveNow ?? tmuxLiveKnown, machineOf: (projectPath: string, placeId: string) => remoteView.machineOf(projectPath, placeId), pcAway: localPicture.away },
           picture,
           pcAway: localPicture.away,
           pictureWithoutPc,
