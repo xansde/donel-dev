@@ -3,7 +3,7 @@
 // `scripts/oraculo-vps.sh servico <name>`); deleting the file revokes it, with no restart (read at each call).
 //
 // The credential reaches ONE route, `POST /v1/servico/apply` with `{ op }`: create, take and deliver, with text or
-// link proofs, never marked as asked by the owner. Not the events stream either (server.ts), so a revoked service
+// link proofs, never marked as asked by the owner; and progress on a task the service owns (t-27340b98). Not the events stream either (server.ts), so a revoked service
 // has no open connection left to cut. The daemon signs as the place `servico:<name>` (role `servico`), whatever the
 // body says; the ledger's own rules do the rest (only the owner place takes and delivers, a high risk delivery
 // carries the owner's letter).
@@ -75,7 +75,7 @@ export function serviceOpRefusal(op: unknown, name?: string): string | null {
     if ((op as { risk?: unknown }).risk !== undefined) return 'o reconciliador não muda o risco: quem decide é o Líder';
     return typeof reason === 'string' && reason.trim() ? null : 'motivo obrigatório';
   }
-  if (kind === 'andamento' && name === LIMITER_SERVICE) return limiterProgressRefusal(op as Record<string, unknown>);
+  if (kind === 'andamento') return name === LIMITER_SERVICE ? limiterProgressRefusal(op as Record<string, unknown>) : ownProgressRefusal(op as Record<string, unknown>);
   if (!SERVICE_OPS.has(kind)) return 'serviço só cria, assume e entrega tarefas';
   // The owner's mark puts the task in the owner's progress (Jobu); a service names the person, never the owner.
   if (typeof requestedBy === 'string' && cleanAskedBy(requestedBy).toLowerCase() === ASKED_BY_OWNER) return 'serviço não marca pedido do dono';
@@ -184,6 +184,27 @@ function limiterProgressRefusal(op: Record<string, unknown>): string | null {
     if (typeof value !== 'string') return `"progress.${key}" é texto`;
   }
   return (progress as { estado?: unknown }).estado === 'esperando' ? null : 'o limitador só registra "esperando"';
+}
+
+const OWN_PROGRESS_KEYS: ReadonlySet<string> = new Set(['op', 'id', 'progress', 'requestId']);
+
+/**
+ * t-27340b98 — any other service records progress on a task it names, `{ op: 'andamento', id, progress, requestId? }`
+ * (a cron routine's daily lines, with no live session). Only the shape is checked here: the ledger (contract.ts,
+ * `andamento`) writes only when `servico:<name>` is the task's owner place, and the same key is the same line.
+ */
+function ownProgressRefusal(op: Record<string, unknown>): string | null {
+  const strange = Object.keys(op).find((key) => !OWN_PROGRESS_KEYS.has(key));
+  if (strange) return `serviço não manda "${strange}" no andamento`;
+  if (typeof op.id !== 'string' || !TASK_ID.test(op.id)) return '"id" é a tarefa do serviço (t-xxxxxxxx)';
+  if (op.requestId !== undefined && !isRequestId(op.requestId)) return '"requestId" de 8 a 64 letras, números, - ou _';
+  const progress = op.progress;
+  if (typeof progress !== 'object' || progress === null || Array.isArray(progress)) return '"progress" obrigatório';
+  for (const [key, value] of Object.entries(progress)) {
+    if (!LIMITER_PROGRESS_KEYS.has(key)) return `serviço não manda "progress.${key}"`;
+    if (typeof value !== 'string') return `"progress.${key}" é texto`;
+  }
+  return null;
 }
 
 /**
